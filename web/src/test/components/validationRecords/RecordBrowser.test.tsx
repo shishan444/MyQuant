@@ -1054,11 +1054,9 @@ describe("契约 H/I/J/K：DNA 指标叠加+手动开关+周期切换吸附（up
   it("契约 K 增量（REQ-4 判死分流）：非 404 失败——档位不禁用+提示条在场+重切该档必重发", async () => {
     mockGetStrategy.mockResolvedValue(makeStrategy(null));
     mockDetail.mockResolvedValue(makeDetail());
-    let calls1h = 0;
     let failNext = true;
     mockOhlcv.mockImplementation((_s: string, tf: string) => {
       if (tf === "1h") {
-        calls1h += 1;
         if (failNext) return Promise.reject(new ApiError("server", "boom", 500));
       }
       return Promise.resolve({
@@ -1119,6 +1117,319 @@ describe("契约 H/I/J/K：DNA 指标叠加+手动开关+周期切换吸附（up
     openTfSelect();
     const opt1h = await screen.findByText("1h", { selector: ".ant-select-item-option-content" });
     expect(opt1h.closest(".ant-select-item-option")?.className).not.toContain("ant-select-item-option-disabled");
+  });
+
+});
+
+describe("特征测试网（proto-b——REQ-4 retrySeq/failedTf 副作用锚网：A=验收②/B=存量契约/C·C2=验收③）", () => {
+  function makeStrategy(dna: unknown) {
+    return { dna, strategy_id: "st_y1", name: "s", generation: 1 } as never;
+  }
+  const bars5 = () =>
+    Array.from({ length: 5 }, (_, i) => ({
+      timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+    }));
+  /** 生产新鲜度形制 ui 变体——App.tsx staleTime:30_000 还原（「基准档
+   *  零重拉」锚的成立前提：有 data 的 query 在新鲜窗口内重订阅不重
+   *  发；默认 staleTime:0 形制下每次回基准都 refetchOnMount 重拉，请
+   *  求层零重拉断言恒假）。retry 保持 false 与既有 ui() 一致——retry
+   *  只放大失败档调用计数倍数（生产 retry:1 下×2），不进入零重拉/重
+   *  发两机制的判定路径（重发走 no-data 挂载分支，与 retry 无关） */
+  const uiProd = (node: ReactNode) => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+    });
+    return render(<QueryClientProvider client={qc}>{node}</QueryClientProvider>);
+  };
+  /** 按档位计 mock 调用数（queryFn 第 2 参=fetchTf） */
+  const callsOf = (tf: string) => mockOhlcv.mock.calls.filter((c) => c[1] === tf).length;
+  /** 周期下拉选档 */
+  const pickTf = async (tf: string) => {
+    openTfSelect();
+    const opt = await screen.findByText(tf, { selector: ".ant-select-item-option-content" });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+  };
+
+  // 特征 A（验收标准②契约锚——CARD-01 后由副作用①检测锚翻转而来）：
+  // 原 retrySeq 组件级单值曾作用于所有档位 queryKey，非 404 失败档重切
+  // 递增后再失败回基准会 miss 基准档缓存重拉（旧实现本锚断 30m 调用
+  // 1→2，CARD-01 落地实测转红即检测器命中）；CARD-01 改 per-tf 映射
+  // （queryKey 只取当前档序号，基准档键永不写入恒 0）——本锚翻转为新
+  // 契约：递增只影响该档 queryKey，两段回基准基准档均缓存命中零重拉
+  it("特征：非 404 失败档重切递增后再失败回基准——两段回基准均零重拉（30m 调用恒 1，per-tf 序号不动基准档缓存身份）", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    mockDetail.mockResolvedValue(makeDetail());
+    mockOhlcv.mockImplementation((_s: string, tf: string) => {
+      if (tf === "1h") return Promise.reject(new ApiError("server", "boom", 500));
+      return Promise.resolve({ data: bars5() }) as never;
+    });
+    uiProd(<RecordDetail record={makeRow()} />);
+    expect(await screen.findByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    // 切 1h → 500 失败：failedTf="1h" + 自动回基准。任何档序号未动 →
+    // 基准档 queryKey ["vr-kline-full",…,"30m",…,0] 未变 → 缓存命中零重拉
+    await pickTf("1h");
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-tf-fetch-failed")).toHaveTextContent("1h 档拉取失败");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    });
+    expect(callsOf("30m")).toBe(1);
+    // 重切 1h（failedTf 命中 → 该档序号 0→1）→ 又失败 → 再回基准。
+    // per-tf：基准档序号恒 0 → 基准档 queryKey 与缓存一致 → 零重拉
+    //（验收标准②：非 404 重切递增只影响该 tf 的 queryKey）
+    await pickTf("1h");
+    await waitFor(() => {
+      expect(callsOf("1h")).toBe(2);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
+    });
+    await waitFor(() => {
+      expect(callsOf("30m")).toBe(1);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    });
+  });
+
+  // 特征 B（存量契约锚加强——404 判死与基准缓存重现为存量契约，修复不
+  // 得破坏）：404 分流不动 seq → 回基准基准档 queryKey 恒 seq=0 → 缓存
+  // 命中零重拉。既有锚（上方「无数据档禁用回路」）断 404 档自身调用恒
+  // 1；本锚补请求层证据：双 404 档（1d、3d）先后判死后基准档 30m 调用
+  // 恒 1 + 两档选项均禁用（deadTfs 累积）
+  it("特征：404 判死路径 seq 恒 0——双 404 档先后判死后回基准基准档零重拉（30m 调用恒 1）", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    mockDetail.mockResolvedValue(makeDetail());
+    mockOhlcv.mockImplementation((_s: string, tf: string) => {
+      if (tf === "1d" || tf === "3d") {
+        return Promise.reject(new ApiError("client", "404", 404));
+      }
+      return Promise.resolve({ data: bars5() }) as never;
+    });
+    uiProd(<RecordDetail record={makeRow()} />);
+    expect(await screen.findByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    // 切 1d → 404：deadTfs 收录 + 回基准，基准档缓存重现（零重拉）
+    await pickTf("1d");
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    });
+    expect(callsOf("30m")).toBe(1);
+    // 切 3d 亦 404：第二次判死分流后基准档仍零重拉（seq 全程恒 0）
+    await pickTf("3d");
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    });
+    expect(callsOf("30m")).toBe(1);
+    // 存量契约面：两档选项均禁用（deadTfs 收录累积不互清）
+    openTfSelect();
+    for (const tf of ["1d", "3d"]) {
+      const opt = await screen.findByText(tf, { selector: ".ant-select-item-option-content" });
+      expect(opt.closest(".ant-select-item-option")?.className).toContain(
+        "ant-select-item-option-disabled",
+      );
+    }
+  });
+
+  // 特征 C（验收标准③契约锚——CARD-02 后由副作用②现状锚改写而来）：
+  // 原 failedTf 单值时双档先后非 404 失败后者覆盖前者，重切先失败档不
+  // 递增 seq、重发依赖 react-query 默认行为（error 态无 data 的 query
+  // 重订阅挂载 no-data 分支——query-core 5.99.0 shouldLoadOnMount，与
+  // staleTime 无关）——原锚记录该现状并在 CARD-02 落地时实测转红（双
+  // 行渲染 getByTestId 撞重复，检测器命中）。CARD-02 集合化后改写为新
+  // 契约锚：failedTfs 集合多档共存互不覆盖（沿用 deadTfs 形制），重切
+  // 失败档走显式递增重发（seqs[tf]+1 → queryKey 变化），该档成功仅移
+  // 除该档行——部分恢复不牵连他档提示
+  it("特征：双失败档（1h→4h）failedTfs 集合共存——重切 1h 显式递增重发；1h 成功后 1h 行消失 4h 行仍在（部分恢复不牵连）", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    // 缩短份区间至 bar 覆盖域（04-01~04-05）——重切档翻成功后 fr.state
+    // 须达 ok 才触发 CARD-02 逐档清除（条件 === "ok"）；默认 range_end
+    // 09-01 下 5 根 bar 尾部缺失恒 truncated、清除永不触发（truncated
+    // 态清除为 CARD-03 范围，本轮锚不涉及）。基准档初始装载为 mismatch
+    // 有数据态（bar 5 vs equity 4 点）——data-len/零重拉断言不受影响
+    const dOk = makeDetail();
+    dOk.executions[0].range_start = "2026-04-01";
+    dOk.executions[0].range_end = "2026-04-05";
+    mockDetail.mockResolvedValue(dOk);
+    let fail1h = true;
+    mockOhlcv.mockImplementation((_s: string, tf: string) => {
+      if (tf === "1h" && fail1h) return Promise.reject(new ApiError("server", "boom", 500));
+      if (tf === "4h") return Promise.reject(new ApiError("server", "boom2", 502));
+      return Promise.resolve({ data: bars5() }) as never;
+    });
+    uiProd(<RecordDetail record={makeRow()} />);
+    expect(await screen.findByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    // 切 1h → 失败：failedTfs={"1h"}，提示条 1 行
+    await pickTf("1h");
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-tf-fetch-failed")).toHaveTextContent("1h 档拉取失败");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
+    });
+    // 切 4h → 失败：failedTfs={"1h","4h"} 集合共存（不再覆盖），提示
+    // 条逐档一行共 2 行（行序不锚——Set 迭代序非契约面，文本集断言）
+    await pickTf("4h");
+    await waitFor(() => {
+      const rows = screen.getAllByTestId("vr-tf-fetch-failed");
+      expect(rows).toHaveLength(2);
+      const texts = rows.map((r) => r.textContent).join("|");
+      expect(texts).toContain("1h 档拉取失败");
+      expect(texts).toContain("4h 档拉取失败");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
+    });
+    // 重切 1h：failedTfs.has("1h") → seqs["1h"] 0→1 → queryKey 变化显
+    // 式重发（原单值时代此处靠默认行为——集合化后为显式机制，验收③）
+    fail1h = false;
+    await pickTf("1h");
+    await waitFor(() => {
+      expect(callsOf("1h")).toBe(2);
+    });
+    // 1h 重试成功：图正常装载
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    });
+    // 1h 成功：仅移除 "1h" → 提示条剩 1 行（4h 行不受牵连——集合化
+    // 部分恢复语义；原单值时代 1h 成功后提示条仍指 4h 的怪相消除）
+    await waitFor(() => {
+      const rows = screen.getAllByTestId("vr-tf-fetch-failed");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toHaveTextContent("4h 档拉取失败");
+    });
+  });
+
+  // 特征 C2（验收标准③完整锚）：双失败档各自重切各自重发各自恢复——
+  // 1h、4h 分别翻成功重切，各自 seqs[tf] 递增显式重发（每档调用 1→2），
+  // 全部恢复后 failedTfs 清空提示条整体消失；回基准基准档零重拉（两档
+  // seqs 均已递增但基准档 key 恒 0——与特征 A per-tf 契约闭环）
+  it("特征：双失败档分别重切分别重发——两档调用各 1→2、提示条全消；回基准零重拉（30m 恒 1）", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    // 同特征 C：份区间缩至 bar 覆盖域——重切档成功须达 ok 态触发逐档清除
+    const dOk = makeDetail();
+    dOk.executions[0].range_start = "2026-04-01";
+    dOk.executions[0].range_end = "2026-04-05";
+    mockDetail.mockResolvedValue(dOk);
+    let fail1h = true;
+    let fail4h = true;
+    mockOhlcv.mockImplementation((_s: string, tf: string) => {
+      if (tf === "1h" && fail1h) return Promise.reject(new ApiError("server", "boom", 500));
+      if (tf === "4h" && fail4h) return Promise.reject(new ApiError("server", "boom2", 502));
+      return Promise.resolve({ data: bars5() }) as never;
+    });
+    uiProd(<RecordDetail record={makeRow()} />);
+    expect(await screen.findByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    // 双档先后失败：两行提示在场，回基准
+    await pickTf("1h");
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
+    });
+    await pickTf("4h");
+    await waitFor(() => {
+      expect(screen.getAllByTestId("vr-tf-fetch-failed")).toHaveLength(2);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
+    });
+    // 重切 1h（翻成功）：显式重发 1h 调用 1→2，1h 行消失剩 4h 行
+    fail1h = false;
+    await pickTf("1h");
+    await waitFor(() => {
+      expect(callsOf("1h")).toBe(2);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    });
+    await waitFor(() => {
+      const rows = screen.getAllByTestId("vr-tf-fetch-failed");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toHaveTextContent("4h 档拉取失败");
+    });
+    // 重切 4h（翻成功）：显式重发 4h 调用 1→2，failedTfs 清空提示条
+    // 整体消失，图正常
+    fail4h = false;
+    await pickTf("4h");
+    await waitFor(() => {
+      expect(callsOf("4h")).toBe(2);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("vr-tf-fetch-failed")).toBeNull();
+    });
+    // 回基准：两档 seqs 均已递增（各=1）但基准档 key 恒 0 → 缓存命中
+    // 零重拉（30m 全程仅首次装载 1 次调用）
+    await pickTf("30m");
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    });
+    expect(callsOf("30m")).toBe(1);
+  });
+
+  // 特征 C3（CARD-03 契约锚——有数据态清除语义）：清除条件原 === "ok"，
+  // CARD-03 前重切失败档翻成功但 truncated（数据照画）时该档行残留——图
+  // 与「失败可重试」提示同屏矛盾（reviewer F-4；改写 C/C2 首轮实测红即
+  // 此行为）。CARD-03 扩为非 error/loading 即清。本锚用不缩区间的原始
+  // fixture 制造 truncated 形制并截断提示在场确证。mismatch 态同分支
+  // 但无行为可达面：清除路径 viewTf≠null → fetchTf=viewTf≠timeframe，
+  // 而 mismatch 对账仅基准档执行（fullRangeData 判定序 truncated 先于
+  // mismatch）→ 清除时 fr.state 只能 ok/truncated，不另设 mismatch 锚
+  it("特征：重切失败档成功但 truncated（数据照画）——提示条该档行仍消失（CARD-03 有数据态清除）", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    // 原始 fixture 不缩区间：bars5 尾 bar 04-05 远不及 range_end 09-01
+    // → 重切档翻成功恒 truncated（有数据态，截断提示照画）
+    mockDetail.mockResolvedValue(makeDetail());
+    let fail1h = true;
+    mockOhlcv.mockImplementation((_s: string, tf: string) => {
+      if (tf === "1h" && fail1h) return Promise.reject(new ApiError("server", "boom", 500));
+      return Promise.resolve({ data: bars5() }) as never;
+    });
+    uiProd(<RecordDetail record={makeRow()} />);
+    expect(await screen.findByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    // 切 1h → 失败：failedTfs={"1h"}，提示条 1 行，自动回基准
+    await pickTf("1h");
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-tf-fetch-failed")).toHaveTextContent("1h 档拉取失败");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
+    });
+    // 重切 1h（翻成功）：显式递增重发，truncated 态数据装载（data-len=5
+    // 照画+vr-kline-state 截断提示在场——truncated 形制确证，防 fixture
+    // 意外走 ok 态致锚失真）
+    fail1h = false;
+    await pickTf("1h");
+    await waitFor(() => {
+      expect(callsOf("1h")).toBe(2);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline-state")).toHaveTextContent("K 线数据被截断");
+    });
+    // CARD-03 锚：truncated 有数据态 → 移除 "1h" → 提示条整体消失
+    //（旧代码此断言红——行残留，与已装载数据同屏矛盾）
+    await waitFor(() => {
+      expect(screen.queryByTestId("vr-tf-fetch-failed")).toBeNull();
+    });
+    // 回基准零重拉（per-tf seq 已递增但基准档 key 恒 0——与特征 A 闭环）
+    await pickTf("30m");
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    });
+    expect(callsOf("30m")).toBe(1);
   });
 
 });

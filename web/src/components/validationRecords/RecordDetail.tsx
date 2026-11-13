@@ -934,9 +934,11 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
   // 视图周期（契约 K）：null=基准（执行语义锚）；无数据档禁用集（请求后降级）
   const [viewTf, setViewTf] = useState<string | null>(null);
   const [deadTfs, setDeadTfs] = useState<ReadonlySet<string>>(new Set());
-  // REQ-4 重试序号与失败档标记（D5.3 重切失败档必重发——queryKey 携序号）
-  const [failedTf, setFailedTf] = useState<string | null>(null);
-  const [retrySeq, setRetrySeq] = useState(0);
+  // REQ-4 重试序号（per-tf）与失败档集合（D5.3 重切失败档必重发——
+  // queryKey 只携当前档序号，他档重试不动基准档缓存身份；失败标记
+  // 集合化，多档先后失败各留标记互不覆盖——沿用 deadTfs 形制）
+  const [failedTfs, setFailedTfs] = useState<ReadonlySet<string>>(new Set());
+  const [retrySeqs, setRetrySeqs] = useState<Record<string, number>>({});
   const chartRef = useRef<KlineChartHandle | null>(null);
   const locate = (time: string) => chartRef.current?.scrollToTime(time);
   // 全区间装载（hooks 无条件区——早退前调用；明细未就绪/不可用时空
@@ -948,12 +950,13 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
     st.symbol,
     st.timeframe,
     viewTf,
-    retrySeq,
+    retrySeqs,
   );
-  // REQ-4：重切非 404 失败档时递增序号（queryKey 携序号强制重发）
+  // REQ-4：重切非 404 失败档时递增该档序号（queryKey 携序号强制重发）
   const handleViewTf = (tf: string | null) => {
     setViewTf(tf);
-    if (tf !== null && tf === failedTf) setRetrySeq((s) => s + 1);
+    if (tf !== null && failedTfs.has(tf))
+      setRetrySeqs((prev) => ({ ...prev, [tf]: (prev[tf] ?? 0) + 1 }));
   };
   // 契约 K 判死分流（REQ-4/D5——render 期前值推导消解 set-state-in-effect）：
   // 404=档位无数据（禁用+回基准，零额外请求）；非 404=暂态失败（不入
@@ -966,16 +969,26 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
     if (is404) {
       setDeadTfs((prev) => new Set(prev).add(viewTf));
     } else {
-      setFailedTf(viewTf);
+      setFailedTfs((prev) => new Set(prev).add(viewTf));
     }
     setViewTf(null);
   }
-  // 非 404 暂态失败提示条（渲染期派生；重试成功清除失败标记）
-  if (failedTf != null && viewTf === failedTf && fr.state === "ok") {
-    // 用户重切失败档且该档查询成功 → 清除失败标记（提示条随之消失）
-    setFailedTf(null);
+  // 非 404 暂态失败提示条（渲染期派生；该档装载即清除失败标记——
+  // ok/truncated/mismatch 三态同分支携带 candles 照画，数据在场即非失败，
+  // 否则截断/对账不等档重试成功后「失败可重试」提示条与已装载数据同屏矛盾）
+  if (
+    viewTf != null &&
+    failedTfs.has(viewTf) &&
+    fr.state !== "error" &&
+    fr.state !== "loading"
+  ) {
+    // 用户重切失败档且该档查询装载（含截断/对账不等告警态）→ 移除该档标记
+    setFailedTfs((prev) => {
+      const next = new Set(prev);
+      next.delete(viewTf);
+      return next;
+    });
   }
-  const tfFetchFailed = failedTf != null;
   const strategyId = q.data?.detail_available === true ? q.data.strategy_id : null;
   const strat = useQuery({ ...useStrategy(strategyId ?? ""), enabled: !!strategyId });
   const dnaExtract = useMemo(
@@ -1034,12 +1047,12 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
       {exec ? (
         <>
           {/* D2 K 线复核（全区间单图） */}
-          {/* REQ-4：非 404 暂态失败提示条（重切该档可重试） */}
-          {tfFetchFailed && (
-            <p className="text-xs text-loss" data-testid="vr-tf-fetch-failed">
-              {failedTf} 档拉取失败（网络/服务异常），可重试——重切该档位即可
+          {/* REQ-4：非 404 暂态失败提示条（逐档一行，重切该档可重试） */}
+          {[...failedTfs].map((tf) => (
+            <p key={tf} className="text-xs text-loss" data-testid="vr-tf-fetch-failed">
+              {tf} 档拉取失败（网络/服务异常），可重试——重切该档位即可
             </p>
-          )}
+          ))}
           <KlineReview
             executions={d.executions}
             fr={fr}
