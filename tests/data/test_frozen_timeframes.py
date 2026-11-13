@@ -12,13 +12,13 @@
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 pytestmark = [pytest.mark.integration]
 
-MARKET_DIR = Path("data/market_fapi")
+from core.data.fapi.rest import default_data_dir
+
+MARKET_DIR = default_data_dir()
 
 import datetime as _dt
 

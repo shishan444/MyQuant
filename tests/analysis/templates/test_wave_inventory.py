@@ -19,6 +19,7 @@ pytestmark = [pytest.mark.unit]
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.templates.wave_inventory import (
     compute_zigzag_waves, wave_inventory)
+from core.data.fapi.rest import default_data_dir
 
 RANGES = [{"symbol": "TESTUSDT", "timeframe": "1h",
            "start": "2024-01-01", "end": "2024-02-01"}]
@@ -162,7 +163,7 @@ class TestZigzagInvariants:
     def test_consecutive_waves_chained_and_alternating_real(self):
         """不变量在真实数据上成立（右端固定 2026-11-07——活数据追加
         不破坏历史 bar）。"""
-        path = Path("data/market_fapi/BTCUSDT_4h.parquet")
+        path = default_data_dir() / "BTCUSDT_4h.parquet"
         if not path.exists():
             pytest.skip("真实数据不在库")
         df = pd.read_parquet(path)
@@ -278,7 +279,7 @@ class TestWaveDemoReconciliation:
     换算。skip 条件：真实数据不在库。
     """
 
-    MARKET = Path("data/market_fapi")
+    MARKET = default_data_dir()
     RIGHT_EDGE = "2026-11-07"
 
     def _load(self, sym):

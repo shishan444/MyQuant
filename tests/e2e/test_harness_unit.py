@@ -235,3 +235,46 @@ class TestPortConflictFailFast:
         finally:
             service.close()
             blocker.close()
+
+class TestDataFapiDirSingleSource:
+    """DATA_FAPI_DIR 单源解析两分支（fix-data-dir-single-source A-3）。
+
+    模块常量在 import 时求值——两分支经 reload 重求值断言；干净 env
+    下与原 __file__ 锚定同值，主进程 FAPI_DATA_DIR 置位时跟随 env
+    （有意语义——生产行情目录只读挂载通道，harness:154 setenv 形成
+    恒等或改写传递均无害）。E2E_STATE 台账备份恢复（reload 重置
+    模块命名空间的副作用隔离）。
+    """
+
+    @staticmethod
+    def _reload_harness() -> None:
+        import importlib
+
+        importlib.reload(harness)
+
+    def test_clean_env_anchors_repo_root(self, monkeypatch) -> None:
+        """干净 env：DATA_FAPI_DIR == 工程根 data/market_fapi。"""
+        monkeypatch.delenv("FAPI_DATA_DIR", raising=False)
+        saved_state = dict(harness.E2E_STATE)
+        try:
+            self._reload_harness()
+            assert harness.DATA_FAPI_DIR == (
+                harness.PROJECT_ROOT / "data" / "market_fapi")
+        finally:
+            monkeypatch.delenv("FAPI_DATA_DIR", raising=False)
+            self._reload_harness()
+            harness.E2E_STATE.clear()
+            harness.E2E_STATE.update(saved_state)
+
+    def test_env_set_follows_env(self, monkeypatch, tmp_path: Path) -> None:
+        """setenv 分支：DATA_FAPI_DIR 跟随 env（tmp 注入）。"""
+        monkeypatch.setenv("FAPI_DATA_DIR", str(tmp_path))
+        saved_state = dict(harness.E2E_STATE)
+        try:
+            self._reload_harness()
+            assert harness.DATA_FAPI_DIR == tmp_path
+        finally:
+            monkeypatch.delenv("FAPI_DATA_DIR", raising=False)
+            self._reload_harness()
+            harness.E2E_STATE.clear()
+            harness.E2E_STATE.update(saved_state)

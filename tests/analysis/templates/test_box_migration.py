@@ -23,8 +23,9 @@ pytestmark = [pytest.mark.unit]
 from core.analysis.templates.box_inventory import (
     box_inventory, compute_box_segments)
 from core.analysis.templates.ruler_compare import compare_box
+from core.data.fapi.rest import default_data_dir
 
-MARKET = Path("data/market_fapi")
+MARKET = default_data_dir()
 FIXTURE_DIR = Path(__file__).resolve().parents[2] / "fixtures/evaluation_ruler"
 
 

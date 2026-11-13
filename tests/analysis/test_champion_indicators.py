@@ -16,8 +16,6 @@ TestPermutationEntropyContract 的 frozen_demo 用例。
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -28,7 +26,9 @@ from core.features.indicators import _compute_indicator
 from core.features.registry import INDICATOR_REGISTRY, resolve_indicator_column
 from core.analysis.column_ref import encode_column_ref
 
-MARKET = Path("data/market_fapi")
+from core.data.fapi.rest import default_data_dir
+
+MARKET = default_data_dir()
 
 CHAMPIONS = ("ShannonEntropy", "PermutationEntropy", "EfficiencyRatio",
              "CUSUM", "GARCHFilter")
