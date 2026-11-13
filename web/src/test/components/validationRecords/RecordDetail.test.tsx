@@ -171,6 +171,26 @@ describe("RecordDetail 库值污染降级（T10 污染例+P4 对照例）", () =
     expect(mockChartInd).not.toHaveBeenCalled();
   });
 
+  // tst4 补强：Requirement「symbol 或 timeframe 任一为 null 时……不发起
+  // K 线数据请求」的「任一」双侧——T10 污染例只覆盖 symbol 侧，本例补
+  // timeframe 侧（KlineReview `!symbol || !timeframe` 同一分支的双侧证据）
+  it("T10b timeframe 污染记录——同降级文案+K 线两请求零调用", async () => {
+    ui(
+      <RecordDetail
+        record={makeRow({
+          params: {
+            request_range: { symbol: "BTCUSDT", timeframe: "../evil", start: "2026-04-01", end: "2026-09-01" },
+          },
+        })}
+      />,
+    );
+    expect(
+      await screen.findByText("行 params 无 symbol/timeframe——K 线区间不可定"),
+    ).toBeTruthy();
+    expect(mockOhlcv).not.toHaveBeenCalled();
+    expect(mockChartInd).not.toHaveBeenCalled();
+  });
+
   it("T10·P4 对照例：同 hypothesis_id 合法 symbol——两请求有调用（零调用归因闸门）", async () => {
     mockChartInd.mockResolvedValue({
       ema: { "50": [{ time: "2026-04-05 00:00:00+00:00", value: 1 }] },

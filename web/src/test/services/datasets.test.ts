@@ -95,6 +95,9 @@ describe("datasets service", () => {
     { symbol: "BTCUSDT", timeframe: "%", expectedSymbol: "BTCUSDT", expectedTimeframe: "%25" },
     { symbol: "\\", timeframe: "1h", expectedSymbol: "%5C", expectedTimeframe: "1h" },
     { symbol: "BTCUSDT", timeframe: "\\", expectedSymbol: "BTCUSDT", expectedTimeframe: "%5C" },
+    // tst4 补强：& 为 query 注入的直接字符（Requirement「SHALL NOT 注入
+    // query 参数」字面攻击面——? 已覆盖但 & 独立转义证明）
+    { symbol: "a&b=c", timeframe: "1h", expectedSymbol: "a%26b%3Dc", expectedTimeframe: "1h" },
   ])("getOhlcvBySymbol encodes reserved chars in '$symbol'/'$timeframe'", async ({ symbol, timeframe, expectedSymbol, expectedTimeframe }) => {
     mockedGet.mockResolvedValueOnce({ dataset_id: "x", data: [] });
     await getOhlcvBySymbol(symbol, timeframe);
@@ -116,6 +119,9 @@ describe("datasets service", () => {
   it.each([
     { symbol: "../evil", timeframe: "1h", expected: "/api/data/chart-indicators/..%2Fevil/1h" },
     { symbol: "a?b=c", timeframe: "1h#f", expected: "/api/data/chart-indicators/a%3Fb%3Dc/1h%23f" },
+    // tst4 补强：Scenario「chart-indicators 同形编码」字面为「含 ? 或 # 的
+    // symbol」——%23 原仅在 timeframe 侧出现，补 symbol 侧 # 形态
+    { symbol: "a#b", timeframe: "1h", expected: "/api/data/chart-indicators/a%23b/1h" },
   ])("getChartIndicators encodes polluted segments in $symbol/$timeframe", async ({ symbol, timeframe, expected }) => {
     mockedGet.mockResolvedValueOnce({ ema: {}, boll: null, rsi: null, macd: null, kdj: null });
     await getChartIndicators(symbol, timeframe);
