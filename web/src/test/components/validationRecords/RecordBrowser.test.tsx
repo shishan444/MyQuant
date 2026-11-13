@@ -1377,6 +1377,61 @@ describe("特征测试网（proto-b——REQ-4 retrySeq/failedTf 副作用锚网
     expect(callsOf("30m")).toBe(1);
   });
 
+  // 特征 C3（CARD-03 契约锚——有数据态清除语义）：清除条件原 === "ok"，
+  // CARD-03 前重切失败档翻成功但 truncated（数据照画）时该档行残留——图
+  // 与「失败可重试」提示同屏矛盾（reviewer F-4；改写 C/C2 首轮实测红即
+  // 此行为）。CARD-03 扩为非 error/loading 即清。本锚用不缩区间的原始
+  // fixture 制造 truncated 形制并截断提示在场确证。mismatch 态同分支
+  // 但无行为可达面：清除路径 viewTf≠null → fetchTf=viewTf≠timeframe，
+  // 而 mismatch 对账仅基准档执行（fullRangeData 判定序 truncated 先于
+  // mismatch）→ 清除时 fr.state 只能 ok/truncated，不另设 mismatch 锚
+  it("特征：重切失败档成功但 truncated（数据照画）——提示条该档行仍消失（CARD-03 有数据态清除）", async () => {
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+    // 原始 fixture 不缩区间：bars5 尾 bar 04-05 远不及 range_end 09-01
+    // → 重切档翻成功恒 truncated（有数据态，截断提示照画）
+    mockDetail.mockResolvedValue(makeDetail());
+    let fail1h = true;
+    mockOhlcv.mockImplementation((_s: string, tf: string) => {
+      if (tf === "1h" && fail1h) return Promise.reject(new ApiError("server", "boom", 500));
+      return Promise.resolve({ data: bars5() }) as never;
+    });
+    uiProd(<RecordDetail record={makeRow()} />);
+    expect(await screen.findByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    // 切 1h → 失败：failedTfs={"1h"}，提示条 1 行，自动回基准
+    await pickTf("1h");
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-tf-fetch-failed")).toHaveTextContent("1h 档拉取失败");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-base-tf")).toHaveTextContent("基准 30m");
+    });
+    // 重切 1h（翻成功）：显式递增重发，truncated 态数据装载（data-len=5
+    // 照画+vr-kline-state 截断提示在场——truncated 形制确证，防 fixture
+    // 意外走 ok 态致锚失真）
+    fail1h = false;
+    await pickTf("1h");
+    await waitFor(() => {
+      expect(callsOf("1h")).toBe(2);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline-state")).toHaveTextContent("K 线数据被截断");
+    });
+    // CARD-03 锚：truncated 有数据态 → 移除 "1h" → 提示条整体消失
+    //（旧代码此断言红——行残留，与已装载数据同屏矛盾）
+    await waitFor(() => {
+      expect(screen.queryByTestId("vr-tf-fetch-failed")).toBeNull();
+    });
+    // 回基准零重拉（per-tf seq 已递增但基准档 key 恒 0——与特征 A 闭环）
+    await pickTf("30m");
+    await waitFor(() => {
+      expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-len", "5");
+    });
+    expect(callsOf("30m")).toBe(1);
+  });
+
 });
 
 describe("段界同 bar 重复时间戳合并（change-3 CARD-01——P0 回归锚）", () => {
