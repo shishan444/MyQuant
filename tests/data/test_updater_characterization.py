@@ -13,6 +13,7 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
+from core.data.fapi.rest import default_data_dir
 from core.data.storage import load_parquet, save_parquet
 from core.data.updater import (
     update_funding_data,
@@ -161,17 +162,21 @@ class TestDefaultDataDir:
 
 
 class TestDefaultDirResolution:
-    """VS-3.4① 缺省分支直调锚（R-11 改默认值的行为回归面）。
+    """缺省分支解析断言（fix-data-dir-single-source：cwd 相对行为消除）。
 
-    显式传参用例（TestDefaultDataDir）不经过 data_dir=None 分支——
-    上方两用例改显式传参消除默认值耦合后，缺省路径本身失去常驻
-    回归（默认值改回 data/market 不会红）。本类不传 data_dir 直调，
-    chdir 隔离下断言写入落点=活跃域 data/market_fapi——R-11 契约面。
+    旧形制（chdir tmp 后断言写入 tmp/data/market_fapi）锁定的是已
+    消除的 cwd 相对行为——updater 缺省现已同源经
+    core.data.fapi.rest.default_data_dir（FAPI_DATA_DIR 未设锚定工程
+    根，置位时随 env 同源切换）。新形制=拦截写入路径的纯解析断言，
+    不实际写盘（工程根零写副作用）；写入行为回归由显式传参用例
+    （TestDefaultDataDir 族）承载不动。
     """
 
+    @patch("core.data.updater.merge_parquet")
     @patch("core.data.updater.fetch_funding_history")
-    def test_funding_default_resolves_market_fapi(
-            self, mock_fetch, tmp_path, monkeypatch) -> None:
+    def test_funding_default_resolves_single_source(
+            self, mock_fetch, mock_merge, tmp_path, monkeypatch) -> None:
+        monkeypatch.delenv("FAPI_DATA_DIR", raising=False)
         monkeypatch.chdir(tmp_path)
         idx = pd.date_range("2024-01-01", periods=5, freq="8h", tz="UTC")
         mock_fetch.return_value = pd.DataFrame(
@@ -180,12 +185,15 @@ class TestDefaultDirResolution:
 
         update_funding_data("BTCUSDT")
 
-        assert (tmp_path / "data" / "market_fapi"
-                / "BTCUSDT_funding.parquet").exists()
+        write_path = mock_merge.call_args.args[1]
+        assert write_path.parent == default_data_dir()  # 未设分支：工程根锚定（写入侧与解析单点同源）
+        assert not (tmp_path / "data").exists()  # cwd 相对行为已消除
 
+    @patch("core.data.updater.merge_parquet")
     @patch("core.data.updater.fetch_open_interest_history")
-    def test_open_interest_default_resolves_market_fapi(
-            self, mock_fetch, tmp_path, monkeypatch) -> None:
+    def test_open_interest_default_follows_env(
+            self, mock_fetch, mock_merge, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("FAPI_DATA_DIR", str(tmp_path))
         monkeypatch.chdir(tmp_path)
         idx = pd.date_range("2024-01-01", periods=288, freq="5min", tz="UTC")
         mock_fetch.return_value = pd.DataFrame(
@@ -194,8 +202,50 @@ class TestDefaultDirResolution:
 
         update_open_interest_data("BTCUSDT", timeframes=["5m"])
 
-        assert (tmp_path / "data" / "market_fapi"
-                / "BTCUSDT_oi_5m.parquet").exists()
+        write_path = mock_merge.call_args.args[1]
+        assert write_path.parent == tmp_path  # setenv 分支：缺省随 env 同源切换（写入侧读 env——R-1 b/c）
+        assert not (tmp_path / "data").exists()
+
+    @patch("core.data.updater.merge_parquet")
+    @patch("core.data.updater.fetch_funding_history")
+    def test_funding_default_relative_branch_anchors_repo_root(
+            self, mock_fetch, mock_merge, tmp_path, monkeypatch) -> None:
+        """相对路径分支（funding）：缺省写入拼工程根而非 cwd——
+        chdir 漂移面下相对值目录不在 cwd 生成（返回值正确性由
+        test_rest.py TestDefaultDataDir 相对分支独立推导锚定，本用例
+        锚写入侧与单点同源）。"""
+        monkeypatch.setenv("FAPI_DATA_DIR", "probe_rel_dir")
+        monkeypatch.chdir(tmp_path)
+        idx = pd.date_range("2024-01-01", periods=5, freq="8h", tz="UTC")
+        mock_fetch.return_value = pd.DataFrame(
+            {"funding_rate": np.linspace(0.0001, 0.0002, 5)}, index=idx
+        )
+
+        update_funding_data("BTCUSDT")
+
+        write_path = mock_merge.call_args.args[1]
+        assert write_path.parent == default_data_dir()  # 相对分支与单点同源（拼工程根）
+        assert not (tmp_path / "probe_rel_dir").exists()  # cwd 拼接行为不发生
+
+    @patch("core.data.updater.merge_parquet")
+    @patch("core.data.updater.fetch_open_interest_history")
+    def test_open_interest_default_unset_anchors_repo_root(
+            self, mock_fetch, mock_merge, tmp_path, monkeypatch) -> None:
+        """未设分支（oi 函数）：缺省写入路径与解析单点同源（工程根
+        锚定）——updater 两函数各自独立改调行，oi 侧未设分支单独
+        锚定（funding 侧由 funding 未设分支用例承载）。"""
+        monkeypatch.delenv("FAPI_DATA_DIR", raising=False)
+        monkeypatch.chdir(tmp_path)
+        idx = pd.date_range("2024-01-01", periods=288, freq="5min", tz="UTC")
+        mock_fetch.return_value = pd.DataFrame(
+            {"open_interest": np.arange(1, 289, dtype=float)}, index=idx
+        )
+
+        update_open_interest_data("BTCUSDT", timeframes=["5m"])
+
+        write_path = mock_merge.call_args.args[1]
+        assert write_path.parent == default_data_dir()  # 未设分支：工程根锚定（与 funding 同源）
+        assert not (tmp_path / "data").exists()  # cwd 相对行为已消除
 
 
 class TestMergeParquetReturnValue:

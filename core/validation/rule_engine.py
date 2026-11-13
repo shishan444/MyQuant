@@ -100,7 +100,9 @@ def evaluate_rules(
     warnings: List[str] = []
 
     if data_dir is None:
-        data_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "market_fapi")
+        from core.data.fapi.rest import default_data_dir
+
+        data_dir = str(default_data_dir())
 
     # ------------------------------------------------------------------
     # 1. 装载基准周期数据

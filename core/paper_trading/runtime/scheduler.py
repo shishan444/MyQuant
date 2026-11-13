@@ -126,10 +126,13 @@ class PaperScheduler:
 
     @staticmethod
     def _default_data_dir() -> Path:
-        """缺省数据目录（活跃域 data/market_fapi——cleanup-data-segment
-        R-11：与装配面 fapi_env 缺省同域；生产装配 app.py 显式传参，
-        本缺省为消除误导的修正锚）。"""
-        return Path(__file__).resolve().parents[3] / "data" / "market_fapi"
+        """缺省数据目录（活跃域 data/market_fapi——委托全工程解析
+        单点 core.data.fapi.rest.default_data_dir，fix-data-dir-
+        single-source；生产装配 app.py 显式传参，本缺省供未传参面
+        与装配缺省同源）。"""
+        from core.data.fapi.rest import default_data_dir
+
+        return default_data_dir()
 
     # ── 生命周期 ────────────────────────────────────────────
 

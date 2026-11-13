@@ -9,8 +9,6 @@
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 import pytest
 
@@ -18,6 +16,7 @@ pytestmark = [pytest.mark.unit]
 
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.templates.box_inventory import box_inventory, compute_box_segments
+from core.data.fapi.rest import default_data_dir
 
 RANGES = [{"symbol": "TESTUSDT", "timeframe": "1h",
            "start": "2024-01-01", "end": "2024-02-01"}]
@@ -245,7 +244,7 @@ class TestBoxDemoReconciliation:
     ——活数据追加不破坏复算）。
     """
 
-    MARKET = Path("data/market_fapi")
+    MARKET = default_data_dir()
     RIGHT_EDGE = "2026-11-09"
 
     @pytest.mark.parametrize(

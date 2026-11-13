@@ -5,7 +5,9 @@
 （fundingRate）。REST MUST NOT 承担主通道（market-data-feed spec
 ——闭合事件流是决策推进唯一触发源，本模块只做兜底三触发：缺口
 补拉、启动对账、规则拉取）。服务对象：feed 对账例程（reconcile）、
-app 启动建库线程、change-4 规则装载。
+app 启动建库线程、change-4 规则装载。全工程缺省数据目录解析
+单点（default_data_dir——三分支：FAPI_DATA_DIR 未设锚定工程根、
+绝对路径直用、相对路径拼工程根）。
 
 端点白名单（spec 写死单源）：klines / exchangeInfo / fundingRate
 三族——触金扫描消费方法族白名单（kline/exchange_info/funding_rate/
@@ -78,6 +80,25 @@ def fapi_env(env: Optional[dict[str, str]] = None) -> dict[str, Any]:
         "ws_base": source.get(ENV_FAPI_WS_BASE, FAPI_WS_BASE_DEFAULT),
         "rest_base": source.get(ENV_FAPI_REST_BASE, FAPI_REST_BASE_DEFAULT),
     }
+
+
+# 工程根锚定（rest.py 4 层归 MyQuant/）——缺省数据目录的解析基点，
+# 与进程启动 cwd 无关
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def default_data_dir() -> Path:
+    """全工程缺省数据目录单点解析（cwd 无关）。
+
+    三分支（data-directory-governance spec 唯一权威源）：
+    1. FAPI_DATA_DIR 未设 → 工程根下 data/market_fapi；
+    2. FAPI_DATA_DIR 为绝对路径 → 直用（既有装配语义）；
+    3. FAPI_DATA_DIR 为相对路径 → 拼工程根。
+
+    写入侧（updater）与读取侧（引擎/装配）缺省同源经本函数。
+    """
+    raw = fapi_env()["data_dir"]
+    return raw if raw.is_absolute() else _REPO_ROOT / raw
 
 
 def fapi_min_notional_overrides(

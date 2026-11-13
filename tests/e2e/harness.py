@@ -21,8 +21,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
+from core.data.fapi.rest import default_data_dir
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_FAPI_DIR = PROJECT_ROOT / "data" / "market_fapi"
+DATA_FAPI_DIR = default_data_dir()  # 全工程缺省解析单点：干净 env 下与原 __file__ 锚定同值；主进程 FAPI_DATA_DIR 置位时跟随 env（有意语义——生产行情目录只读挂载通道）
 VENV_PYTHON = PROJECT_ROOT / "venv" / "bin" / "python"
 
 # pytest_configure 阶段产出的端口/pid 台账：fixture 消费端口、

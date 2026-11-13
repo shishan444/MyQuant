@@ -132,7 +132,9 @@ def run_scene_verification(
 
     # 解析数据目录
     if data_dir is None:
-        data_dir = str(Path(__file__).resolve().parent.parent.parent.parent / "data" / "market_fapi")
+        from core.data.fapi.rest import default_data_dir
+
+        data_dir = str(default_data_dir())
 
     # 数据装载（B4.1 共享路径发现：safe_symbol 归一 + 别名兜底；
     # 未知 timeframe 结构化拒绝而非静默空结果）

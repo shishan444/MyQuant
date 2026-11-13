@@ -39,13 +39,13 @@
 """
 
 import json
-from pathlib import Path
-
 import pytest
 
 pytestmark = [pytest.mark.slow, pytest.mark.integration]
 
-MARKET_DIR = Path("data/market_fapi")
+from core.data.fapi.rest import default_data_dir
+
+MARKET_DIR = default_data_dir()
 
 if not (MARKET_DIR / "BTCUSDT_1h.parquet").exists():
     pytest.skip("真实数据 BTCUSDT 1h/4h 不在库（data/market_fapi），回归锚跳过",

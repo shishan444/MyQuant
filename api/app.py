@@ -89,10 +89,9 @@ def create_app(
     if db_path is None:
         db_path = _default_db_path(project_root)
     if data_dir is None:
-        from core.data.fapi.rest import fapi_env
+        from core.data.fapi.rest import default_data_dir
 
-        raw_dir = fapi_env()["data_dir"]
-        data_dir = raw_dir if raw_dir.is_absolute() else project_root / raw_dir
+        data_dir = default_data_dir()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

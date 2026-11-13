@@ -19,6 +19,7 @@ from core.analysis.errors import ResearchError
 from core.analysis.templates.ruler_compare import (
     compare_box, compare_wave, load_validation_trades, ruler_compare,
     validate_trade_source)
+from core.data.fapi.rest import default_data_dir
 
 FIXTURE_DIR = (Path(__file__).resolve().parents[3]
                / "tests/fixtures/evaluation_ruler")
@@ -514,7 +515,7 @@ def _d4_sym_pools():
     from core.analysis.templates.wave_inventory import compute_zigzag_waves
     pools = {}
     for sym in ("BTCUSDT", "ETHUSDT"):
-        path = Path(f"data/market_fapi/{sym}_4h.parquet")
+        path = default_data_dir() / f"{sym}_4h.parquet"
         if not path.exists():
             pytest.skip("真实数据不在库（data/market_fapi）")
         df = pd.read_parquet(path)
@@ -536,7 +537,7 @@ def _d4_wave_pools():
     from core.analysis.templates.wave_inventory import compute_zigzag_waves
     all_pool, lock_pool = [], []
     for sym in ("BTCUSDT", "ETHUSDT"):
-        path = Path(f"data/market_fapi/{sym}_4h.parquet")
+        path = default_data_dir() / f"{sym}_4h.parquet"
         if not path.exists():
             pytest.skip("真实数据不在库（data/market_fapi）")
         df = pd.read_parquet(path)
@@ -627,7 +628,7 @@ class TestD3BoxReconciliation:
         ("tf", "edge_window", "n", "opp_rate"),
         [("1h", 240, 20, 0.15), ("15m", 480, 66, 0.26)])
     def test_d3_opposite_rate(self, tf, edge_window, n, opp_rate):
-        path = Path(f"data/market_fapi/BTCUSDT_{tf}.parquet")
+        path = default_data_dir() / f"BTCUSDT_{tf}.parquet"
         if not path.exists():
             pytest.skip(f"真实数据 BTCUSDT {tf} 不在库")
         df = pd.read_parquet(path)

@@ -19,7 +19,9 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-MARKET_DIR = Path("data/market_fapi")
+from core.data.fapi.rest import default_data_dir
+
+MARKET_DIR = default_data_dir()
 SYMBOLS = ("BTCUSDT", "ETHUSDT")
 KLINE_TFS = ("15m", "30m", "1h", "4h", "1d", "3d")
 OI_TFS = ("5m", "15m", "30m", "1h", "4h", "1d", "3d")

@@ -34,7 +34,9 @@ import pytest
 
 pytestmark = [pytest.mark.slow, pytest.mark.integration]
 
-MARKET_DIR = Path("data/market_fapi")
+from core.data.fapi.rest import default_data_dir
+
+MARKET_DIR = default_data_dir()
 
 if not (MARKET_DIR / "BTCUSDT_4h.parquet").exists():
     pytest.skip("真实数据 BTCUSDT 4h 不在库（data/market_fapi），插件列特征网跳过",

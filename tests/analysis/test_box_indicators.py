@@ -10,8 +10,6 @@ naming 三层同步、两族口径分界样例（X-A/X-B）。
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -24,7 +22,9 @@ from core.analysis.column_ref import (
     ColumnRefError, decode_column_ref, encode_column_ref,
     _resolve_indicator_ref)
 
-MARKET = Path("data/market_fapi")
+from core.data.fapi.rest import default_data_dir
+
+MARKET = default_data_dir()
 
 
 def _mk_df(closes, highs=None, lows=None, start="2024-01-01", freq="1h"):

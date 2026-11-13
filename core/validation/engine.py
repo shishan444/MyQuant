@@ -118,7 +118,9 @@ def validate_hypothesis(
     from core.validation.mtf import load_mtf_data, merge_to_base, get_timeframe_minutes
 
     if data_dir is None:
-        data_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "market_fapi")
+        from core.data.fapi.rest import default_data_dir
+
+        data_dir = str(default_data_dir())
 
     # 生效基准周期（base_timeframe 优先）
     effective_base = base_timeframe or timeframe

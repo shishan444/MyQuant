@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from core.data.fapi.rest import default_data_dir
 from core.data.fetcher import fetch_funding_history, fetch_open_interest_history
 from core.data.storage import save_parquet, load_parquet, get_latest_timestamp, merge_parquet
 from core.data.validation import validate_known_interval, validate_symbol
@@ -45,7 +46,7 @@ def update_funding_data(
     增量补齐，首跑按 history_start 全量拉取。
     """
     if data_dir is None:
-        data_dir = Path("data/market_fapi")
+        data_dir = default_data_dir()
     data_dir = Path(data_dir)
     validate_symbol(symbol)  # 命名白名单（path 直拼写入路径）
     path = data_dir / f"{symbol}_funding.parquet"
@@ -72,7 +73,7 @@ def update_open_interest_data(
     归档侧有约 T-5 延迟，增量终点即当前最新可得归档。
     """
     if data_dir is None:
-        data_dir = Path("data/market_fapi")
+        data_dir = default_data_dir()
     data_dir = Path(data_dir)
     if timeframes is None:
         timeframes = list(_OI_TIMEFRAMES)

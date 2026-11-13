@@ -20,6 +20,7 @@ pytestmark = [pytest.mark.unit]
 from core.analysis.hypothesis_service import ResearchError
 from core.analysis.templates.condition_stats import condition_stats
 from core.analysis.templates.param_sweep import param_sweep
+from core.data.fapi.rest import default_data_dir
 from tests.helpers.regime_factory import (
     make_directional_composite as _trending_with_dips,
     make_random_walk_ohlcv as _random_walk,
@@ -408,9 +409,7 @@ class TestAutoGridSmallRangeAcceptance:
     刻度 [-10,-5]/[5,10] 两档零样本）。"""
 
     def test_oi_change_rate_grid_within_actual_range(self):
-        from pathlib import Path
-
-        market = Path("data/market_fapi/BTCUSDT_4h.parquet")
+        market = default_data_dir() / "BTCUSDT_4h.parquet"
         if not market.exists():
             pytest.skip("真实数据 BTCUSDT 4h 不在库（data/market_fapi）")
         import pandas as pd
@@ -419,7 +418,7 @@ class TestAutoGridSmallRangeAcceptance:
                "start": "2025-02-15", "end": "2026-09-01"}
         from core.analysis.warmup_loader import load_with_warmup
         work, request_start = load_with_warmup(
-            Path("data/market_fapi"), "BTCUSDT", "4h",
+            default_data_dir(), "BTCUSDT", "4h",
             rng["start"], rng["end"], ["OI_ChangeRate"])
         p = param_sweep(
             work, indicator="OI_ChangeRate",

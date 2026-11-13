@@ -8,9 +8,12 @@
 - 代理语义沿 fetcher.py:108 先例（显式 proxies 传参+trust_env=False
   阻断环境代理泄漏）；
 - 端点白名单常量可被触金扫描消费；
-- FAPI_DATA_DIR / FAPI_MIN_NOTIONAL_* 覆写断言（fapi_env 解析面）。
+- FAPI_DATA_DIR / FAPI_MIN_NOTIONAL_* 覆写断言（fapi_env 解析面）；
+- default_data_dir 三分支与 cwd 无关性（数据目录单源化 A-1）。
 """
 from __future__ import annotations
+
+from pathlib import Path
 
 import requests
 
@@ -21,6 +24,7 @@ from core.data.fapi.rest import (
     FAPI_ALLOWED_METHOD_FAMILIES,
     FAPI_REST_ENDPOINTS,
     FapiRestClient,
+    default_data_dir,
     fapi_env,
     fapi_min_notional_overrides,
 )
@@ -646,3 +650,46 @@ class TestFetchClosedBarsWindow:
         assert len(frame) == 1  # 恰首根（窗口上限生效）
         assert frame.index[0] == t0
         assert sdk.klines_calls[0]["limit"] == 1
+
+
+
+class TestDefaultDataDir:
+    """default_data_dir 三分支语义与 cwd 无关性（数据目录单源化 A-1）。
+
+    纯解析断言——全程不写任何目录；工程根锚定期望值由测试文件
+    自身 __file__ 独立推导（不 import 实现侧 _REPO_ROOT，锚定双向
+    自证）。
+    """
+
+    @pytest.mark.parametrize(
+        ("env_value", "expected_relative"),
+        [
+            pytest.param(None, "data/market_fapi", id="未设-锚定工程根缺省"),
+            pytest.param("custom_market", "custom_market", id="相对路径-拼工程根"),
+        ],
+    )
+    def test_repo_root_branches(self, monkeypatch, env_value,
+                                expected_relative):
+        """未设/相对两分支：解析结果均为工程根拼接（cwd 无关）。"""
+        repo_root = Path(__file__).resolve().parents[3]
+        if env_value is None:
+            monkeypatch.delenv("FAPI_DATA_DIR", raising=False)
+        else:
+            monkeypatch.setenv("FAPI_DATA_DIR", env_value)
+        expected = (repo_root / expected_relative).resolve()
+        assert default_data_dir().resolve() == expected
+
+    def test_absolute_branch(self, monkeypatch, tmp_path):
+        """绝对路径分支：直用，不拼工程根（既有装配语义）。"""
+        monkeypatch.setenv("FAPI_DATA_DIR", str(tmp_path))
+        assert default_data_dir().resolve() == tmp_path.resolve()
+
+    def test_cwd_independence(self, monkeypatch, tmp_path):
+        """cwd 无关性：两个任意 cwd 下解析结果恒等。"""
+        other = tmp_path / "elsewhere"
+        other.mkdir()
+        monkeypatch.delenv("FAPI_DATA_DIR", raising=False)
+        monkeypatch.chdir(tmp_path)
+        first = default_data_dir()
+        monkeypatch.chdir(other)
+        assert default_data_dir() == first

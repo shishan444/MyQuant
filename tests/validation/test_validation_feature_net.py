@@ -868,22 +868,16 @@ class TestEvaluateRules:
         assert result.win_rate is None  # 零交易为缺失语义
 
     def test_defaults_branches_data_dir_none_no_range_mtf_empty(self, tmp_path, monkeypatch):
-        """闸门重开盲区消解：三个缺省/空返分支——data_dir 缺省走
-        内置推导路径、start/end 缺省不过滤、load_mtf_data 空返回
-        跳过合并（160->182）。"""
+        """闸门重开盲区消解：三个缺省/空返分支——data_dir 缺省经
+        FAPI_DATA_DIR env 注入锚定 tmp（default_data_dir 单源解析）、
+        start/end 缺省不过滤、load_mtf_data 空返回跳过合并（160->182）。"""
         from unittest.mock import patch
         from core.validation import rule_engine as mod
         _write_parquet(tmp_path, "TESTUSDT_4h", _sine_ohlcv(n=200))
         _write_parquet(tmp_path, "TESTUSDT_1d", make_ohlcv(n=60, freq="1d"))
-        monkeypatch.setattr(
-            mod, "__file__",
-            str(tmp_path / "x" / "y" / "fake_mod.py"))  # data_dir 缺省推导锚定 tmp
-        # 构造目录随 R-11 改指 market_fapi（缺省推导 parents[3]/data/market_fapi
-        # ——构造 data/market 会被改指后代码绕过，覆盖空洞化）
-        (tmp_path / "data" / "market_fapi").mkdir(parents=True, exist_ok=True)
-        import shutil
-        for f in ("TESTUSDT_4h.parquet", "TESTUSDT_1d.parquet"):
-            shutil.copy(tmp_path / f, tmp_path / "data" / "market_fapi" / f)
+        # 缺省解析经 env 注入锚定 tmp（fapi_env 旁路——rest.py 注释自述的
+        # 既有测试能力，替代已消除的 patch __file__ 推导形制）
+        monkeypatch.setenv("FAPI_DATA_DIR", str(tmp_path))
         from core.analysis.condition_kernel import MtfEvalContext
         ctx = MtfEvalContext(data_dir=tmp_path, symbol="TESTUSDT", base_tf="4h")
         with patch.object(mod, "load_mtf_data", return_value={}):
