@@ -7,6 +7,7 @@ A 面）：五态筛选/422 结构化/q 转义/三 null 语义/cursor 优先级/
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -15,15 +16,25 @@ pytestmark = [pytest.mark.integration]
 
 from fastapi.testclient import TestClient
 
-_T = "2026-11-0{}T00:00:00+00:00"
+
+def _ts(days: int = 0) -> str:
+    """种子时刻相对化（时间炸弹修复）：days 偏移运行时刻的 ISO 串，
+    与 register 日志时刻（utc_now_iso 同族 isoformat）字典序可比。
+
+    hyp_b 排序首位用 +2（恒新于 register 运行时刻日志），其余种子按
+    原相对序平移到负偏移——「register 运行时刻 vs 种子时刻」先后关系
+    恒定，不随日历漂移。
+    """
+    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
 
 
 def _seed(db):
     """五假设×状态/验证/日志的确定性种子（ORM 直插+register 混合）。
 
-    - hyp_a active+2 验证（最新 fail）+日志最新 11-08
-    - hyp_b refuted+1 验证（pass）+日志最新 11-09（排序首位）
-    - hyp_c abandoned 零验证（三 null 语义）+日志 11-03
+    - hyp_a active+2 验证（最新 fail）+日志最新 now-1d
+    - hyp_b refuted+1 验证（pass）+日志最新 now+2d（排序首位，恒压
+      register 运行时刻日志）
+    - hyp_c abandoned 零验证（三 null 语义）+日志 now-6d
     - hyp_d supported 零日志（recent_activity_at=null——ORM 直插不经
       register，构造无日志行防御位）
     - statement 含 % 字面（q 转义用例）
@@ -52,39 +63,40 @@ def _seed(db):
         sess.add(ResearchHypothesis(
             hypothesis_id="hyp_a", conditions="{}", conditions_hash="c1",
             statement="RSI 超卖反弹", data_ranges="[]", ranges_hash="r1",
-            status="active", created_at=_T.format(1),
-            updated_at=_T.format(1)))
+            status="active", created_at=_ts(-8),
+            updated_at=_ts(-8)))
         sess.add(ResearchHypothesis(
             hypothesis_id="hyp_b", conditions="{}", conditions_hash="c2",
             statement="MACD 背离", data_ranges="[]", ranges_hash="r2",
-            status="refuted", created_at=_T.format(2),
-            updated_at=_T.format(2)))
+            status="refuted", created_at=_ts(-7),
+            updated_at=_ts(-7)))
         sess.add(ResearchHypothesis(
             hypothesis_id="hyp_c", conditions="{}", conditions_hash="c3",
             statement="布林带收窄突破", data_ranges="[]", ranges_hash="r3",
-            status="abandoned", created_at=_T.format(3),
-            updated_at=_T.format(3)))
+            status="abandoned", created_at=_ts(-6),
+            updated_at=_ts(-6)))
         sess.add(ResearchHypothesis(
             hypothesis_id="hyp_d", conditions="{}", conditions_hash="c4",
             statement="假设D", data_ranges="[]", ranges_hash="r4",
-            status="supported", created_at=_T.format(4),
-            updated_at=_T.format(4)))
-        # 验证记录：hyp_a 两条（11-05 pass / 11-08 fail——最新=fail）；
-        # hyp_b 一条（11-06 pass）；adhoc 一条（假设表零父行）
+            status="supported", created_at=_ts(-5),
+            updated_at=_ts(-5)))
+        # 验证记录：hyp_a 两条（now-7d pass / now-1d fail——最新=fail）；
+        # hyp_b 一条（now-6d pass）；adhoc 一条（假设表零父行）
         for rid, hid, verdict, ts in (
-                ("rec_a1", "hyp_a", "pass", _T.format(5)),
-                ("rec_a2", "hyp_a", "fail", _T.format(8)),
-                ("rec_b1", "hyp_b", "pass", _T.format(6)),
-                ("rec_ad1", "adhoc", "pass", _T.format(7))):
+                ("rec_a1", "hyp_a", "pass", _ts(-7)),
+                ("rec_a2", "hyp_a", "fail", _ts(-1)),
+                ("rec_b1", "hyp_b", "pass", _ts(-6)),
+                ("rec_ad1", "adhoc", "pass", _ts(-4))):
             sess.add(ValidationRecord(
                 record_id=rid, hypothesis_id=hid, strategy_id="st_x",
                 level="isolated_backtest", segmentation="", verdict=verdict,
                 range_hash=f"rh_{rid}", params="{}", result="{}",
                 created_at=ts))
-        # 日志：register 假设自带一条（hyp_reg）；手工补 hyp_a/hyp_b/
-        # hyp_c 各一条（created_at 各异构造排序）
-        for hid, ts in (("hyp_a", _T.format(8)), ("hyp_b", _T.format(9)),
-                        ("hyp_c", _T.format(3))):
+        # 日志：register 假设自带一条（hyp_reg，时刻=运行时刻 now）；
+        # 手工补 hyp_a/hyp_b/hyp_c 各一条（相对偏移构造排序——hyp_b
+        # +2d 恒压 register 运行时刻，保排序首位断言不随日历漂移）
+        for hid, ts in (("hyp_a", _ts(-1)), ("hyp_b", _ts(2)),
+                        ("hyp_c", _ts(-6))):
             sess.add(ResearchLog(
                 log_id=f"lg_{hid}", hypothesis_id=hid, entry_type="validate",
                 ref_id="rec_x", summary="s", created_at=ts))
@@ -192,8 +204,8 @@ class TestSearchAndNullSemantics:
                     hypothesis_id=hid, conditions="{}",
                     conditions_hash=f"c{hid}", statement=stmt,
                     data_ranges="[]", ranges_hash=f"r{hid}",
-                    status="superseded", created_at=_T.format(1),
-                    updated_at=_T.format(1)))
+                    status="superseded", created_at=_ts(-8),
+                    updated_at=_ts(-8)))
             sess.commit()
         body = client.get("/api/research/hypothesis-cards",
                           params={"q": "\\"}).json()
@@ -218,8 +230,8 @@ class TestSearchAndNullSemantics:
                     hypothesis_id=hid, conditions="{}",
                     conditions_hash=f"c{hid}", statement=stmt,
                     data_ranges="[]", ranges_hash=f"r{hid}",
-                    status="superseded", created_at=_T.format(1),
-                    updated_at=_T.format(1)))
+                    status="superseded", created_at=_ts(-8),
+                    updated_at=_ts(-8)))
             sess.commit()
         body = client.get("/api/research/hypothesis-cards",
                           params={"q": "布林带_"}).json()
@@ -246,7 +258,7 @@ class TestSearchAndNullSemantics:
                 "latest_verdict", "latest_record_id", "recent_activity_at"}
 
     def test_latest_verdict_takes_newest_and_nulls(self, client):
-        """hyp_a 最新记录=fail（11-08 晚于 11-05 的 pass）；hyp_c 零
+        """hyp_a 最新记录=fail（now-1d 晚于 now-7d 的 pass）；hyp_c 零
         验证→latest_*=null、count=0；hyp_d 无日志→recent_activity_at
         =null。"""
         by_id = {c["hypothesis_id"]: c
@@ -267,7 +279,8 @@ class TestPagingOrderAndAdhoc:
     """A1-11~A1-14 排序/cursor/adhoc/幂等。"""
 
     def test_order_recent_activity_desc(self, client):
-        """recent_activity_at 降序（null 落末位）；11-09(hyp_b) 首位。"""
+        """recent_activity_at 降序（null 落末位）；now+2d(hyp_b) 首位
+        （恒压 register 运行时刻日志——相对化种子后不随日历漂移）。"""
         items = client.get("/api/research/hypothesis-cards").json()["items"]
         assert items[0]["hypothesis_id"] == "hyp_b"
         acts = [c["recent_activity_at"] for c in items
