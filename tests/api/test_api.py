@@ -560,14 +560,17 @@ class TestStrategyBacktest:
 
 
 class TestBacktestUnknownLogicBubbles422:
-    """R-7 冒泡面①（fix-silent-degradation）：内联 DNA 非法 logic 经
-    回测引擎 combine_signals raise ResearchError → 应用层全局兜底 422
-    出站（与既有 RESEARCH_NOT_EXPRESSIBLE 同通道，零适配）。"""
+    """R-7 冒泡面①（fix-silent-degradation）：内联 DNA 非法 logic
+    → 422 出站。SEC-3（审查批）起拦截前移：validate_dna 入口期值域
+    拒绝（_common 第一段 DNA_VALIDATION_FAILED），不再抵达引擎
+    combine_signals 的 R-7 raise——执行期 raise 保留为已落库存量
+    兜底，其语义由 tests/evolution/test_boundary_p0.py 单元锚承载。"""
 
     def test_inline_dna_unknown_logic_returns_422(self, client: TestClient) -> None:
         import pandas as pd
 
-        # 完整数据在库（装载与指标计算通过——异常发生在信号组合段）
+        # 完整数据在库（SEC-3 前移后异常发生在入口校验段，数据装配
+        # 与指标段不再可达——保留数据在库以证明拒绝与其无关）
         data_dir = client.app.state.data_dir
         df = pd.DataFrame(
             {"open": [100.0] * 30, "high": [101.0] * 30,
@@ -592,9 +595,10 @@ class TestBacktestUnknownLogicBubbles422:
         )
         assert response.status_code == 422
         body = response.json()["detail"]
-        assert body["code"] == "RESEARCH_PARAM_INVALID"
-        assert body["detail"]["param"] == "logic"
-        assert body["detail"]["value"] == "XOR"
+        assert body["code"] == "DNA_VALIDATION_FAILED"
+        assert any(
+            "logic_genes.entry_logic" in e and "XOR" in e
+            for e in body["errors"]), body["errors"]
 
 
 # ── Test: Strategy Compare ──

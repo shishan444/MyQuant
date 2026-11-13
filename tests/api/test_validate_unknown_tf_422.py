@@ -66,6 +66,43 @@ class TestValidateUnknownTf422:
         assert body["detail"]["detail"]["timeframe"] == "4h"
 
 
+class TestValidatePairLengthGate:
+    """SEC-1（fix-silent-degradation 审查批）：pair 长度防线
+    （max_length=32，对齐 symbol 值域治理专项预设上界）——超长输入
+    在 pydantic 层 422，不再以 find_parquet exists() 的 ENAMETOOLONG
+    OSError 逃逸 500（246A/5000A 修复前实测 500）；恰 32 字符过
+    pydantic 后维持 R-2 既有 422 SYMBOL_NOT_FOUND 语义。"""
+
+    @pytest.mark.parametrize("bad_len", [33, 230, 246, 5000],
+                             ids=["恰超1", "230A旧422面", "246A旧500面",
+                                  "5000A旧500面"])
+    def test_overlong_pair_returns_422_pydantic(self, api_client, bad_len):
+        """超长 pair → 422 pydantic 通道（detail 为校验错误数组，
+        非 ResearchError 形制）；230A 修复前 422（SYMBOL_NOT_FOUND）
+        修复后状态码不变，246A/5000A 修复前 500 修复后不再 500。"""
+        payload = _validate_payload("4h")
+        payload["pair"] = "A" * bad_len
+        resp = api_client.post("/api/validate", json=payload)
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        # pydantic 通道形制：数组 + string_too_long 消息（非 500 裸穿、
+        # 非 ResearchError dict 形制）
+        assert isinstance(detail, list)
+        assert any("at most 32" in e.get("msg", "") for e in detail)
+
+    def test_pair_exactly_32_keeps_precheck_semantics(self, api_client):
+        """恰 32 字符过 pydantic → R-2 预检承载：缺文件 422
+        RESEARCH_SYMBOL_NOT_FOUND（既有语义不变，边界不前移误伤）。"""
+        payload = _validate_payload("4h")
+        payload["pair"] = "A" * 32
+        resp = api_client.post("/api/validate", json=payload)
+        assert resp.status_code == 422
+        body = resp.json()
+        assert body["detail"]["code"] == "RESEARCH_SYMBOL_NOT_FOUND"
+        assert body["detail"]["detail"]["symbol"] == "A" * 32
+        assert body["detail"]["detail"]["timeframe"] == "4h"
+
+
 class TestValidatePrecheckEmptyData200:
     """R-2 预检语义边界：预检只管文件级可达——文件在库但数据为空、
     或区间无重叠，均维持 200 空结果（与「文件不存在」的 422 区分）。"""

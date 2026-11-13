@@ -38,7 +38,12 @@ class ConditionInput(BaseModel):
 
 
 class ValidateRequest(BaseModel):
-    pair: str
+    # pair 长度防线（fix-silent-degradation 审查批 SEC-1）：超长输入
+    # 在 pydantic 层 422——原裸 str 直穿 R-2 预检 find_parquet 的
+    # exists()，ENAMETOOLONG OSError 逃逸 500（246A 实测在案）；
+    # max_length=32 对齐 symbol 值域治理专项预设上界（现实交易对
+    # ≤20 字符，32 充裕）
+    pair: str = Field(..., max_length=32)
     timeframe: str
     start: str
     end: str
@@ -152,8 +157,12 @@ def run_validation(
     from core.data.mtf_loader import find_parquet, safe_symbol
     try:
         _pq = find_parquet(data_dir, safe_symbol(payload.pair), payload.timeframe)
-    except ValueError:
-        pass  # 非法 timeframe：engine 既有 422 转换承载，预检不抢占
+    except (ValueError, OSError):
+        # ValueError=非法 timeframe（engine 既有 422 转换承载，预检
+        # 不抢占）；OSError=文件系统层异常（exists() ENAMETOOLONG 等
+        # 长度防线残余形态）——engine MTF_DATA_EXCEPTIONS 降级承载
+        # （R-3 语义），预检只承载「确定性无数据」判据，两类均放行
+        pass
     else:
         if _pq is None:
             raise ResearchError(

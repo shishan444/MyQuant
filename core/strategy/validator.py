@@ -160,6 +160,8 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
     - 杠杆在 [1, MAX_LEVERAGE]（红线单源）
     - 新条件类型的结构完整性
     - cross_layer_logic 须 AND 或 OR（MTF 策略）
+    - logic_genes 四算子字段（entry/exit/add/reduce_logic）须 AND 或 OR
+      （顶层与 layers 同面；执行期 R-7 raise 的入口期上游补全）
     - mixed 方向带 layers 但无 trend 层时 warning（不拒）
     """
     errors: List[str] = []
@@ -373,6 +375,26 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
             errors.append(
                 f"{label}: timeframe '{gene_tf}' must be >= execution "
                 f"timeframe '{exec_tf}'")
+
+    # logic_genes 值域校验（fix-silent-degradation 审查批 SEC-3）：
+    # 四算子字段 AND/OR 单值域（与 executor combine_signals R-7
+    # legal_values 同源）；顶层与 layers 同面（TimeframeLayer.
+    # logic_genes 同缺口一并覆盖）。原 validate_dna 零校验——非法
+    # 值可落库，执行期 R-7 raise 才拒；本处为入口期上游补全（落库/
+    # 装载前 422，执行期 raise 保留为已落库存量兜底）。errors 收集
+    # 形与 timeframe 值域同制（不 raise）
+    _logic_targets: List[tuple] = [("logic_genes", dna.logic_genes)]
+    for layer in (dna.layers or []):
+        _logic_targets.append(
+            (f"Layer {layer.timeframe} logic_genes", layer.logic_genes))
+    for label, lg in _logic_targets:
+        for op_field in ("entry_logic", "exit_logic",
+                         "add_logic", "reduce_logic"):
+            op_val = getattr(lg, op_field)
+            if op_val not in ("AND", "OR"):
+                errors.append(
+                    f"{label}.{op_field} must be 'AND' or 'OR', "
+                    f"got {op_val!r}")
 
     # 风险基因值域校验（sl_mode 感知——值域按模式分叉，DC-11/DC-12；
     # trail/atr 是合法 DNA 形态，本处只判值域，交易链兼容性归
