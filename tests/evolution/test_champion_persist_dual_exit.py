@@ -77,6 +77,9 @@ class TestCompletedExitPersist:
 
         champion = StrategyDNA.from_json(row["champion_dna"])
         lib_row = get_strategy(db, champion.strategy_id)
+        # e2e closed-loop 冠军 GET 已放宽 [200,404]（同签名幂等分叉如实表达），
+        # 内嵌 id 200 义务的唯一锚在本用例——勿删，删则冠军入库整体断裂在
+        # e2e 面无第二道网
         assert lib_row is not None, "冠军 strategy_id 在策略库查无此策（断裂核心锚）"
         assert lib_row["source"] == "evolution"
         assert lib_row["source_task_id"] == "cp-11"
