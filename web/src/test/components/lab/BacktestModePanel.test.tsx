@@ -101,7 +101,7 @@ describe("BacktestModePanel", () => {
   it("does not call runBacktest API when first rendered with DNA", () => {
     render(<BacktestModePanel {...defaultProps} />, { wrapper: createWrapper() });
 
-    // Should show DNA summary but NOT trigger backtest
+    // 行为边界：DNA 在场只展示「策略基因」摘要，首渲染零副作用（不自动发起 backtest）
     expect(runBacktest).not.toHaveBeenCalled();
     expect(screen.getByText("策略基因")).toBeInTheDocument();
   });
