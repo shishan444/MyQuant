@@ -3922,7 +3922,7 @@
           "research"
         ],
         "summary": "Backtest Sandbox",
-        "description": "沙盒回测：快速试错（可调 fee/slippage/init_cash），直返指标；\n不判门槛、不入验证记录；强制落研究日志（挂假设区间进判定并集）。",
+        "description": "沙盒回测：快速试错（可调 fee/slippage/init_cash），直返指标，\n不判门槛、不构成验证证据；每次执行同步写入验证记录统一流\n（validation_records level=sandbox_backtest 行，verdict 恒空串；\n响应回显 record_id）；强制落研究日志（挂假设区间进判定并集）。",
         "operationId": "backtest_sandbox_api_research_backtest_sandbox_post",
         "requestBody": {
           "content": {
@@ -10624,7 +10624,7 @@
           "end"
         ],
         "title": "SandboxBacktestRequest",
-        "description": "沙盒回测（improve-mcp-agent-loop M6）：快速试错、可调成本、\n不判门槛不入验证记录；挂假设时区间计入判定并集（防窥探）。\n经济参数值域前置校验：fee/slippage >= 0、init_cash >= 1\n（负成本/零本金在下单金额计算中产生无意义或发散结果）。"
+        "description": "沙盒回测（improve-mcp-agent-loop M6）：快速试错、可调成本、\n不判门槛不构成验证证据；每次执行入验证记录统一流（level=\nsandbox_backtest 行，响应回显 record_id）；挂假设时区间计入\n判定并集（防窥探）。\n经济参数值域前置校验：fee/slippage >= 0、init_cash >= 1\n（负成本/零本金在下单金额计算中产生无意义或发散结果）。"
       },
       "SceneRequest": {
         "properties": {

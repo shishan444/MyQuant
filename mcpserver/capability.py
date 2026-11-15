@@ -49,8 +49,11 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   降级）。事件形制整理触发不创造触发：0 事件形态照常
   reject_suggestion；bars 上界按求值数据长度校验（超界 422）。
 - **沙盒回测纪律**：run_backtest 是快速试错通道（可调手续费/滑点，
-  直返指标、不构成验证证据）；挂 hypothesis_id 的沙盒区间**计入判定
-  并集**——此后同区间的隔离验证会被拒（先偷看不获利）。
+  直返指标、不构成验证证据）；每次执行同步写入验证记录统一流
+  （validation_records level=sandbox_backtest 行，verdict 恒空串；响应
+  回显 record_id；沙盒记录不可作 ruler_compare/ab_compare 对照源）；
+  挂 hypothesis_id 的沙盒区间**计入判定并集**——此后同区间的隔离
+  验证会被拒（先偷看不获利）。
 - **时点行情快照**：get_market_snapshot 返回 as_of 时点多周期五维
   行情卡（trend/momentum/volatility/volume/derivatives——读数+90 日
   分位+三态判读；六步研究第①步固定入口）。读数与分位闭端截至
