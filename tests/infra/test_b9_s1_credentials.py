@@ -1,11 +1,13 @@
-"""B9.2 S1 凭证回显修复——脱敏往返（design.md B9 节冻结方案）。
+"""config 凭据链测试（fix-audit-disclosure-security S-01 拆链改写）。
 
-GET 凭证键全掩码 "***"（CARD-06 后不泄露首尾片段，未配置回 ""）；
-PUT 含 *** 的凭证值=未修改回显（哨兵），不覆盖已存值。前端零改动
-（Settings 表单显示 masked 即「已配置」）。
+B9.2 S1 掩码语义已随凭据通道退役（凭据唯一通道=data/credentials.json）；
+本文件承载拆链后端到端语义：GET/PUT 零凭据键 + lifespan 存量迁移真链路
+（TestClient with 块真实走 app lifespan——config.json 预置明文 → 启动
+迁移 → 凭据文件生成 + 物理删键）。
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -17,73 +19,75 @@ CREDS = ("binance_api_key", "binance_secret_key")
 
 
 @pytest.fixture
-def client(tmp_path: Path):
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from api.app import create_app
     from core.persistence.db_ext import init_db_ext
 
+    monkeypatch.setenv("MYQUANT_CREDENTIALS_FILE",
+                       str(tmp_path / "creds.json"))
     init_db_ext(tmp_path / "t.db")
     app = create_app(db_path=tmp_path / "t.db", data_dir=tmp_path)
     with TestClient(app) as c:
         yield c
 
 
-class TestCredentialMasking:
-    def test_masked_roundtrip(self, client):
-        """配置→GET masked→PUT 哨兵→GET 仍 masked→存储值未损。"""
-        # 1) 配置明文
+class TestConfigChannelCredentialFree:
+    def test_get_has_no_credential_keys(self, client):
+        cfg = client.get("/api/config").json()
+        for k in (*CREDS, "binance_connected"):
+            assert k not in cfg, f"拆链后 GET 不应回显 {k}"
+
+    def test_put_credential_keys_ignored_no_persist(self, client):
         r = client.put("/api/config", json={
             "binance_api_key": "AbCdEfGhIjKlMnOp",
             "binance_secret_key": "SeCrEtKeY12345678",
         })
         assert r.status_code == 200
-
-        # 2) GET 全掩码（CARD-06 后恒 ***，不泄露首尾片段）
-        cfg = client.get("/api/config").json()
-        assert cfg["binance_api_key"] == "***"
-        assert cfg["binance_secret_key"] == "***"
-
-        # 3) PUT 哨兵（表单回显值原样提交，含 ***）→ 不覆盖已存值
-        r = client.put("/api/config", json={
-            "binance_api_key": "***",
-            "binance_secret_key": "***",
-        })
-        assert r.status_code == 200
-
-        # 4) GET 仍全掩码 + 存储值未损（经底层文件直查）
-        cfg = client.get("/api/config").json()
-        assert cfg["binance_api_key"] == "***"
-        import json as _json
+        for k in (*CREDS, "binance_connected"):
+            assert k not in r.json()
         db_dir = client.app.state.db_path.parent
-        stored = _json.loads((db_dir / "config.json").read_text())
-        assert stored["binance_api_key"] == "AbCdEfGhIjKlMnOp"
-        assert stored["binance_secret_key"] == "SeCrEtKeY12345678"
-
-    def test_unconfigured_creds_return_empty(self, client):
-        cfg = client.get("/api/config").json()
-        assert cfg["binance_api_key"] == ""
-        assert cfg["binance_secret_key"] == ""
-
-    def test_short_credential_masks_fully(self, client):
-        """短于掩码窗的凭证不泄露（全掩或近似掩）。"""
-        client.put("/api/config", json={"binance_api_key": "short"})
-        cfg = client.get("/api/config").json()
-        assert "short" not in cfg["binance_api_key"]
-        assert cfg["binance_api_key"]
-
-    def test_new_plaintext_overrides(self, client):
-        """真实新值（不含 ***）正常覆盖（回显全掩码、落盘新值）。"""
-        import json as _json2
-        client.put("/api/config", json={"binance_api_key": "AAAA1111BBBB"})
-        client.put("/api/config", json={"binance_api_key": "ZZZZ9999YYYY"})
-        cfg = client.get("/api/config").json()
-        assert cfg["binance_api_key"] == "***"
-        db_dir = client.app.state.db_path.parent
-        stored = _json2.loads((db_dir / "config.json").read_text())
-        assert stored["binance_api_key"] == "ZZZZ9999YYYY"
+        stored = json.loads((db_dir / "config.json").read_text())
+        assert "binance_api_key" not in stored, "凭据键不得经 PUT 落盘"
 
     def test_non_credentials_passthrough(self, client):
-        """非凭证键不受掩码影响。"""
+        """非凭据键不受拆链影响。"""
         client.put("/api/config", json={"timezone": "UTC+9", "init_cash": 50000})
         cfg = client.get("/api/config").json()
         assert cfg["timezone"] == "UTC+9"
         assert cfg["init_cash"] == 50000
+
+
+class TestLifespanMigrationE2E:
+    def test_startup_migrates_legacy_plaintext(self, tmp_path, monkeypatch):
+        """端到端：config.json 预置明文 → TestClient 启动（lifespan）→
+        凭据文件生成（值迁移+权限）+ config.json 物理删键 + GET 零键。"""
+        cred_path = tmp_path / "e2e-creds.json"
+        monkeypatch.setenv("MYQUANT_CREDENTIALS_FILE", str(cred_path))
+        from api.app import create_app
+        from core.persistence.db_ext import init_db_ext
+
+        db_path = tmp_path / "t.db"
+        init_db_ext(db_path)
+        (db_path.parent / "config.json").write_text(json.dumps({
+            "binance_api_key": "LegacyKey" + "a" * 55,
+            "binance_secret_key": "LegacySecret" + "b" * 54,
+            "binance_connected": True,
+            "language": "zh-CN",
+        }), encoding="utf-8")
+
+        app = create_app(db_path=db_path, data_dir=tmp_path)
+        with TestClient(app) as c:
+            cfg = c.get("/api/config").json()
+            for k in (*CREDS, "binance_connected"):
+                assert k not in cfg
+            stored = json.loads(
+                (db_path.parent / "config.json").read_text(encoding="utf-8"))
+            for k in (*CREDS, "binance_connected"):
+                assert k not in stored, f"lifespan 应物理删除 {k}"
+            assert stored["language"] == "zh-CN", "普通配置逐字节保留"
+        assert cred_path.exists(), "凭据文件应生成"
+        import os
+        import stat
+        assert stat.S_IMODE(os.stat(cred_path).st_mode) == 0o600
+        migrated = json.loads(cred_path.read_text(encoding="utf-8"))
+        assert migrated["binance_api_key"].startswith("LegacyKey")
