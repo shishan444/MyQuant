@@ -146,14 +146,16 @@ def _task_row_to_response(
 
 
 def _strategies_to_dicts(
-    strategies: List[Dict[str, Any]], min_score: Optional[float],
+    strategies: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """策略行列表转 REST 响应 dict（min_score 过滤 + dna/metrics JSON 解析）。"""
+    """策略行列表转 REST 响应 dict（dna/metrics JSON 解析）。
+
+    min_score 过滤已下推存储层 SQL WHERE（fix-audit-correctness A-01：
+    过滤先于 limit 截断，排名靠后的达标策略不再被截断吞掉）。
+    """
     result: List[Dict[str, Any]] = []
     for s in strategies:
         score = s.get("best_score") or 0
-        if min_score is not None and score < min_score:
-            continue
         dna_dict = None
         if s.get("dna_json"):
             try:
@@ -194,9 +196,9 @@ def list_all_discovered_strategies(
     from core.persistence.repository.strategy import list_strategies
     strategies = list_strategies(
         db_path, source="evolution", sort_by="best_score",
-        sort_order="desc", limit=limit,
+        sort_order="desc", limit=limit, min_score=min_score,
     )
-    return _strategies_to_dicts(strategies, min_score)
+    return _strategies_to_dicts(strategies)
 
 
 @router.post("/tasks", status_code=201)
@@ -533,8 +535,9 @@ def get_discovered_strategies(
         sort_by="best_score",
         sort_order="desc",
         limit=limit,
+        min_score=min_score,
     )
-    return _strategies_to_dicts(strategies, min_score)
+    return _strategies_to_dicts(strategies)
 
 
 # ── Timeframe utilities ──
