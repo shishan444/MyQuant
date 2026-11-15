@@ -54,6 +54,7 @@ import {
   eventSemantics,
   legacySide,
   markerSide,
+  normalizeDirection,
   recordSymbolTimeframe,
   resolveDirectionLookup,
   snapToBars,
@@ -720,6 +721,16 @@ function EquityReview({
 }
 
 /* ── V2 成交记录逐笔表（开平双价/未平仓如实/色点单源；点行定位） ── */
+/** 方向列三态（fe-vr-marker-fidelity Q2 基线项）：归一 long（含
+ *  "Long" 大写逐笔值域形）→「多」、short（含 "Short"）→「空」、
+ *  null/归一失败 →「—」（与同表 entry_price/pnl null 显「—」惯例
+ *  一致）。复用契约 0 归一组件同源不另起——修复双重缺陷：旧小写
+ *  判断对大写值域恒不命中（空头记录整列恒显「多」）、null 错显「多」。 */
+const directionLabel = (raw: string | null): string => {
+  const dir = normalizeDirection(raw);
+  return dir === "long" ? "多" : dir === "short" ? "空" : "—";
+};
+
 function TradeTable({
   exec,
   tradeSemantics,
@@ -781,7 +792,7 @@ function TradeTable({
                   >
                     <td className="py-1 font-num text-text-muted">{fmtTime(t.entry_time)}</td>
                     <td className="font-num text-text-muted">{t.seq}</td>
-                    <td className="text-text-secondary">{t.direction === "short" ? "空" : "多"}</td>
+                    <td className="text-text-secondary">{directionLabel(t.direction)}</td>
                     <td className="font-num text-text-secondary">{t.entry_price ?? "—"}</td>
                     <td className="font-num text-text-secondary">
                       {t.exit_time ? (t.exit_price ?? "—") : "未平仓"}

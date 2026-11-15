@@ -1866,6 +1866,27 @@ describe("组装层标记管道（fe-vr-marker-fidelity ASM）", () => {
     expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-markers-text", "开多 100.0");
   });
 
+  it("ASM-13 逐笔表方向列三态（Q2 基线项）：Long→多/Short→空/null→—（大写值域命中+null 兜底双缺陷修复证明）", async () => {
+    const d = makeDetail();
+    d.executions[0].trades = [
+      // Short 大写（VrTrade.direction 实际值域形）——旧小写判断恒不命中错显「多」
+      { seq: 0, entry_time: "2026-04-02 00:00:00+00:00", exit_time: "2026-04-03 00:00:00+00:00",
+        entry_price: 100, exit_price: 110, size: 1, direction: "Short", pnl: 10 },
+      { seq: 1, entry_time: "2026-04-05 00:00:00+00:00", exit_time: "2026-04-06 00:00:00+00:00",
+        entry_price: 105, exit_price: 108, size: 1, direction: "Long", pnl: 3 },
+      // direction null（历史可空形）——旧代码错显「多」
+      { seq: 2, entry_time: "2026-04-07 00:00:00+00:00", exit_time: null,
+        entry_price: 103, exit_price: null, size: 1, direction: null, pnl: null },
+    ];
+    mockDetail.mockResolvedValue(d);
+    ui(<RecordDetail record={makeRow()} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "成交记录" }));
+    // 列序：入场时间/seq/方向/……——方向=第 3 个 td
+    expect((await screen.findByTestId("vr-trade-row-0")).querySelectorAll("td")[2]).toHaveTextContent("空");
+    expect(screen.getByTestId("vr-trade-row-1").querySelectorAll("td")[2]).toHaveTextContent("多");
+    expect(screen.getByTestId("vr-trade-row-2").querySelectorAll("td")[2]).toHaveTextContent("—");
+  });
+
   it("ASM-14 35/36 保义锁定（Q1 基线四点）：无词条滤除+动作列「—」+reason 英文原字面兜底", async () => {
     const d = makeDetail();
     d.executions[0].trades = [];
