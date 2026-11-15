@@ -195,10 +195,20 @@ def import_csv_endpoint(
     data_dir.mkdir(parents=True, exist_ok=True)
     _check_upload_size(file)
 
+    # mode 非法值显式拒（fix-audit-correctness A-03）：静默回退 merge
+    # 曾把「替换」意图静默改写为「合并」（数据结果与调用方意图相反且
+    # 不可察觉）；零副作用拒绝——校验位先于临时文件写入
     try:
         import_mode = ImportMode(mode)
     except ValueError:
-        import_mode = ImportMode.MERGE
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "IMPORT_MODE_INVALID",
+                "message": f"mode 非法：{mode}（合法值 merge/replace/new）",
+                "legal_values": ["merge", "replace", "new"],
+            },
+        )
 
     original_stem = Path(file.filename).stem if file.filename else None
     prefix = original_stem + "-" if original_stem else None
@@ -252,10 +262,20 @@ def import_csv_batch_endpoint(
 
     data_dir.mkdir(parents=True, exist_ok=True)
 
+    # mode 非法值显式拒（fix-audit-correctness A-03）：静默回退 merge
+    # 曾把「替换」意图静默改写为「合并」（数据结果与调用方意图相反且
+    # 不可察觉）；零副作用拒绝——校验位先于临时文件写入
     try:
         import_mode = ImportMode(mode)
     except ValueError:
-        import_mode = ImportMode.MERGE
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "IMPORT_MODE_INVALID",
+                "message": f"mode 非法：{mode}（合法值 merge/replace/new）",
+                "legal_values": ["merge", "replace", "new"],
+            },
+        )
 
     tmp_paths: list[Path] = []
     try:
