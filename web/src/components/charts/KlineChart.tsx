@@ -464,6 +464,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       volumeSeriesRef.current = null;
       mtfSeriesRefs.current = [];
       triggerOffsetSeriesRef.current = null;
+      anchoredMarkerSeriesRefs.current = []; // 同上防悬垂——残留旧 chart series 会让重放的数据 effect 对新 chart 调 removeSeries 抛错
       observationSeriesRef.current = null; // chart.remove() 已整体销毁，ref 清位防悬垂
       initialFitDoneRef.current = false;
     };
