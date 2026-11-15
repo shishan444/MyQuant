@@ -82,3 +82,71 @@ describe("computeTooltipPosition 定位算法", () => {
     ).toEqual({ left: 4, top: 62, placement: "top" });
   });
 });
+
+// ---------------------------------------------------------------------------
+// 不变量属性锚（阶段四属性补强）：对确定性输入网格全体点应保持的关系。
+// 网格含钳制触发点（x=0/500 越界侧）、placement 阈值点（y=38 恰好/39 越过）、
+// 退化形（tooltip 宽 150 > 容器宽 100）——无随机源，可复现；缺省契约值
+// gap=8/edgeMargin=4 以字面参与判定（与 P6 同硬编码原则）
+// ---------------------------------------------------------------------------
+describe("computeTooltipPosition 不变量属性（确定性网格扫描）", () => {
+  const cases: TooltipPositionInput[] = [];
+  for (const ax of [0, 50, 200, 390, 500]) {
+    for (const ay of [0, 10, 38, 39, 100, 150]) {
+      for (const tip of [
+        { width: 100, height: 30 },
+        { width: 150, height: 60 },
+      ]) {
+        for (const con of [
+          { width: 400, height: 200 },
+          { width: 100, height: 200 },
+        ]) {
+          cases.push({ anchor: { x: ax, y: ay }, tooltip: tip, container: con });
+        }
+      }
+    }
+  }
+
+  it("INV-1 右界不变量：left+width <= container.width-edgeMargin 恒成立（退化取等号）", () => {
+    for (const c of cases) {
+      const r = computeTooltipPosition(c);
+      expect(r.left + c.tooltip.width).toBeLessThanOrEqual(c.container.width - 4);
+    }
+  });
+
+  it("INV-2 非退化左界：浮层可容纳（width <= container.width-2*edgeMargin）时 left >= edgeMargin", () => {
+    for (const c of cases) {
+      if (c.tooltip.width <= c.container.width - 2 * 4) {
+        const r = computeTooltipPosition(c);
+        expect(r.left).toBeGreaterThanOrEqual(4);
+      }
+    }
+  });
+
+  it("INV-3 placement 单调性：同组（非 y 维全同）anchor.y 递增，top 一旦出现不得回退 bottom", () => {
+    const groups = new Map<string, TooltipPositionInput[]>();
+    for (const c of cases) {
+      const key = `${c.anchor.x}|${c.tooltip.width}x${c.tooltip.height}|${c.container.width}x${c.container.height}`;
+      const g = groups.get(key) ?? [];
+      g.push(c);
+      groups.set(key, g);
+    }
+    for (const list of groups.values()) {
+      const sorted = [...list].sort((a, b) => a.anchor.y - b.anchor.y);
+      const placements = sorted.map((c) => computeTooltipPosition(c).placement);
+      const firstTop = placements.indexOf("top");
+      if (firstTop >= 0) {
+        expect(placements.slice(firstTop).every((p) => p === "top")).toBe(true);
+      }
+    }
+  });
+
+  it("INV-4 top 两域公式：top 域=anchor.y-gap-height；bottom 域=anchor.y+gap", () => {
+    for (const c of cases) {
+      const r = computeTooltipPosition(c);
+      expect(r.top).toBe(
+        r.placement === "top" ? c.anchor.y - 8 - c.tooltip.height : c.anchor.y + 8,
+      );
+    }
+  });
+});
