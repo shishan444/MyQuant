@@ -1027,11 +1027,16 @@ def run_sandbox_backtest(
     margin_cap: Optional[float] = None,
     halt_drawdown_pct: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """沙盒回测（improve-mcp-agent-loop M6）：快速试错，不判门槛、不入验证记录。
+    """沙盒回测（improve-mcp-agent-loop M6）：快速试错，不判门槛、不构成验证证据。
 
     纪律内嵌：每次沙盒强制落研究日志——挂 hypothesis_id 时区间进判定
     并集（封堵"先偷看后验证"），不挂时以 adhoc 日志留痕。
     区间 bar 数超上限拒绝（防爆超时，引导走隔离验证协议）。
+
+    验证记录统一流（add-sandbox-records-unified-flow R1）：每次执行
+    同步写入 validation_records（level=sandbox_backtest 行——verdict 恒
+    空串不参与三态判定；hypothesis_id 未挂以 'adhoc' 字面量入行），
+    响应回显 record_id；沙盒记录不可作 ruler/ab 对照源。
 
     任务级封顶两参（sandbox-and-report-supplement D1 ③层——路由层
     已完成值域校验）：leverage/margin_cap 透传引擎；两参都传时③层
@@ -1040,7 +1045,8 @@ def run_sandbox_backtest(
 
     Returns:
         {"strategy_id", "symbol", "timeframe", "metrics", "bars_used",
-         "hypothesis_id", "sandbox": True, "task_params"?}
+         "warmup_bars", "hypothesis_id", "record_id", "sandbox": True,
+         "task_params"?}
     """
     # bars 上限（MCP write_timeout=60s 内留余量；50k 起点实施时校准）
     tf_minutes = TF_MINUTES.get(timeframe, 240)
@@ -1055,6 +1061,16 @@ def run_sandbox_backtest(
             status=422,
             detail={"bars": bars, "max": SANDBOX_MAX_BARS,
                     "slow_path": "run_isolated_validation 支持大区间"})
+
+    # 假设存在性前置（ND1——三入口对称先例）：沙盒入表后假 id 会成为
+    # 挂不存在假设的「证据」行，必须拦；None（adhoc 路径）跳过校验
+    # 直接以 'adhoc' 字面量入行
+    if hypothesis_id is not None:
+        if rr.get_hypothesis(db_path, hypothesis_id) is None:
+            raise ResearchError(
+                "RESEARCH_HYPOTHESIS_NOT_FOUND",
+                f"假设不存在: {hypothesis_id}", status=404,
+                detail={"hypothesis_id": hypothesis_id})
 
     dna, strat_row = _load_strategy_dna(db_path, strategy_id)
     symbol = symbol or strat_row.get("symbol", "BTCUSDT")
@@ -1082,6 +1098,35 @@ def run_sandbox_backtest(
         summary=f"sandbox backtest {symbol} {timeframe} [{start},{end}) "
                 f"fee={fee} slippage={slippage}")
 
+    # 验证记录统一流写入（R1——编排步骤 5）：日志先行（步骤 4，并集
+    # 唯一事实源）记录随后，两独立事务；写失败裸穿 fail-loud（最坏
+    # 状态=「并集已计、记录缺」，重跑同区间即补——并集对同区间幂等）。
+    # params 七恒键+三可选键传了才写（无 request_range——ruler/ab 对照
+    # 形制校验天然拒绝）；result 携带完整 metrics（ND2）；range_hash
+    # 掺参数全集+record_id（D5——每次执行恒新，五元唯一约束永不冲突）
+    record_id = f"rec_{uuid.uuid4().hex[:12]}"
+    record_params: Dict[str, Any] = {
+        "symbol": symbol, "timeframe": timeframe, "start": start,
+        "end": end, "fee": fee, "slippage": slippage,
+        "init_cash": init_cash}
+    if leverage is not None:
+        record_params["leverage"] = leverage
+    if margin_cap is not None:
+        record_params["margin_cap"] = margin_cap
+    if halt_drawdown_pct is not None:
+        record_params["halt_drawdown_pct"] = halt_drawdown_pct
+    rr.save_sandbox_validation_record(
+        db_path,
+        record_id=record_id,
+        hypothesis_id=hypothesis_id or "adhoc",
+        strategy_id=strategy_id,
+        params=json.dumps(record_params, ensure_ascii=False),
+        result=json.dumps({
+            "metrics": metrics, "symbol": symbol, "timeframe": timeframe,
+            "bars_used": bars_used, "warmup_bars": actual_warmup},
+            ensure_ascii=False),
+        range_hash=_range_hash({**record_params, "record_id": record_id}))
+
     # 任务级参数回显（A1：实际生效值——请求实参逐键传了才写；
     # 有效杠杆=min(DNA 声明, 任务级) 从 metrics.position_sizing.task_cap
     # 提取（引擎装配段 min 链单源），两参都传才生成）
@@ -1089,7 +1134,8 @@ def run_sandbox_backtest(
                 "timeframe": timeframe,
                 "metrics": metrics, "bars_used": bars_used,
                 "warmup_bars": actual_warmup,
-                "hypothesis_id": hypothesis_id, "sandbox": True,
+                "hypothesis_id": hypothesis_id, "record_id": record_id,
+                "sandbox": True,
                 "note": "沙盒结果不构成验证证据；关联假设的区间已计入判定并集"}
     if leverage is not None or margin_cap is not None:
         task_params: Dict[str, Any] = {}
