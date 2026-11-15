@@ -92,6 +92,13 @@ interface KlineChartProps {
     color: string;
     shape: "arrowUp" | "arrowDown" | "circle" | "square";
     text: string;
+    /** 锚定价位（fe-vr-marker-fidelity 契约 5）：非 null=透明锚定通道
+     *  （marker 挂该价位的透明 series 数据点上）；null/缺省=蜡烛主
+     *  series 通道（现状行为逐位一致——不传 price 的消费方/mock 零影响） */
+    price?: number | null;
+    /** 动作族（P1 贪心分桶排序键 open<add<reduce<exit；缺省 undefined
+     *  排序退化输入序——向后兼容，组装层自 TraceMarkerDraft 透传） */
+    action?: "open" | "add" | "reduce" | "exit";
   }>;
   /** 图表与 series 创建完成后回调一次。 */
   onChartReady?: (chart: IChartApi, series: ISeriesApi<"Candlestick">) => void;
@@ -178,6 +185,9 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const mtfSeriesRefs = useRef<ISeriesApi<"Line">[]>([]);
   const triggerOffsetSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // 锚定透明 series 组句柄（fe-vr-marker-fidelity 契约 5——effect 重跑
+  // 先全量 removeSeries 再重建，数组管理；anchored 空时零 series 零残留）
+  const anchoredMarkerSeriesRefs = useRef<ISeriesApi<"Line">[]>([]);
   // 观测序列线句柄（CARD-01 命令式通道——挂/换先清旧，消费方驱动）
   const observationSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const initialFitDoneRef = useRef(false);
@@ -454,6 +464,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       volumeSeriesRef.current = null;
       mtfSeriesRefs.current = [];
       triggerOffsetSeriesRef.current = null;
+      anchoredMarkerSeriesRefs.current = []; // 同上防悬垂——残留旧 chart series 会让重放的数据 effect 对新 chart 调 removeSeries 抛错
       observationSeriesRef.current = null; // chart.remove() 已整体销毁，ref 清位防悬垂
       initialFitDoneRef.current = false;
     };
@@ -607,7 +618,8 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       }
     }
 
-    // -- 构建标记（信号标记挂蜡烛 series，触发点标记挂偏移 series）--
+    // -- 构建标记（无价信号标记挂蜡烛 series；有价标记挂锚定价位的
+    //    透明 series 组；触发点标记挂偏移 series）--
 
     // 移除旧触发点偏移 series
     if (triggerOffsetSeriesRef.current) {
@@ -615,16 +627,85 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       triggerOffsetSeriesRef.current = null;
     }
 
-    // 信号标记挂蜡烛 series（样式表与映射收敛在 primitives/markers——CARD-04 双写归一）；
-    // 自定义标记通道（signalMarkers）优先——消费方自控色的单源映射
-    const markers = memoizedSignalMarkers
+    // 移除旧锚定透明 series 组（fe-vr-marker-fidelity 契约 5：effect
+    // 每次重跑先全量 removeSeries 再重建——anchored 空时零 series 零残留）
+    for (const s of anchoredMarkerSeriesRefs.current) {
+      mainChart.removeSeries(s);
+    }
+    anchoredMarkerSeriesRefs.current = [];
+
+    // 信号标记双通道拆分（契约 5）：price 非 null=锚定通道（挂该价位
+    // 透明 series 数据点）；null/缺省=蜡烛主 series 通道（现状行为
+    // 逐位一致——不传 price 的消费方/mock 零影响）。自定义标记通道
+    // （signalMarkers）优先——消费方自控色的单源映射（样式表与映射
+    // 收敛在 primitives/markers——CARD-04 双写归一）
+    const allMarkers = memoizedSignalMarkers
       ? memoizedSignalMarkers
       : signalsToMarkers(memoizedSignals, toTime);
+    // 联合元素：signalMarkers 条目（memoizedSignalMarkers 已统一转
+    // Time 并按 time 升序；可带 price/action）或 signals 通道
+    // SignalMarker——price 仅存于前者，in 判定收窄
+    const hasAnchorPrice = (
+      m: (typeof allMarkers)[number],
+    ): m is NonNullable<typeof memoizedSignalMarkers>[number] & { price: number } =>
+      "price" in m && m.price != null;
+    const candleM = allMarkers.filter((m) => !hasAnchorPrice(m));
+    const anchored = allMarkers.filter(hasAnchorPrice);
 
     if (markersPluginRef.current) {
-      markersPluginRef.current.setMarkers(markers);
+      markersPluginRef.current.setMarkers(candleM);
     } else {
-      markersPluginRef.current = createSeriesMarkers(candleSeries, markers);
+      markersPluginRef.current = createSeriesMarkers(candleSeries, candleM);
+    }
+
+    // 锚定通道（有价行，契约 5）：P1 动作族优先序+贪心分桶——anchored
+    // 按 (time 升序, 动作族序 open<add<reduce<exit, 输入序) 稳定排序后
+    // 逐个放入「该 time 槽位空闲的首条 series」（每条 series 维护
+    // time 槽表——series 数据同 time 唯一性约束），无空闲槽则新建
+    // series。series 条数=最小所需；常见场景（同 bar 各族至多一笔）
+    // 每族一条（R8 字面）。action 缺省（不传者）按输入序参与贪心。
+    // series 形制逐项照抄 triggers 偏移 series 先例；透明 series 数据
+    // 点参与价格轴 autoScale（价远超可视 bar 域时价格轴外扩——先例
+    // 既有可接受行为，如实披露）
+    if (anchored.length > 0) {
+      const FAMILY_ORDER: Record<"open" | "add" | "reduce" | "exit", number> = {
+        open: 0, add: 1, reduce: 2, exit: 3,
+      };
+      // time 已由 memoizedSignalMarkers 统一为 UTCTimestamp（number）——
+      // 数值比较即时间升序；稳定排序下同 time 同序号保输入序
+      const sorted = [...anchored].sort((a, b) => {
+        const t = (a.time as number) - (b.time as number);
+        if (t !== 0) return t;
+        return (a.action ? FAMILY_ORDER[a.action] : 4) - (b.action ? FAMILY_ORDER[b.action] : 4);
+      });
+      const groups: Array<{
+        series: ISeriesApi<"Line">;
+        slots: Set<Time>;
+        points: Array<{ time: Time; value: number }>;
+        markers: typeof sorted;
+      }> = [];
+      for (const m of sorted) {
+        let g = groups.find((gr) => !gr.slots.has(m.time));
+        if (!g) {
+          const series = mainChart.addSeries(LineSeries, {
+            color: "transparent",
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+          });
+          g = { series, slots: new Set(), points: [], markers: [] };
+          groups.push(g);
+          anchoredMarkerSeriesRefs.current.push(series);
+        }
+        g.slots.add(m.time);
+        g.points.push({ time: m.time, value: m.price });
+        g.markers.push(m);
+      }
+      for (const g of groups) {
+        g.series.setData(g.points);
+        createSeriesMarkers(g.series, g.markers);
+      }
     }
 
     // 触发点标记挂偏移 series（K 线 high 上浮 1.2%——TRIGGER_OFFSET=1.012）

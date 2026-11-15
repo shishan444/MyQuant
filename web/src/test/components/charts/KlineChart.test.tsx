@@ -432,3 +432,196 @@ describe("KlineChart onCrosshairMove 回调（upgrade-vr-fullrange-chart 契约 
     expect(onCrosshairMove).toHaveBeenCalledWith(param);
   });
 });
+
+/* ══ fe-vr-marker-fidelity T2：signalMarkers 双通道（契约 5 KlineChart
+    部分）——price 拆分/P1 贪心分桶/透明 series 形制/生命周期 ══ */
+
+describe("KlineChart signalMarkers 双通道（锚定价位透明 series 组）", () => {
+  // 锚定 series 判别：在位 Line series 且挂有 markers（EMA/BB/mtf 等
+  // 指标线无 markers；本组不传 triggers，offset series 不在场）
+  const anchoredSeriesOf = (reg: { charts: any[] }) =>
+    reg.charts[0].series.filter(
+      (s: { seriesType: string; markers: unknown }) => s.seriesType === "Line" && s.markers,
+    );
+  const transparentCallsOf = (reg: { charts: any[] }) =>
+    reg.charts[0].addSeries.mock.calls.filter(
+      (c: unknown[]) => (c[1] as { color?: string } | undefined)?.color === "transparent",
+    );
+  const renderWithMarkers = (signalMarkers: unknown, opts: { hideLegend?: boolean } = {}) => {
+    registry.charts.length = 0;
+    registry.crosshairHandlers.length = 0;
+    const utils = render(
+      <KlineChart
+        data={CANDLES as never}
+        signalMarkers={signalMarkers as never}
+        height={400}
+        hideLegend={opts.hideLegend}
+      />,
+    );
+    return { ...utils, reg: registry };
+  };
+  const T1 = "2026-01-01 00:00:00";
+  const T2 = "2026-01-01 04:00:00";
+  const T3 = "2026-01-01 08:00:00";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("CH-01 混合 price 拆分：无价行蜡烛通道独收、有价行锚定通道收", () => {
+    const { reg } = renderWithMarkers([
+      { time: T1, position: "belowBar", color: "#3B82F6", shape: "arrowUp", text: "开多 100.0" },
+      { time: T2, position: "aboveBar", color: "#F59E0B", shape: "arrowDown", text: "平多 110.0", price: 110 },
+      { time: T3, position: "aboveBar", color: "#F59E0B", shape: "arrowUp", text: "平空 108.0", price: 108 },
+    ]);
+    const cs = candleSeriesOf(reg);
+    expect(cs.markers).toHaveLength(1);
+    expect((cs.markers as Array<{ text: string }>)[0].text).toBe("开多 100.0");
+    const anchored = anchoredSeriesOf(reg);
+    expect(anchored).toHaveLength(1);
+    expect((anchored[0].markers as Array<{ text: string }>).map((m) => m.text)).toEqual([
+      "平多 110.0",
+      "平空 108.0",
+    ]);
+  });
+
+  it("CH-02 透明 series setData 数据点逐点={time, value: price}", () => {
+    const { reg } = renderWithMarkers([
+      { time: T1, position: "belowBar", color: "#3B82F6", shape: "arrowUp", text: "开多 100.5", price: 100.5, action: "open" },
+      { time: T2, position: "aboveBar", color: "#3B82F6", shape: "arrowDown", text: "平多 112.0", price: 112, action: "exit" },
+    ]);
+    const anchored = anchoredSeriesOf(reg);
+    // 两 time 互不撞桶——贪心复用首条空闲 series：1 条 series 两数据点
+    expect(anchored).toHaveLength(1);
+    expect(anchored[0].setData.mock.calls[0][0]).toEqual([
+      { time: toTime(T1), value: 100.5 },
+      { time: toTime(T2), value: 112 },
+    ]);
+  });
+
+  it("CH-03 锚定 series 形制照抄 triggers 先例：LineSeries+transparent 五配置项", () => {
+    const { reg } = renderWithMarkers([
+      { time: T1, position: "belowBar", color: "#3B82F6", shape: "arrowUp", text: "开多 100.0", price: 100, action: "open" },
+    ]);
+    const calls = transparentCallsOf(reg);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toMatchObject({ _type: "Line" });
+    expect(calls[0][1]).toMatchObject({
+      color: "transparent",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+  });
+
+  it("CH-04 P1 撞桶（跨份共享边界 bar 同族冲突）：同 time 同族不同价→两条 series 各收其一不丢", () => {
+    const { reg } = renderWithMarkers([
+      { time: T1, position: "aboveBar", color: "#F59E0B", shape: "arrowDown", text: "平多 100.0", price: 100, action: "exit" },
+      { time: T1, position: "aboveBar", color: "#F59E0B", shape: "arrowDown", text: "平多 110.0", price: 110, action: "exit" },
+    ]);
+    const anchored = anchoredSeriesOf(reg);
+    expect(anchored).toHaveLength(2);
+    const texts = anchored.flatMap((s: { markers: Array<{ text: string }> }) => s.markers.map((m) => m.text));
+    expect(texts).toEqual(["平多 100.0", "平多 110.0"]);
+    anchored.forEach((s: { markers: unknown[]; setData: { mock: { calls: unknown[][] } } }) => {
+      expect(s.markers).toHaveLength(1);
+      expect(s.setData.mock.calls[0][0]).toHaveLength(1);
+    });
+  });
+
+  it("CH-05 常见退化（同 bar 各族至多一笔）→每族一条 series（R8 字面）", () => {
+    const m = (time: string, action: "open" | "add" | "reduce" | "exit", shape: string, text: string, price: number) => ({
+      time, position: "aboveBar" as const, color: "#3B82F6", shape, text, price, action,
+    });
+    const { reg } = renderWithMarkers([
+      m(T1, "open", "arrowUp", "开多 100.0", 100),
+      m(T1, "add", "circle", "加仓 101.0", 101),
+      m(T1, "reduce", "circle", "减仓 99.0", 99),
+      m(T1, "exit", "arrowDown", "平多 98.0", 98),
+      m(T2, "open", "arrowUp", "开多 105.0", 105),
+      m(T2, "add", "circle", "加仓 106.0", 106),
+      m(T2, "reduce", "circle", "减仓 104.0", 104),
+      m(T2, "exit", "arrowDown", "平多 103.0", 103),
+    ]);
+    const groups = anchoredSeriesOf(reg);
+    expect(groups).toHaveLength(4);
+    const fams = groups
+      .map((g: { markers: Array<{ action?: string }> }) => g.markers[0]?.action)
+      .sort();
+    expect(fams).toEqual(["add", "exit", "open", "reduce"]);
+    groups.forEach((g: { markers: Array<{ action?: string }> }) => {
+      expect(g.markers).toHaveLength(2);
+      expect(new Set(g.markers.map((x) => x.action)).size).toBe(1);
+    });
+  });
+
+  it("CH-06 生命周期：重跑先 removeSeries 全部锚定 series 再重建；anchored 清空零在位零残留", () => {
+    const withPrice = [
+      { time: T1, position: "aboveBar" as const, color: "#F59E0B", shape: "arrowDown" as const, text: "平多 100.0", price: 100, action: "exit" as const },
+      { time: T1, position: "aboveBar" as const, color: "#F59E0B", shape: "arrowDown" as const, text: "平多 110.0", price: 110, action: "exit" as const },
+    ];
+    const { reg, rerender } = renderWithMarkers(withPrice);
+    const first = anchoredSeriesOf(reg);
+    expect(first).toHaveLength(2);
+    // 换引用重跑：旧锚定 series 全部被 removeSeries、新 series 重建
+    rerender(
+      <KlineChart
+        data={CANDLES as never}
+        signalMarkers={[...withPrice] as never}
+        height={400}
+      />,
+    );
+    const removed = reg.charts[0].removeSeries.mock.calls.map((c: unknown[]) => c[0]);
+    expect(removed).toEqual(expect.arrayContaining(first));
+    const second = anchoredSeriesOf(reg);
+    expect(second).toHaveLength(2);
+    second.forEach((s: unknown) => expect(first).not.toContain(s));
+    // anchored 清空（全无价行）：锚定 series 全移除，蜡烛通道接盘
+    rerender(
+      <KlineChart
+        data={CANDLES as never}
+        signalMarkers={[
+          { time: T1, position: "belowBar", color: "#3B82F6", shape: "arrowUp", text: "开多 100.0" },
+        ] as never}
+        height={400}
+      />,
+    );
+    expect(anchoredSeriesOf(reg)).toHaveLength(0);
+    expect(transparentCallsOf(reg).length).toBe(4); // 历史创建计数（撞桶两轮各 2）——在位归零
+    expect(candleSeriesOf(reg).markers).toHaveLength(1);
+  });
+
+  it("CH-07 不传 price：现状逐位一致——蜡烛通道收全部、零透明 series（与 EMA/BB/指标线判别）", () => {
+    const { reg } = renderWithMarkers([
+      { time: T1, position: "belowBar", color: "#3B82F6", shape: "arrowUp", text: "开多 100.0" },
+      { time: T2, position: "aboveBar", color: "#3B82F6", shape: "circle", text: "加仓 101.0" },
+      { time: T3, position: "aboveBar", color: "#3B82F6", shape: "arrowDown", text: "平多 98.0" },
+    ]);
+    expect(candleSeriesOf(reg).markers).toHaveLength(3);
+    expect(transparentCallsOf(reg)).toHaveLength(0);
+    expect(anchoredSeriesOf(reg)).toHaveLength(0);
+  });
+
+  it("CH-08 无 marker tooltip 挂载（R7 澄清口径——出场原因承载面非 tooltip）", () => {
+    const { container, reg } = renderWithMarkers([
+      { time: T1, position: "belowBar", color: "#3B82F6", shape: "arrowUp", text: "开多 100.0" },
+      { time: T2, position: "aboveBar", color: "#F59E0B", shape: "arrowDown", text: "平多 110.0", price: 110, action: "exit" },
+    ], { hideLegend: true });
+    // DOM 面：图表容器内无 tooltip 类节点挂载（工具栏按钮的 title
+    // 属缩放控件语义、与 marker 无关——不在断言面）
+    expect(container.querySelector("[class*='tooltip' i]")).toBeNull();
+    expect(container.querySelector("[class*='marker-tooltip' i]")).toBeNull();
+    // 库 markers 数据面：两通道 marker 均无 title/tooltip 字段注入
+    const all = [
+      ...(candleSeriesOf(reg).markers as Array<Record<string, unknown>>),
+      ...anchoredSeriesOf(reg).flatMap((s: { markers: Array<Record<string, unknown>> }) => s.markers),
+    ];
+    expect(all.length).toBe(2);
+    all.forEach((m) => {
+      expect(m).not.toHaveProperty("title");
+      expect(m).not.toHaveProperty("tooltip");
+    });
+  });
+});
