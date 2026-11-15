@@ -1,8 +1,8 @@
 """排序提取 JSON 先验防御测试（fix-audit-correctness D-01）。
 
 result/params 列无机制保证恒 JSON——corrupt 行（裸串/坏 JSON）曾使
-json_extract 直接求值抛 OperationalError 炸整端点（sort=
-total_return_desc/symbol/timeframe 全形态）。三表达式内嵌
+json_extract 直接求值抛 OperationalError 炸整端点（sort=total_return_desc
+与 generalization 过滤面）。三表达式内嵌
 json_valid 先验 CASE 后：corrupt 行提取值归 NULL（与「level 不匹配
 →NULL」同 unsortable 语义），端点恒 200；合法行提取值逐字段不变。
 """

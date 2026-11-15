@@ -429,7 +429,7 @@ class TestLiquidationBoundedMetrics:
 
     def test_scorer_联动约束判别力恢复(self):
         """爆仓 metrics 过 min_annual_return>0 约束时
-        constraint_failures 含 annual_return（修复前 nan 比较漏网）。"""
+        hard_constraint_failed == 'annual_return'（fitness 归零，修复前 nan 比较漏网）。"""
         from core.scoring.scorer import score_strategy
         eq = _series([100000.0, 90000.0, 40000.0, 5000.0, -5000.0])
         m = compute_metrics(eq, total_trades=4,
