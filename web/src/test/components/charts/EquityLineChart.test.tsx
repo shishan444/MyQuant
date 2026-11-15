@@ -460,4 +460,65 @@ describe("EquityLineChart 悬停浮层链（E-1~E-10）", () => {
     expect(tip.style.top).toBe("22px");
     expect(posMock.mock.calls[0][0].anchor).toEqual({ x: 100, y: 50 });
   });
+
+  it("E-11 防御态分支二：seriesData 无该 series 条目/有条目无 value 字段 → 不在场不崩", () => {
+    // 设计卡 1 防御态进入条件含两支：「seriesData.get(series) 无值或无 value
+    // 字段」与「反查未命中」——E-7 仅承载反查未命中，本例承载 seriesData 面
+    // 两形（time/point 均在场，不走离图态）
+    render(<EquityLineChart data={HOVER_DATA} />);
+    const series = registry.charts[0].series[0];
+    const time = Date.parse("2026-04-01T05:00:00Z") / 1000;
+    // 形一：seriesData 空 Map（无该 series 条目）
+    act(() => {
+      registry.crosshairHandlers[0]({
+        time,
+        point: { x: 100, y: 50 },
+        seriesData: new Map(),
+      });
+    });
+    expect(screen.queryByTestId("equity-tooltip")).not.toBeInTheDocument();
+    // 形二：有条目但无 value 字段
+    act(() => {
+      registry.crosshairHandlers[0]({
+        time,
+        point: { x: 100, y: 50 },
+        seriesData: new Map([[series, { time }]]),
+      });
+    });
+    expect(screen.queryByTestId("equity-tooltip")).not.toBeInTheDocument();
+  });
+
+  it("E-12 data 全非法（2 点全脏）：不走空态、setData 空数组、悬停浮层恒隐藏", () => {
+    // 设计卡 1 缺失值语义：「data 全非法（validData 空）→ setData([]) → 无点
+    // 可吸附 → 悬停恒离图态，浮层恒隐藏（与现状空态/降级正交，无新分支）」
+    // ——空态判定基于原始 data.length，2 点全脏不走空态分支、图表仍初始化
+    const allDirty = [
+      { timestamp: "not-a-date", value: 100 },
+      { timestamp: "also-not-a-date", value: 200 },
+    ];
+    render(<EquityLineChart data={allDirty} />);
+    expect(createChartMock).toHaveBeenCalledTimes(1);
+    expect(registry.charts[0].series[0].setData).toHaveBeenCalledWith([]);
+    // 悬停注入（time/point 在场、库无数据 seriesData 空）→ 浮层不在场不崩
+    act(() => {
+      registry.crosshairHandlers[0]({
+        time: 12345,
+        point: { x: 100, y: 50 },
+        seriesData: new Map(),
+      });
+    });
+    expect(screen.queryByTestId("equity-tooltip")).not.toBeInTheDocument();
+  });
+
+  it("E-13 浮层硬约束：pointerEvents none + zIndex 高于图（防 mouseleave 闪烁）", () => {
+    // 设计卡 1 浮层 DOM 契约：pointerEvents:'none' 为硬约束（否则鼠标移入
+    // 浮层即触发图表 mouseleave，浮层闪烁）；zIndex 高于图取 10
+    renderAndHover(HOVER_DATA, {
+      timestamp: "2026-04-01T05:00:00Z",
+      value: 1500000,
+    });
+    const tip = screen.getByTestId("equity-tooltip");
+    expect(tip.style.pointerEvents).toBe("none");
+    expect(tip.style.zIndex).toBe("10");
+  });
 });

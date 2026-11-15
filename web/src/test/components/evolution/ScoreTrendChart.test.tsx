@@ -667,4 +667,67 @@ describe("ScoreTrendChart 悬停浮层链（S-1~S-12）", () => {
     expect(tip.style.top).toBe("22px");
     expect(posMock.mock.calls[0][0].anchor).toEqual({ x: 100, y: 50 });
   });
+
+  it.each([
+    [0.75, "75%", "#34d399", "高档 >0.7"],
+    [0.5, "50%", "#fbbf24", "中档 >0.4（档位边界外侧）"],
+    [0.41, "41%", "#fbbf24", "中档边界内侧（>0.4 含）"],
+    [0.4, "40%", "#f87171", "低档边界（≤0.4 含）"],
+    [0.3, "30%", "#f87171", "低档常规"],
+  ] as Array<[number, string, string, string]>)(
+    "S-13 diversity=%s 行色 %s（%s）",
+    (diversity, pct, color) => {
+      // 设计卡 §1.2 条件表 #8 三档（>0.7 #34d399 / >0.4 #fbbf24 / ≤0.4
+      // #f87171）——S-2 仅断高档，此处按档位边界全枚举（含 0.4/0.41 两侧）
+      renderAndHover(
+        [
+          makeRecord({
+            generation: 1,
+            best_score: 50,
+            top3_summary: `pop=2|diag={"diversity":${diversity}}`,
+          }),
+        ],
+        1,
+      );
+      expect(screen.getByText(`种群多样性: ${pct}`)).toHaveStyle({ color });
+    },
+  );
+
+  it("S-14 delta 负档色与适应度未达标 70% 透明（旧字面补全）", () => {
+    // 设计卡 §1.2 条件表 #3a 负 #f87171b3、#4 未达标 70% 透明（b3 后缀语义）
+    // ——S-6 断负形在场未断色、S-7 断反面未断透明形
+    const { unmount: u1 } = renderAndHover(
+      [
+        makeRecord({ generation: 1, best_score: 50 }),
+        makeRecord({ generation: 2, best_score: 49.2 }),
+      ],
+      2,
+    );
+    // jsdom CSSOM 将 8 位 hex 序列化为 rgba 形（探针实测定形）：
+    // #f87171b3 = rgb(248,113,113) alpha 0xb3/255≈0.7
+    expect(screen.getByText("-0.8").style.color).toBe("rgba(248, 113, 113, 0.7)");
+    u1();
+    renderAndHover(
+      [makeRecord({ generation: 1, best_score: 50, best_fitness: 0.8 })],
+      1,
+    );
+    expect(screen.getByText(/适应度: 0\.80/)).toHaveStyle({
+      color: withAlpha(POLARITY.up, 0.7),
+    });
+  });
+
+  it("S-15 防御态：time 与 safeData 全不匹配 → 不在场不崩", () => {
+    // 设计卡 2 反查链契约「未命中 → 防御态（state=null）」（E-7 对称面）
+    renderAndHover(noFitnessRecords, 999);
+    expect(screen.queryByTestId("score-tooltip")).not.toBeInTheDocument();
+  });
+
+  it("S-16 浮层硬约束：pointerEvents none + zIndex 高于图（防 mouseleave 闪烁）", () => {
+    // 设计卡 2 浮层 DOM 契约（同卡 1）：pointerEvents:'none' 硬约束；
+    // zIndex 高于图取 10
+    renderAndHover(S1_RECORDS, 5);
+    const tip = screen.getByTestId("score-tooltip");
+    expect(tip.style.pointerEvents).toBe("none");
+    expect(tip.style.zIndex).toBe("10");
+  });
 });

@@ -58,7 +58,8 @@ describe("computeTooltipPosition 定位算法", () => {
 
   it("P5 窄容器退化（浮层宽于容器）：取右界贴右", () => {
     // container.width=100, width=150 → 右界 100-150-4=-54；
-    // max(50-75, 4)=4 → min(4, -54) = -54；left+width=96=100-4（右内边距恒成立）
+    // 居中项 max(200-75, 4)=125 → min(125, -54) = -54（右界更小取右界=贴右）；
+    // left+width=96=100-4（右内边距恒成立）
     const r = computeTooltipPosition({
       ...base,
       tooltip: { width: 150, height: 30 },
