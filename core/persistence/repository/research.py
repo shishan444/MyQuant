@@ -861,10 +861,16 @@ def list_validation_records(
     sort: Optional[str] = None,
     level: Optional[str] = None,
     verdict: Optional[str] = None,
+    level_exclude: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """验证记录列表（分页双轨：offset/limit 原样——iter_all_pages 的
     fetch_page 契约不动；cursor=(created_at, record_id) keyset 严格
     比较，order 缺省 asc）。count 配套 count_validation_records。
+
+    level_exclude（add-sandbox-records-unified-flow B8/C7）：排除指定
+    level 的行——SQL WHERE 下推先于 limit 截断（调用方拉 200 后过滤
+    会截掉正式行）。消费方=策略验证档案端点（记录口径=正式验证，
+    沙盒不推高档案计数）；缺省 None 行为与现状逐位一致。
 
     B1 扩展形参（upgrade-validation-records-list 1.1——全部缺省 None
     行为与现状逐位一致，签名锚测试锁定四处调用点零适配）：
@@ -892,6 +898,8 @@ def list_validation_records(
     ).offset(offset).limit(limit)
     stmt = _apply_vr_filters(stmt, q=q, generalization=generalization,
                              level=level, verdict=verdict)
+    if level_exclude is not None:
+        stmt = stmt.where(ValidationRecord.level != level_exclude)
     if hypothesis_id is not None:
         stmt = stmt.where(ValidationRecord.hypothesis_id == hypothesis_id)
     if strategy_id is not None:

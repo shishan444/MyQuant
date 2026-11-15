@@ -172,8 +172,13 @@ def validation_report(
             "code": "RESEARCH_STRATEGY_NOT_FOUND",
             "message": f"策略不存在: {strategy_id}", "detail": None})
 
+    # B8（add-sandbox-records-unified-flow）：档案主体记录口径=正式
+    # 验证——排除 sandbox_backtest（SQL WHERE 下推先于 limit=200 截断，
+    # 沙盒行不推高档案计数不挤掉正式记录；lineage 谱系段不受影响——
+    # 聚合源全量分桶沙盒自然进第四级）
     records = rr.list_validation_records(
-        db_path, strategy_id=strategy_id, limit=200)
+        db_path, strategy_id=strategy_id, limit=200,
+        level_exclude="sandbox_backtest")
     if not records:
         return {
             "strategy_id": strategy_id,

@@ -685,3 +685,157 @@ class TestWatchdogRaceViaApi:
             if exec_mod._EXECUTOR is not None:
                 exec_mod._EXECUTOR.shutdown()
             exec_mod._EXECUTOR = old
+
+
+class TestReportSandboxExclusion:
+    """TC-9-1~9-4：策略验证档案排除 sandbox_backtest（B8——档案主体
+    记录口径=正式验证，沙盒不推高不挤位；lineage 谱系四级归属不受
+    影响）。"""
+
+    def _use(self, api_client, research_env):
+        api_client.app.state.db_path = research_env["db"]
+        api_client.app.state.data_dir = research_env["data_dir"]
+
+    def test_pure_sandbox_strategy_report_zero_records_skeleton(
+            self, api_client, research_env):
+        """TC-9-1：纯沙盒策略 200 零记录骨架+report_notice（不进
+        有记录分支——无人话成绩单行）。"""
+        self._use(api_client, research_env)
+        db, d = research_env["db"], research_env["data_dir"]
+        # 显式 gene_signature（沿 sig_wb_test 先例）——condition 的
+        # threshold 不进 gene_signature 派生，隐式推导会与 st_test 同
+        # 签名触发去重静默 return，st_pure 建不出来
+        gene = SignalGene(
+            indicator="RSI", params={"period": 14},
+            role=SignalRole.ENTRY_TRIGGER, field_name="rsi_14",
+            condition={"type": "lt", "threshold": 35})
+        dna = StrategyDNA(
+            signal_genes=[gene, SignalGene(
+                "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, "rsi_14",
+                {"type": "gt", "threshold": 1e9})],
+            logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes())
+        save_strategy(db, strategy_id="st_pure", dna_json=dna.to_json(),
+                      symbol="BTCUSDT", timeframe="4h", name="pure",
+                      gene_signature="sig_pure_sb_test")
+        from core.analysis.validation_service import run_sandbox_backtest
+        for _ in range(2):
+            run_sandbox_backtest(
+                db, d, strategy_id="st_pure", symbol="BTCUSDT",
+                timeframe="4h", start="2024-03-01", end="2024-03-20")
+        resp = api_client.get("/api/research/validation/st_pure/report")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total_records"] == 0
+        assert body["isolated_backtests"] == []
+        assert body["random_window_summaries"] == []
+        assert body["report_notice"] == (
+            "该策略自身无验证记录；lineage 段披露同假设身份族"
+            "的全部历史翻译实体与各自记录归属（含各代草稿）")
+        assert body["lineage"]["entities"][0]["strategy_id"] == "st_pure"
+
+    def test_report_total_records_excludes_sandbox(
+            self, api_client, research_env):
+        """TC-9-2：正式 2 条快照→沙盒 3 次→total 不变+两明细逐字节
+        一致+lineage 变化恰为沙盒归属新增（其余桶不变）。"""
+        self._use(api_client, research_env)
+        db, d = research_env["db"], research_env["data_dir"]
+        rr.save_validation_with_log(
+            db, record_id="rec9_i", hypothesis_id="adhoc",
+            strategy_id="st_test", level="isolated_backtest",
+            params=json.dumps({"request_range": RANGES[0]}),
+            result=json.dumps({
+                "metrics": {"total_return": 0.05, "max_drawdown": -0.05,
+                            "total_trades": 4},
+                "warmup": {"bars": 200}}, ensure_ascii=False),
+            verdict="pass", range_hash="rh9_i")
+        rr.save_validation_with_log(
+            db, record_id="rec9_r", hypothesis_id="adhoc",
+            strategy_id="st_test", level="random_window", params="{}",
+            result=json.dumps({"windows": [], "summary": {
+                "n_windows": 8, "all_pass": True, "worst_window": {
+                    "metrics": {"total_return": -0.02,
+                                "max_drawdown": -0.1}}}},
+                ensure_ascii=False),
+            verdict="pass", range_hash="rh9_r")
+        before = api_client.get(
+            "/api/research/validation/st_test/report").json()
+        assert before["total_records"] == 2
+        from core.analysis.validation_service import run_sandbox_backtest
+        for _ in range(3):
+            run_sandbox_backtest(
+                db, d, strategy_id="st_test", symbol="BTCUSDT",
+                timeframe="4h", start="2024-02-10", end="2024-02-28")
+        after = api_client.get(
+            "/api/research/validation/st_test/report").json()
+        assert after["total_records"] == 2  # 沙盒不推高
+        assert after["isolated_backtests"] == before["isolated_backtests"]
+        assert after["random_window_summaries"] == \
+            before["random_window_summaries"]
+        # lineage 变化恰为沙盒归属新增：当前实体出现 sandbox_backtest
+        # 桶（count=3+record_ids 3 条），其余桶逐键不变
+        b_ent = before["lineage"]["entities"][0]
+        a_ent = after["lineage"]["entities"][0]
+        # 沙盒桶形制（specs lineage 四级）：{count: 3, 三键恒 0}
+        assert a_ent["records"].get("sandbox_backtest") == {
+            "count": 3, "pass": 0, "fail": 0, "inconclusive": 0}
+        assert len(a_ent["record_ids"].get("sandbox_backtest", [])) == 3
+        assert {k: v for k, v in a_ent["records"].items()
+                if k != "sandbox_backtest"} == b_ent["records"]
+        assert {k: v for k, v in a_ent["record_ids"].items()
+                if k != "sandbox_backtest"} == b_ent["record_ids"]
+
+    def test_report_exclusion_scope_exactly_sandbox_backtest(
+            self, api_client, research_env):
+        """TC-9-3：排除面恰 sandbox_backtest 一值——composite 直插
+        对照照现状计入（不得实现成三正式 level 白名单过排死值域）。"""
+        self._use(api_client, research_env)
+        db = research_env["db"]
+        rr.save_validation_with_log(
+            db, record_id="rec9c_i", hypothesis_id="adhoc",
+            strategy_id="st_test", level="isolated_backtest",
+            params="{}", result="{}", verdict="pass", range_hash="rh9c_i")
+        rr.save_validation_with_log(
+            db, record_id="rec9c_p", hypothesis_id="adhoc",
+            strategy_id="st_test", level="composite",
+            params="{}", result="{}", verdict="pass", range_hash="rh9c_p")
+        body = api_client.get(
+            "/api/research/validation/st_test/report").json()
+        assert body["total_records"] == 2  # composite 照现状计入
+
+    def test_report_exclusion_pushed_down_before_limit_truncation(
+            self, api_client, research_env):
+        """TC-9-4：排除 SQL 下推先于 limit=200 截断——201 沙盒行+1 条
+        正式行（时刻晚于全部沙盒行）。
+
+        判别力构造注记：repo 拉取 order 缺省 asc，正式行置于时刻最
+        晚端（asc 窗口尾端之外）——若实现为拉 200 后 Python 过滤，前
+        200 窗口全为沙盒行，正式行被截 total=0（红）；下推实现排除
+        沙盒后拉取，正式行在场 total=1（绿）。tests-plan 原文「正式
+        行 created_at 最早」在 asc 语义下恒在窗口头部无判别力，按
+        判别力等效构造落位（P1/P2 实施时对照校准授权）。
+        """
+        self._use(api_client, research_env)
+        db = research_env["db"]
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from core.persistence.orm.models import ValidationRecord
+        S = sessionmaker(bind=create_engine(f"sqlite:///{db}"))
+        with S() as sess:
+            sess.add(ValidationRecord(
+                record_id="rec9d_formal", hypothesis_id="adhoc",
+                strategy_id="st_test", level="isolated_backtest",
+                segmentation="", verdict="pass", range_hash="rh9d_f",
+                params="{}", result="{}",
+                created_at="2030-01-01T00:00:00Z"))
+            sess.commit()
+        for i in range(201):
+            rr.save_sandbox_validation_record(
+                db, record_id=f"rec9d_sbx_{i:03d}",
+                hypothesis_id="adhoc", strategy_id="st_test",
+                params="{}", result="{}", range_hash=f"rh9d_{i:03d}")
+        resp = api_client.get("/api/research/validation/st_test/report")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total_records"] == 1  # 正式行在场未被 201 沙盒挤出
