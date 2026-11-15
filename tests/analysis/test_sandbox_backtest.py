@@ -353,10 +353,13 @@ class TestSandboxRecordUnification:
         result = json.loads(row["result"])
         # 透传断言：表行 metrics 与响应 metrics 逐键一致
         assert result["metrics"] == out["metrics"]
-        # null 保真：None 值回读仍 None 不捏造（P2——具体键以引擎实测为准）
-        for k, v in result["metrics"].items():
+        # null 保真：响应侧为 None 的键，表行回读仍 None 不捏造
+        # （P4 修复——原断言对照/被断言同取 result 自身恒真；对照侧改
+        # out：序列化丢 None 键/变 0 时 result[k] 非 None 或 KeyError 红）
+        for k, v in out["metrics"].items():
             if v is None:
-                assert result["metrics"][k] is None
+                assert result["metrics"][k] is None, \
+                    f"metrics.{k} 表行回读 null 保真"
 
     def test_sandbox_response_keys_backward_compatible(
             self, fresh_env, data_dir):

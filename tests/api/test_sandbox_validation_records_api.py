@@ -127,8 +127,25 @@ class TestSandboxRecordsApi:
         assert sbx["verdict"] == ""  # 沙盒行 verdict 如实（不参与三态）
 
     def test_level_enum_six_values_422_face_unchanged(self, env):
-        """TC-2-4：扩值不扩 422 面——新值 200、bogus 仍 422、旧五值不变。"""
+        """TC-2-4：扩值不扩 422 面——新值 200、bogus 仍 422+结构化
+        detail+值域清单含六值、旧五值逐位 200 不变。"""
         client, hid, out, _db, _d = env
+        ok = client.get("/api/research/validation-records",
+                        params={"level": "sandbox_backtest"})
+        assert ok.status_code == 200
+        bad = client.get("/api/research/validation-records",
+                         params={"level": "bogus"})
+        assert bad.status_code == 422
+        det = bad.json()["detail"]
+        assert det["code"] == "RESEARCH_PARAM_INVALID"
+        assert det["detail"]["field"] == "level"
+        # 值域披露含六值（message 内嵌值域清单——规整换行后匹配）
+        assert "sandbox_backtest" in det["message"].replace("\n", "")
+        for lv in ("isolated_backtest", "random_window",
+                   "staged_validation", "composite", "component"):
+            r = client.get("/api/research/validation-records",
+                           params={"level": lv})
+            assert r.status_code == 200, lv
 
 
 def _insert(db: Path, record_id: str, hid: str, level: str,
@@ -186,22 +203,6 @@ class TestVerdictCountsFourKeys:
                        for x in vp["records"])
         assert vp["verdict_counts"]["sandbox"] == 0
         assert vp["total"] == vp["verdict_counts"]["pass"]
-        ok = client.get("/api/research/validation-records",
-                        params={"level": "sandbox_backtest"})
-        assert ok.status_code == 200
-        bad = client.get("/api/research/validation-records",
-                         params={"level": "bogus"})
-        assert bad.status_code == 422
-        d = bad.json()["detail"]
-        assert d["code"] == "RESEARCH_PARAM_INVALID"
-        assert d["detail"]["field"] == "level"
-        # 值域披露含六值（message 内嵌值域清单——规整换行后匹配）
-        assert "sandbox_backtest" in d["message"].replace("\n", "")
-        for lv in ("isolated_backtest", "random_window",
-                   "staged_validation", "composite", "component"):
-            r = client.get("/api/research/validation-records",
-                           params={"level": lv})
-            assert r.status_code == 200, lv
 
 
 class TestZeroChangeFaces:
@@ -272,20 +273,30 @@ class TestZeroChangeFaces:
                    for x in o["records"])
 
     def test_sandbox_detail_empty_skeleton_with_params(self, env):
-        """TC-4-1：沙盒 detail 200 空骨架+params 顶层三键提取真值。"""
-        client, hid, out, _db, _d = env
+        """TC-4-1：沙盒 detail 200 空骨架+params 顶层三键提取真值。
+
+        非默认参数前置（tests-plan 权威定义：fee=0.002/init_cash=50000）
+        ——三键值与 run_sandbox_backtest 缺省值全异，「params 顶层提取
+        真值」与「端点硬编码默认值」可判别（P2 修复：原默认参前置
+        两形态不可判别）。
+        """
+        client, hid, out, db, d = env
+        o = run_sandbox_backtest(
+            db, d, strategy_id="st_api", symbol="BTCUSDT", timeframe="4h",
+            start="2023-03-11", end="2023-03-15", fee=0.002,
+            slippage=0.001, init_cash=50000.0)
         r = client.get(
-            f"/api/research/validation-records/{out['record_id']}/detail")
+            f"/api/research/validation-records/{o['record_id']}/detail")
         assert r.status_code == 200
         body = r.json()
         assert body["detail_available"] is False
         assert body["executions"] == []
         assert body["level"] == "sandbox_backtest"
         assert body["verdict"] == ""
-        # 三键=params 顶层提取真值（module env 沙盒跑用缺省参数）
-        assert body["fee"] == 0.001
-        assert body["slippage"] == 0.0005
-        assert body["init_cash"] == 100000.0
+        # 三键=params 顶层提取真值（与缺省 0.001/0.0005/100000 全异）
+        assert body["fee"] == 0.002
+        assert body["slippage"] == 0.001
+        assert body["init_cash"] == 50000.0
         assert body["signal_trace"] is None
         assert body["trade_semantics"] is None
         assert body["stop_price"] is None
@@ -308,3 +319,29 @@ class TestZeroChangeFaces:
         assert ei.value.status == 422
         assert ei.value.detail["param"] == "trade_source.record_id"
         assert ei.value.detail["record_id"] == out["record_id"]
+
+    def test_q_search_adhoc_sandbox_not_matched(self, env):
+        """TC-2-9：q=H statement 词——挂 H 沙盒行经 statement 命中；
+        adhoc 沙盒行 statement NULL 不命中（G6——P3 补显式两面，
+        原仅由既有非沙盒用例+TC-6-1 机制拼合承接）。
+
+        放本类（TC-2-5 之后执行）：本用例真实跑 adhoc 沙盒使共享库
+        sandbox 计数 +1，若在 TestVerdictCountsFourKeys 之前执行会
+        污染其 base 精确快照（sandbox: 1）——顺序隔离入此类尾。
+        """
+        client, hid, out, db, d = env
+        # adhoc 沙盒行在库（隔离变量自证——「不命中」非因行未写入）
+        run_sandbox_backtest(
+            db, d, strategy_id="st_api", symbol="BTCUSDT", timeframe="4h",
+            start="2023-03-16", end="2023-03-18")
+        adhoc = client.get("/api/research/validation-records",
+                           params={"hypothesis_id": "adhoc"}).json()
+        assert adhoc["total"] >= 1
+        # q=「统一流测试」（H statement「API 统一流测试」子串）
+        hit = client.get("/api/research/validation-records",
+                         params={"q": "统一流测试"}).json()
+        ids = {x["record_id"] for x in hit["records"]}
+        assert out["record_id"] in ids, "挂 H 沙盒行经 H statement 命中"
+        hit_adhoc = [x for x in hit["records"]
+                     if x["hypothesis_id"] == "adhoc"]
+        assert not hit_adhoc, "adhoc 沙盒行（statement NULL）不命中 q"
