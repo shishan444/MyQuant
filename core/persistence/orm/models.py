@@ -554,7 +554,9 @@ class ValidationRecord(Base):
         Text, ForeignKey("research_hypotheses.hypothesis_id"))
     strategy_id: Mapped[Optional[str]] = mapped_column(Text)
     # isolated_backtest | random_window | staged_validation | composite |
-    # component（staged_validation 系 B3 修正补记——三入口实写五值）
+    # component | sandbox_backtest（staged_validation 系 B3 修正补记；
+    # sandbox_backtest 系 add-sandbox-records-unified-flow 扩入——沙盒
+    # 留痕入统一流，verdict 恒空串）
     level: Mapped[str] = mapped_column(Text, nullable=False)
     # 分段身份（0.3.3 G7 幂等第五维——见 _segmentation_identity）
     segmentation: Mapped[str] = mapped_column(

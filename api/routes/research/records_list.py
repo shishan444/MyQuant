@@ -19,9 +19,11 @@ router = APIRouter(tags=["research"])
 
 # 值域（与 ORM 注释/thresholds 三段闸门一致——非法值 422 由值域校验层产；
 # staged_validation 为 add-hypothesis-cards B3 修正补入——原漏致 DB 实测
-# 55 条 staged 级记录按此筛选被 422 拒；composite/component 死值域保留）
+# 55 条 staged 级记录按此筛选被 422 拒；composite/component 死值域保留；
+# sandbox_backtest 为 add-sandbox-records-unified-flow B3 扩入——沙盒
+# 留痕入统一流，verdict 恒空串不入 _VERDICTS）
 _LEVELS = ("isolated_backtest", "random_window", "staged_validation",
-           "composite", "component")
+           "composite", "component", "sandbox_backtest")
 _VERDICTS = ("pass", "fail", "inconclusive")
 
 
