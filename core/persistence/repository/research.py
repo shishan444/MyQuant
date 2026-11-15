@@ -646,6 +646,46 @@ def save_validation_with_log(
             conn.execute(insert(VrSignalTrace), [
                 dict(t, record_id=record_id) for t in trace])
 
+def save_sandbox_validation_record(
+    db_path: Path,
+    *,
+    record_id: str,
+    hypothesis_id: str,
+    strategy_id: Optional[str],
+    params: str,
+    result: Optional[str],
+    range_hash: str,
+) -> None:
+    """沙盒回测留痕单写（add-sandbox-records-unified-flow C1）：validation_records
+    独立成行（level=sandbox_backtest），与先行的 append_research_log 是两个
+    独立事务——并集读日志、记录页读本表，两个事实源各管各的账。
+
+    level/segmentation/verdict 三值写死不设形参（防误用）：沙盒身份由
+    level 定义；verdict 空串=不动 schema 的最小语义漂移（三值域保持
+    纯净，不参与三态判定与三键统计）。五列（pollution_cause/components/
+    signal_trace/trade_semantics/stop_price）不写落 NULL——明细与留痕
+    是正式验证专属。不复用 save_validation_with_log：那会多写一条
+    entry_type="validate" 日志（语义分叉）且事务域绑定明细表。
+
+    唯一约束冲突理论不可达（调用方 range_hash 掺 record_id——每次执行
+    恒新，D5）；SQLite 异常裸穿（fail-loud：禁止「记录写失败但指标照常
+    返回」的降级，写失败异常穿至调用方整体报错）。
+    """
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(insert(ValidationRecord).values(
+            record_id=record_id,
+            hypothesis_id=hypothesis_id,
+            strategy_id=strategy_id,
+            level="sandbox_backtest",
+            segmentation="",
+            params=params,
+            result=result,
+            verdict="",
+            range_hash=range_hash,
+            created_at=_now(),
+        ))
+
 
 def find_validation_by_identity(
     db_path: Path, hypothesis_id: str, strategy_id: Optional[str],
