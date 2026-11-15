@@ -9,11 +9,17 @@ import { describe, it, expect } from "vitest";
 import {
   buildCardModel,
   eventSemantics,
+  legacySide,
+  markerMorphText,
+  markerShape,
+  markerSide,
+  normalizeDirection,
   recordSymbolTimeframe,
+  resolveDirectionLookup,
   traceMarkers,
   TRACE_FAMILY_COLOR,
 } from "@/components/validationRecords/traceSemantics";
-import type { ValidationRecordRow } from "@/services/validationRecords";
+import type { ValidationRecordRow, VrExecution, VrTrade, VrTraceRow } from "@/services/validationRecords";
 
 function makeRow(over: Partial<ValidationRecordRow> = {}): ValidationRecordRow {
   return {
@@ -383,5 +389,279 @@ describe("snapToBars 吸附（契约 K）", () => {
       { from: "2026-04-01T06:00:00Z", to: "2026-04-01T00:00:00Z" },
     ]);
     expect(r3.dropped).toBe(2);
+  });
+});
+
+
+/* ══ fe-vr-marker-fidelity T1：方向归一（契约 0）/回退链（契约 1）/
+    字义代入（契约 2）/侧位口径（契约 4）——既有断言组零改动 ══ */
+
+describe("normalizeDirection 白名单严格归一（契约 0，v2.2 定谳口径）", () => {
+  it("NF-01 白名单小写 long → long（记录级 result.direction 值域形）", () => {
+    expect(normalizeDirection("long")).toBe("long");
+  });
+  it("NF-02 白名单首字母大写 Long → long（VrTrade.direction 值域形，vbt 序列化）", () => {
+    expect(normalizeDirection("Long")).toBe("long");
+  });
+  it("NF-03 白名单小写 short → short", () => {
+    expect(normalizeDirection("short")).toBe("short");
+  });
+  it("NF-04 白名单首字母大写 Short → short", () => {
+    expect(normalizeDirection("Short")).toBe("short");
+  });
+  it("NF-05 记录级特态 mixed → null（双向策略记录级无法定单笔方向——触发契约 1 行级解析分支，永不成为行方向输出）", () => {
+    expect(normalizeDirection("mixed")).toBeNull();
+  });
+  it("NF-06 undefined → null（2026-10-15 前存量记录无 direction 键）", () => {
+    expect(normalizeDirection(undefined)).toBeNull();
+  });
+  it("NF-07 null → null（VrTrade.direction 可空形）", () => {
+    expect(normalizeDirection(null)).toBeNull();
+  });
+  it("NF-08 脏值一律 null——含 \"LONG\" 全大写变体（非 toLowerCase 语义）、带尾空格、近形词、空串", () => {
+    expect(normalizeDirection("LONG")).toBeNull();
+    expect(normalizeDirection("Short ")).toBeNull();
+    expect(normalizeDirection("longish")).toBeNull();
+    expect(normalizeDirection("")).toBeNull();
+  });
+});
+
+describe("resolveDirectionLookup 方向解析回退链（契约 1，四层分派）", () => {
+  const trade = (over: Partial<VrTrade> = {}): VrTrade => ({
+    seq: 0,
+    entry_time: "2026-08-01 00:00:00+00:00",
+    exit_time: "2026-08-02 00:00:00+00:00",
+    entry_price: 100,
+    exit_price: 110,
+    size: 1,
+    direction: "Long",
+    pnl: 10,
+    ...over,
+  });
+  const traceRow = (over: Partial<VrTraceRow> = {}): VrTraceRow => ({
+    exec_ref: "main",
+    bar_time: "2026-08-01 00:00:00+00:00",
+    seq: 0,
+    outcome: "filled",
+    reason: null,
+    event_code: 10,
+    size: 1,
+    price: 100,
+    capped: null,
+    gene_hits: null,
+    ...over,
+  });
+  const execOf = (trades: VrTrade[]): VrExecution => ({
+    exec_ref: "main",
+    exec_index: 0,
+    range_start: "2026-08-01 00:00:00+00:00",
+    range_end: "2026-08-31 00:00:00+00:00",
+    trades,
+    equity: { grid_aligned: false, timeframe: "4h", timestamps: null, values: [] },
+    trail_series: null,
+    trace_rows: [],
+  });
+
+  it("DL-01 记录级 long → 份级常量（零 join：trades 空也直接定 long）", () => {
+    const lookup = resolveDirectionLookup("long", execOf([]));
+    expect(lookup(traceRow())).toBe("long");
+    expect(lookup(traceRow({ event_code: 20 }))).toBe("long");
+  });
+  it("DL-02 记录级 short → 份级常量", () => {
+    const lookup = resolveDirectionLookup("short", execOf([]));
+    expect(lookup(traceRow())).toBe("short");
+  });
+  it("DL-03 mixed → 行级查表：入场行分钟键命中入场桶，归一笔方向", () => {
+    const lookup = resolveDirectionLookup("mixed", execOf([trade()]));
+    expect(lookup(traceRow())).toBe("long");
+  });
+  it("DL-04 undefined（存量无 direction 键）→ 行级查表回退逐笔", () => {
+    const lookup = resolveDirectionLookup(undefined, execOf([trade({ direction: "Short" })]));
+    expect(lookup(traceRow())).toBe("short");
+  });
+  it("DL-05 记录级脏值（\"LONG\"）→ 归一失败按缺失走行级查表", () => {
+    const lookup = resolveDirectionLookup("LONG", execOf([trade({ direction: "Short" })]));
+    expect(lookup(traceRow())).toBe("short");
+  });
+  it("DL-06 出场族行查出场桶（13/20-25 出场锚=exit_time；12 reduce 同查出场桶）", () => {
+    const trades = [
+      trade({ seq: 1, exit_time: "2026-08-05 00:00:00+00:00", direction: "Short" }),
+      trade({ seq: 2, entry_time: "2026-08-06 00:00:00+00:00", exit_time: "2026-08-07 00:00:00+00:00", direction: "Long" }),
+    ];
+    const lookup = resolveDirectionLookup("mixed", execOf(trades));
+    expect(lookup(traceRow({ event_code: 13, bar_time: "2026-08-05 00:00:00+00:00" }))).toBe("short");
+    expect(lookup(traceRow({ event_code: 20, bar_time: "2026-08-05 00:00:00+00:00" }))).toBeNull(); // 桶耗尽（同桶一笔已被 13 行消费）
+    expect(lookup(traceRow({ event_code: 12, bar_time: "2026-08-07 00:00:00+00:00" }))).toBe("long");
+  });
+  it("DL-07 桶序多笔分配：同桶两笔按 seq 升序逐行分配（复刻 _match consumed 语义）", () => {
+    const trades = [
+      trade({ seq: 1, entry_time: "2026-08-01 00:00:00+00:00", direction: "Long" }),
+      trade({ seq: 2, entry_time: "2026-08-01 00:00:30+00:00", direction: "Short" }),
+    ];
+    const lookup = resolveDirectionLookup("mixed", execOf(trades));
+    expect(lookup(traceRow({ bar_time: "2026-08-01 00:00:00+00:00" }))).toBe("long");
+    expect(lookup(traceRow({ bar_time: "2026-08-01 00:00:45+00:00" }))).toBe("short");
+  });
+  it("DL-08 桶耗尽 → 该行 null（不循环消费不猜）", () => {
+    const lookup = resolveDirectionLookup("mixed", execOf([trade()]));
+    expect(lookup(traceRow())).toBe("long");
+    expect(lookup(traceRow({ bar_time: "2026-08-01 00:30:00+00:00" }))).toBeNull();
+  });
+  it("DL-09 桶不中（行分钟键无对应桶）→ null；非 filled 行/词表外码 → null 不消费", () => {
+    const lookup = resolveDirectionLookup("mixed", execOf([trade()]));
+    expect(lookup(traceRow({ bar_time: "2026-08-09 00:00:00+00:00" }))).toBeNull();
+    expect(lookup(traceRow({ outcome: "rejected", event_code: 30 }))).toBeNull();
+    expect(lookup(traceRow({ event_code: 35 }))).toBeNull();
+  });
+  it("DL-10 桶命中但笔方向归一失败（\"LONG\" 脏值）→ 该行 null", () => {
+    const lookup = resolveDirectionLookup("mixed", execOf([trade({ direction: "LONG" })]));
+    expect(lookup(traceRow())).toBeNull();
+  });
+  it("DL-11 trades 空 + mixed → 行级无可配对 → null（双失维持旧字义链路）", () => {
+    const lookup = resolveDirectionLookup("mixed", execOf([]));
+    expect(lookup(traceRow())).toBeNull();
+  });
+  it("DL-12 trades 输入乱序：桶内按 seq 升序消费（先 seq 小的笔）", () => {
+    const trades = [
+      trade({ seq: 2, entry_time: "2026-08-01 00:00:20+00:00", direction: "Short" }),
+      trade({ seq: 1, entry_time: "2026-08-01 00:00:00+00:00", direction: "Long" }),
+    ];
+    const lookup = resolveDirectionLookup("mixed", execOf(trades));
+    expect(lookup(traceRow({ bar_time: "2026-08-01 00:00:00+00:00" }))).toBe("long");
+    expect(lookup(traceRow({ bar_time: "2026-08-01 00:00:40+00:00" }))).toBe("short");
+  });
+  it("DL-13 工厂纯：同参两次调用产出独立闭包、各自桶游标从零", () => {
+    const exec = execOf([trade({ direction: "Long" })]);
+    const lookupA = resolveDirectionLookup("mixed", exec);
+    const lookupB = resolveDirectionLookup("mixed", exec);
+    expect(lookupA(traceRow())).toBe("long");
+    // A 已消费桶内唯一笔，B 闭包游标独立仍从零——同笔可再次配对
+    expect(lookupB(traceRow())).toBe("long");
+    expect(lookupA(traceRow({ bar_time: "2026-08-01 01:00:00+00:00" }))).toBeNull();
+  });
+});
+
+describe("markerMorphText/markerShape 六字义矩阵（契约 2）", () => {
+  it("SEM-01 方向敏感码全积矩阵：8 码 × long/short × morph/arrow 共 32 断言（箭头基准=买卖语义：开多/平空 up、开空/平多 down）", () => {
+    const matrix: Array<[number, string, string, string, string]> = [
+      [10, "开多", "开空", "arrowUp", "arrowDown"],
+      [13, "平多", "平空", "arrowDown", "arrowUp"],
+      [20, "平多", "平空", "arrowDown", "arrowUp"],
+      [21, "平多", "平空", "arrowDown", "arrowUp"],
+      [22, "平多", "平空", "arrowDown", "arrowUp"],
+      [23, "平多", "平空", "arrowDown", "arrowUp"],
+      [24, "平多", "平空", "arrowDown", "arrowUp"],
+      [25, "平多", "平空", "arrowDown", "arrowUp"],
+    ];
+    for (const [code, morphLong, morphShort, arrowLong, arrowShort] of matrix) {
+      const entry = eventSemantics(code);
+      expect(entry).not.toBeNull();
+      expect(markerMorphText(entry!, "long")).toBe(morphLong);
+      expect(markerMorphText(entry!, "short")).toBe(morphShort);
+      expect(markerShape(entry!, "long")).toBe(arrowLong);
+      expect(markerShape(entry!, "short")).toBe(arrowShort);
+    }
+  });
+  it("SEM-02 非向类 11/12：两态同值（morph.long===morph.short）+双 circle（方向不代入）", () => {
+    for (const code of [11, 12]) {
+      const entry = eventSemantics(code)!;
+      expect(entry.morph.long).toBe(entry.morph.short);
+      expect(entry.morph.long).toBe(eventSemantics(code)!.label);
+      expect(entry.arrowLong).toBe("circle");
+      expect(entry.arrowShort).toBe("circle");
+      expect(markerMorphText(entry, "short")).toBe(entry.morph.long);
+      expect(markerShape(entry, "long")).toBe("circle");
+    }
+  });
+  it("SEM-03 label/action/family 三字段冻结对照（D5——TradeTable 锚点列/SignalTrace 动作列依赖面零变化）", () => {
+    const frozen: Array<[number, "open" | "add" | "reduce" | "exit", "strategy" | "risk", string]> = [
+      [10, "open", "strategy", "入场"],
+      [11, "add", "strategy", "加仓"],
+      [12, "reduce", "strategy", "减仓"],
+      [13, "exit", "strategy", "信号离场"],
+      [20, "exit", "risk", "止损"],
+      [21, "exit", "risk", "止盈"],
+      [22, "exit", "risk", "清算强平"],
+      [23, "exit", "risk", "金额防线"],
+      [24, "exit", "risk", "固定时刻"],
+      [25, "exit", "risk", "max_hold"],
+    ];
+    for (const [code, action, family, label] of frozen) {
+      expect(eventSemantics(code)).toMatchObject({ action, family, label });
+    }
+  });
+  it("SEM-04 direction=null 维持旧字义（D6）：字义→morph.long、箭头→arrowLong（=现状 shape 规则逐位一致）", () => {
+    expect(markerMorphText(eventSemantics(10)!, null)).toBe("开多");
+    expect(markerMorphText(eventSemantics(13)!, null)).toBe("平多");
+    expect(markerMorphText(eventSemantics(20)!, null)).toBe("平多");
+    expect(markerShape(eventSemantics(10)!, null)).toBe("arrowUp");
+    expect(markerShape(eventSemantics(13)!, null)).toBe("arrowDown");
+    expect(markerShape(eventSemantics(20)!, null)).toBe("arrowDown");
+    expect(markerShape(eventSemantics(11)!, null)).toBe("circle");
+    expect(markerShape(eventSemantics(12)!, null)).toBe("circle");
+  });
+  it("SEM-05 词表外码返回 null 锁定：30 灰族不在表；35/36 无词条维持现状（Q1 基线不收编）", () => {
+    expect(eventSemantics(30)).toBeNull();
+    expect(eventSemantics(35)).toBeNull();
+    expect(eventSemantics(36)).toBeNull();
+  });
+  it("SEM-06 词表覆盖域=10-25 十四码全有词条，域外代表码（26/29/34）无词条", () => {
+    for (const code of [10, 11, 12, 13, 20, 21, 22, 23, 24, 25]) {
+      expect(eventSemantics(code)).not.toBeNull();
+    }
+    for (const code of [26, 29, 34]) {
+      expect(eventSemantics(code)).toBeNull();
+    }
+  });
+});
+
+describe("traceMarkers 行为面（T1 时点锚——旧签名现状；终态 draft 断言 T3 随签名切换落位）", () => {
+  const rows = [
+    { exec_ref: "main", bar_time: "2026-08-01 00:00:00+00:00", seq: 0, outcome: "filled" as const, reason: null, event_code: 10, size: 1, price: 100, capped: null, gene_hits: null },
+    { exec_ref: "main", bar_time: "2026-08-02 00:00:00+00:00", seq: 0, outcome: "filled" as const, reason: null, event_code: 20, size: 1, price: 90, capped: null, gene_hits: null },
+    { exec_ref: "main", bar_time: "2026-08-03 00:00:00+00:00", seq: 0, outcome: "rejected" as const, reason: "exposure_cap", event_code: 30, size: null, price: null, capped: null, gene_hits: null },
+  ];
+  it("MK-01 滤除行为：仅 filled 且有词条的行产标记（rejected 行与 30 无词条行滤除）", () => {
+    expect(traceMarkers(rows)).toHaveLength(2);
+  });
+  it("MK-02 保序：输出序与输入序一致（time 升序由组装层负责）", () => {
+    const markers = traceMarkers(rows);
+    expect(markers.map((m) => m.time)).toEqual([
+      "2026-08-01 00:00:00+00:00",
+      "2026-08-02 00:00:00+00:00",
+    ]);
+  });
+  it("MK-03 颜色族与时间透传：color=TRACE_FAMILY_COLOR[family]、time=bar_time 原值", () => {
+    const markers = traceMarkers(rows);
+    expect(markers[0].color).toBe(TRACE_FAMILY_COLOR.strategy);
+    expect(markers[1].color).toBe(TRACE_FAMILY_COLOR.risk);
+    expect(markers[0].time).toBe("2026-08-01 00:00:00+00:00");
+  });
+});
+
+describe("markerSide/legacySide 侧位口径（契约 4，判定公式单源）", () => {
+  const bar = { high: 110, low: 90 };
+  it("SIDE-01 价=中点（含等号）→ aboveBar", () => {
+    expect(markerSide(100, bar)).toBe("aboveBar");
+  });
+  it("SIDE-02 价>high → aboveBar（bar 外上侧自然得出就近侧）", () => {
+    expect(markerSide(110.5, bar)).toBe("aboveBar");
+  });
+  it("SIDE-03 价<low → belowBar（bar 外下侧）", () => {
+    expect(markerSide(89.5, bar)).toBe("belowBar");
+  });
+  it("SIDE-04 bar 内上下半区：上半→上、下半→下", () => {
+    expect(markerSide(101, bar)).toBe("aboveBar");
+    expect(markerSide(99, bar)).toBe("belowBar");
+  });
+  it("SIDE-05 一字 bar（high=low）退化面：中点=该价，≥ 成立 → aboveBar", () => {
+    expect(markerSide(100, { high: 100, low: 100 })).toBe("aboveBar");
+    expect(markerSide(99.9, { high: 100, low: 100 })).toBe("belowBar");
+  });
+  it("SIDE-06 legacySide 旧惯例四动作族：入场族（open/add）下方、出场族（reduce/exit）上方", () => {
+    expect(legacySide("open")).toBe("belowBar");
+    expect(legacySide("add")).toBe("belowBar");
+    expect(legacySide("reduce")).toBe("aboveBar");
+    expect(legacySide("exit")).toBe("aboveBar");
   });
 });

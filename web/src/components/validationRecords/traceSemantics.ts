@@ -9,7 +9,7 @@ import { CHART_VB, ATTENTION, TEXT } from "@/theme/tokens";
 import { toTime } from "@/components/charts/core/time";
 import { formatTimestamp } from "@/lib/utils";
 import type { ValidationRecordRow, ValidationSort } from "@/services/validationRecords";
-import type { VrTraceRow } from "@/services/validationRecords";
+import type { VrExecution, VrTrade, VrTraceRow } from "@/services/validationRecords";
 
 /** 列表检索完整形制（六维+排序；宿主 Verify 透传）——类型与缺省值在
  *  本纯函数层（组件文件仅导出组件——react-refresh 约束） */
@@ -45,28 +45,183 @@ export const TRACE_FAMILY_COLOR = {
 } as const;
 export type TraceFamily = keyof typeof TRACE_FAMILY_COLOR;
 
-/** 事件码 → 动作语义+色族+中文标签（四类动作标记▲开多/▲加多/▽减仓/
- *  ▼平多的单源；金族出场细分标签用于信号回溯/逐笔表） */
-const EVENT_SEMANTICS: Record<number, {
+/** 字义模板（fe-vr-marker-fidelity 契约 2）：方向代入生成 marker 字义。
+ *  directional 类（open/exit）long/short 两态不同；非向类（add/reduce）
+ *  两态同值（方向不代入）。 */
+export interface MarkerMorph {
+  long: string;
+  short: string;
+}
+
+/** marker 箭头形制（契约 2，A3 方向参数化）。映射语义基准=买卖语义
+ *  （买入向上/卖出向下）：开多/平空 arrowUp、开空/平多 arrowDown——
+ *  与 charts/primitives/markers.ts SIGNAL_STYLE 先例逐条一致。 */
+export type MarkerShape = "arrowUp" | "arrowDown" | "circle";
+
+/** 事件词条（契约 2 终态形）：action/family/label 三字段冻结（D5：
+ *  TradeTable 锚点列/SignalTrace 动作列依赖，语义零变化）；morph/
+ *  arrowLong/arrowShort 为方向代入面（新增）。 */
+export interface SemanticsEntry {
   action: "open" | "add" | "reduce" | "exit";
   family: TraceFamily;
-  markerText: string;
   label: string;
-}> = {
-  10: { action: "open", family: "strategy", markerText: "▲开多", label: "入场" },
-  11: { action: "add", family: "strategy", markerText: "▲加多", label: "加仓" },
-  12: { action: "reduce", family: "strategy", markerText: "▽减仓", label: "减仓" },
-  13: { action: "exit", family: "strategy", markerText: "▼平多", label: "信号离场" },
-  20: { action: "exit", family: "risk", markerText: "▼平多", label: "止损" },
-  21: { action: "exit", family: "risk", markerText: "▼平多", label: "止盈" },
-  22: { action: "exit", family: "risk", markerText: "▼平多", label: "清算强平" },
-  23: { action: "exit", family: "risk", markerText: "▼平多", label: "金额防线" },
-  24: { action: "exit", family: "risk", markerText: "▼平多", label: "固定时刻" },
-  25: { action: "exit", family: "risk", markerText: "▼平多", label: "max_hold" },
-};
+  morph: MarkerMorph;
+  arrowLong: MarkerShape;
+  arrowShort: MarkerShape;
+}
+
+/** 事件码 → 动作语义+色族+中文标签（四类动作标记的单源；金族出场
+ *  细分标签用于信号回溯/逐笔表）。fe-vr-marker-fidelity 契约 2 体系内
+ *  扩展：条目追加 morph/arrowLong/arrowShort 方向代入面（六字义=开多/
+ *  开空/加仓/减仓/平多/平空）；markerText 旧字段 T1 暂留（T3 原子切换
+ *  时删除）。词表覆盖域=10-25 的 filled 面，35/36 无词条维持现状
+ *  （Q1 基线不收编——实施不得顺手补词条）。 */
+const EVENT_SEMANTICS: Record<number, SemanticsEntry & { markerText: string }> = {
+  10: { action: "open", family: "strategy", markerText: "▲开多", label: "入场",
+    morph: { long: "开多", short: "开空" }, arrowLong: "arrowUp", arrowShort: "arrowDown" },
+  11: { action: "add", family: "strategy", markerText: "▲加多", label: "加仓",
+    morph: { long: "加仓", short: "加仓" }, arrowLong: "circle", arrowShort: "circle" },
+  12: { action: "reduce", family: "strategy", markerText: "▽减仓", label: "减仓",
+    morph: { long: "减仓", short: "减仓" }, arrowLong: "circle", arrowShort: "circle" },
+  13: { action: "exit", family: "strategy", markerText: "▼平多", label: "信号离场",
+    morph: { long: "平多", short: "平空" }, arrowLong: "arrowDown", arrowShort: "arrowUp" },
+  20: { action: "exit", family: "risk", markerText: "▼平多", label: "止损",
+    morph: { long: "平多", short: "平空" }, arrowLong: "arrowDown", arrowShort: "arrowUp" },
+  21: { action: "exit", family: "risk", markerText: "▼平多", label: "止盈",
+    morph: { long: "平多", short: "平空" }, arrowLong: "arrowDown", arrowShort: "arrowUp" },
+  22: { action: "exit", family: "risk", markerText: "▼平多", label: "清算强平",
+    morph: { long: "平多", short: "平空" }, arrowLong: "arrowDown", arrowShort: "arrowUp" },
+  23: { action: "exit", family: "risk", markerText: "▼平多", label: "金额防线",
+    morph: { long: "平多", short: "平空" }, arrowLong: "arrowDown", arrowShort: "arrowUp" },
+  24: { action: "exit", family: "risk", markerText: "▼平多", label: "固定时刻",
+    morph: { long: "平多", short: "平空" }, arrowLong: "arrowDown", arrowShort: "arrowUp" },
+  25: { action: "exit", family: "risk", markerText: "▼平多", label: "max_hold",
+    morph: { long: "平多", short: "平空" }, arrowLong: "arrowDown", arrowShort: "arrowUp" },
+};;
 
 export function eventSemantics(code: number) {
   return EVENT_SEMANTICS[code] ?? null;
+}
+
+/* ══ fe-vr-marker-fidelity 纯函数层：方向归一（契约 0）/方向解析回退链
+    （契约 1）/字义代入（契约 2）/侧位口径（契约 4）══ */
+
+/** 方向原始值归一（契约 0）：双形制白名单收敛到行级方向二值。
+ *  白名单恰四形："long"|"Long" → "long"；"short"|"Short" → "short"；
+ *  其余一切（含 "mixed"、"LONG"/"Short " 等任何非白名单形、
+ *  undefined、null）→ null。非 toLowerCase 语义——全大写等变体不在
+ *  白名单即 null（v2.2 定谳：白名单与两权威源值域精确对齐——记录级
+ *  result.direction 小写 long/short/mixed、逐笔 VrTrade.direction
+ *  首字母大写 Long/Short——命中非白名单形说明数据异常，按缺失走
+ *  回退链而非猜成合法方向，与 D6「不猜」一致）。 */
+export function normalizeDirection(raw: string | null | undefined): "long" | "short" | null {
+  if (raw === "long" || raw === "Long") return "long";
+  if (raw === "short" || raw === "Short") return "short";
+  return null;
+}
+
+/** 入场/出场事件码集（契约 1 行匹配分派：入场类 {10,11} 查入场桶、
+ *  出场类 {12,13,20-25} 查出场桶——含 reduce(12)，出场锚=exit_time） */
+const ENTRY_EVENT_CODES = new Set([10, 11]);
+const EXIT_EVENT_CODES = new Set([12, 13, 20, 21, 22, 23, 24, 25]);
+
+/** 份级方向查表闭包工厂（契约 1）：对给定执行份产出「trace 行 →
+ *  行级方向」的查表函数。四层分派（架构 D7）：①recordDirection 收敛
+ *  为 long/short → 份级常量（零 join，纯记录级判定）；②mixed/缺失
+ *  （含脏值）→ 行级分钟键桶序配对（对齐语义复刻后端 resolver _match
+ *  的 consumed 顺序消费）；③桶不中/桶耗尽/trades 空 → 该行 null；
+ *  ④null 即「不猜维持旧字义」（D6，由字义生成层消费）。
+ *  函数性（两分句）：工厂纯——同参两次调用产出两个独立闭包、各自桶
+ *  游标从零；返回闭包是行级迭代查表（游标随行匹配推进是配对算法
+ *  本质），按「每行恰调用一次」契约使用——同一闭包对同一 row 重复
+ *  调用的行为不在契约内（不测、不依赖）。 */
+export function resolveDirectionLookup(
+  recordDirection: string | undefined,
+  exec: VrExecution,
+): (row: VrTraceRow) => "long" | "short" | null {
+  const constant = normalizeDirection(recordDirection);
+  if (constant !== null) return () => constant;
+
+  // 建桶：分钟键（slice(0,16)——与 TradeTable exitAnchors 先例同粒度）
+  // 分桶，桶内 seq 升序（乱序输入先稳定排序再入桶）；出场桶仅收
+  // exit_time 非 null 的笔
+  const entryBuckets = new Map<string, VrTrade[]>();
+  const exitBuckets = new Map<string, VrTrade[]>();
+  for (const t of [...exec.trades].sort((a, b) => a.seq - b.seq)) {
+    const entryKey = t.entry_time.slice(0, 16);
+    const entryList = entryBuckets.get(entryKey);
+    if (entryList) entryList.push(t);
+    else entryBuckets.set(entryKey, [t]);
+    if (t.exit_time != null) {
+      const exitKey = t.exit_time.slice(0, 16);
+      const exitList = exitBuckets.get(exitKey);
+      if (exitList) exitList.push(t);
+      else exitBuckets.set(exitKey, [t]);
+    }
+  }
+  // 游标：每桶已消费计数（复刻 _match 桶内序号顺序消费——同桶多笔按
+  // seq 升序逐行分配；entry/exit 键空间独立各自计数）
+  const entryCursors = new Map<string, number>();
+  const exitCursors = new Map<string, number>();
+  return (row: VrTraceRow): "long" | "short" | null => {
+    if (row.outcome !== "filled") return null;
+    const minuteKey = row.bar_time.slice(0, 16);
+    let bucket: VrTrade[] | undefined;
+    let cursors: Map<string, number>;
+    if (ENTRY_EVENT_CODES.has(row.event_code)) {
+      bucket = entryBuckets.get(minuteKey);
+      cursors = entryCursors;
+    } else if (EXIT_EVENT_CODES.has(row.event_code)) {
+      bucket = exitBuckets.get(minuteKey);
+      cursors = exitCursors;
+    } else {
+      return null;
+    }
+    if (!bucket) return null;
+    const cursor = cursors.get(minuteKey) ?? 0;
+    if (cursor >= bucket.length) return null;
+    cursors.set(minuteKey, cursor + 1);
+    return normalizeDirection(bucket[cursor].direction);
+  };
+}
+
+/** 字义生成（契约 2）：方向代入 morph。direction=null 维持旧字义
+ *  （D6 不猜——open→"开多"、exit→"平多"，已知失真如实维持）；
+ *  add/reduce 与方向无关（两态同值）。 */
+export function markerMorphText(
+  entry: SemanticsEntry,
+  direction: "long" | "short" | null,
+): string {
+  return direction === "short" ? entry.morph.short : entry.morph.long;
+}
+
+/** 箭头形制（契约 2）：方向代入 arrow 面。null 取 arrowLong 列——与
+ *  现状 traceMarkers 的 shape 规则逐位一致（open→arrowUp/exit→
+ *  arrowDown/add・reduce→circle），D6「维持旧字义」在箭头面的含义=
+ *  现状 shape 行为保持。 */
+export function markerShape(
+  entry: SemanticsEntry,
+  direction: "long" | "short" | null,
+): MarkerShape {
+  return direction === "short" ? entry.arrowShort : entry.arrowLong;
+}
+
+/** 动态就近侧位口径（契约 4，R2 冻结）：成交价与所在 bar 中点比较，
+ *  ≥(high+low)/2 → aboveBar（标上），＜中点 → belowBar（标下）。
+ *  价在 bar 外时该口径自然得出就近侧（价>high 必≥中点→上）。判定
+ *  公式单源（D3 口径只写一次），组装层基准/吸附两视图同一函数两用。 */
+export function markerSide(
+  price: number,
+  bar: { high: number; low: number },
+): "aboveBar" | "belowBar" {
+  return price >= (bar.high + bar.low) / 2 ? "aboveBar" : "belowBar";
+}
+
+/** 无价行/无 bar 行的旧惯例侧位（契约 4，R4 冻结）：入场族（open/
+ *  add）下方、出场族（reduce/exit）上方——即现状 traceMarkers 的
+ *  position 规则显式化收编（E 无价回退沿用）。 */
+export function legacySide(action: "open" | "add" | "reduce" | "exit"): "aboveBar" | "belowBar" {
+  return action === "open" || action === "add" ? "belowBar" : "aboveBar";
 }
 
 /** reason 五值两族中文映射（决策层三值+求值层两值——rejected/swallowed 行） */
