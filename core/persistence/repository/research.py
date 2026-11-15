@@ -1163,21 +1163,27 @@ _ACTIVITY_EXPR = (
     select(func.max(ResearchLog.created_at))
     .where(ResearchLog.hypothesis_id == ResearchHypothesis.hypothesis_id)
     .scalar_subquery())
+# 卡片口径=正式验证（add-sandbox-records-unified-flow C5/D3——三标量
+# 子查询各排除 level='sandbox_backtest'：沙盒不推高卡片计数、不占据
+# 最新结论位；composite/component 死值域照现状计入不动既有语义）
 _VALIDATION_COUNT_EXPR = (
     select(func.count())
     .select_from(ValidationRecord)
-    .where(ValidationRecord.hypothesis_id == ResearchHypothesis.hypothesis_id)
+    .where(ValidationRecord.hypothesis_id == ResearchHypothesis.hypothesis_id,
+           ValidationRecord.level != "sandbox_backtest")
     .scalar_subquery())
 # 最新验证结论取一：created_at 降序+record_id 次序键（同秒并列确定）
 _LATEST_VERDICT_EXPR = (
     select(ValidationRecord.verdict)
-    .where(ValidationRecord.hypothesis_id == ResearchHypothesis.hypothesis_id)
+    .where(ValidationRecord.hypothesis_id == ResearchHypothesis.hypothesis_id,
+           ValidationRecord.level != "sandbox_backtest")
     .order_by(ValidationRecord.created_at.desc(),
               ValidationRecord.record_id.desc())
     .limit(1).scalar_subquery())
 _LATEST_RECORD_EXPR = (
     select(ValidationRecord.record_id)
-    .where(ValidationRecord.hypothesis_id == ResearchHypothesis.hypothesis_id)
+    .where(ValidationRecord.hypothesis_id == ResearchHypothesis.hypothesis_id,
+           ValidationRecord.level != "sandbox_backtest")
     .order_by(ValidationRecord.created_at.desc(),
               ValidationRecord.record_id.desc())
     .limit(1).scalar_subquery())
