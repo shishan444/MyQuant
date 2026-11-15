@@ -86,8 +86,10 @@ def backtest_sandbox(
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ) -> Dict[str, Any]:
-    """沙盒回测：快速试错（可调 fee/slippage/init_cash），直返指标；
-    不判门槛、不入验证记录；强制落研究日志（挂假设区间进判定并集）。"""
+    """沙盒回测：快速试错（可调 fee/slippage/init_cash），直返指标，
+    不判门槛、不构成验证证据；每次执行同步写入验证记录统一流
+    （validation_records level=sandbox_backtest 行，verdict 恒空串；
+    响应回显 record_id）；强制落研究日志（挂假设区间进判定并集）。"""
     require_known_timeframe(payload.timeframe, "timeframe")
     # 任务级两参值域校验（D1：越界结构化 422 附 legal_range——
     # 硬约束 3x/60% 进参数域封顶）＋熔断阈值校验（D3①）
@@ -172,8 +174,13 @@ def validation_report(
             "code": "RESEARCH_STRATEGY_NOT_FOUND",
             "message": f"策略不存在: {strategy_id}", "detail": None})
 
+    # B8（add-sandbox-records-unified-flow）：档案主体记录口径=正式
+    # 验证——排除 sandbox_backtest（SQL WHERE 下推先于 limit=200 截断，
+    # 沙盒行不推高档案计数不挤掉正式记录；lineage 谱系段不受影响——
+    # 聚合源全量分桶沙盒自然进第四级）
     records = rr.list_validation_records(
-        db_path, strategy_id=strategy_id, limit=200)
+        db_path, strategy_id=strategy_id, limit=200,
+        level_exclude="sandbox_backtest")
     if not records:
         return {
             "strategy_id": strategy_id,

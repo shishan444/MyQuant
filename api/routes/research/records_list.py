@@ -19,9 +19,11 @@ router = APIRouter(tags=["research"])
 
 # 值域（与 ORM 注释/thresholds 三段闸门一致——非法值 422 由值域校验层产；
 # staged_validation 为 add-hypothesis-cards B3 修正补入——原漏致 DB 实测
-# 55 条 staged 级记录按此筛选被 422 拒；composite/component 死值域保留）
+# 55 条 staged 级记录按此筛选被 422 拒；composite/component 死值域保留；
+# sandbox_backtest 为 add-sandbox-records-unified-flow B3 扩入——沙盒
+# 留痕入统一流，verdict 恒空串不入 _VERDICTS）
 _LEVELS = ("isolated_backtest", "random_window", "staged_validation",
-           "composite", "component")
+           "composite", "component", "sandbox_backtest")
 _VERDICTS = ("pass", "fail", "inconclusive")
 
 
@@ -49,7 +51,8 @@ class ValidationRecordsResponse(BaseModel):
     limit: int
     has_more: bool
     # verdict 分布（B1.2——三键恒在场 0=该 verdict 无记录；口径与
-    # total 同基数）
+    # total 同基数；sandbox 第四键按 level=sandbox_backtest 计数——
+    # add-sandbox-records-unified-flow C4，四键恒在场）
     verdict_counts: Dict[str, int]
     # 无收益值记录数（B1.2——sort=total_return_desc 时 worst 值缺失
     # 计数供落尾披露；其他 sort 值恒 0：语义键在场值退化，前端免判
@@ -153,6 +156,7 @@ def list_validation_records_endpoint(
         records=out_rows, total=agg["total"], offset=offset, limit=limit,
         has_more=has_more,
         verdict_counts={"pass": agg["pass"], "fail": agg["fail"],
-                        "inconclusive": agg["inconclusive"]},
+                        "inconclusive": agg["inconclusive"],
+                        "sandbox": agg["sandbox"]},
         unsortable_count=(agg["unsortable_count"]
                           if sort == "total_return_desc" else 0))

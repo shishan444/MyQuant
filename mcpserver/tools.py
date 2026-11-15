@@ -1022,7 +1022,10 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                      halt_drawdown_pct: Optional[float] = None
                      ) -> Dict[str, Any]:
         """沙盒回测（快速试错：可调手续费/滑点/初始资金，直返指标——
-        不判门槛、不构成验证证据）。纪律：挂 hypothesis_id 时该区间计入
+        不判门槛、不构成验证证据）。每次执行同步写入验证记录统一流
+        （validation_records level=sandbox_backtest 行，verdict 恒空串
+        不参与三态——快速试错留痕；响应回显 record_id，沙盒记录不可
+        作 ruler/ab 对照源）。纪律：挂 hypothesis_id 时该区间计入
         判定并集（此后同区间的隔离验证会被拒——先偷看不获利）；超 bar
         上限被拒，走隔离验证。
         任务级封顶两参（可选）：leverage 整数 [1,3]／margin_cap

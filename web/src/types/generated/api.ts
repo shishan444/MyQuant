@@ -1377,8 +1377,10 @@ export interface paths {
         put?: never;
         /**
          * Backtest Sandbox
-         * @description 沙盒回测：快速试错（可调 fee/slippage/init_cash），直返指标；
-         *     不判门槛、不入验证记录；强制落研究日志（挂假设区间进判定并集）。
+         * @description 沙盒回测：快速试错（可调 fee/slippage/init_cash），直返指标，
+         *     不判门槛、不构成验证证据；每次执行同步写入验证记录统一流
+         *     （validation_records level=sandbox_backtest 行，verdict 恒空串；
+         *     响应回显 record_id）；强制落研究日志（挂假设区间进判定并集）。
          */
         post: operations["backtest_sandbox_api_research_backtest_sandbox_post"];
         delete?: never;
@@ -3954,7 +3956,9 @@ export interface components {
         /**
          * SandboxBacktestRequest
          * @description 沙盒回测（improve-mcp-agent-loop M6）：快速试错、可调成本、
-         *     不判门槛不入验证记录；挂假设时区间计入判定并集（防窥探）。
+         *     不判门槛不构成验证证据；每次执行入验证记录统一流（level=
+         *     sandbox_backtest 行，响应回显 record_id）；挂假设时区间计入
+         *     判定并集（防窥探）。
          *     经济参数值域前置校验：fee/slippage >= 0、init_cash >= 1
          *     （负成本/零本金在下单金额计算中产生无意义或发散结果）。
          */

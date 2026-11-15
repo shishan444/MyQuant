@@ -429,3 +429,167 @@ class TestPagingOrderAndAdhoc:
                        params={"q": "巨" * 600})
         assert r.status_code == 200, "巨 q 截断不得 422"
         assert r.json()["total"] == 0
+
+
+@pytest.fixture()
+def sbcards_env(tmp_path: Path):
+    """沙盒卡片排除契约库（add-sandbox-records-unified-flow C5）：
+    H 两正式验证（最新 fail）+H2 空+策略与合成数据（可跑真实沙盒）。"""
+    import numpy as np
+    import pandas as pd
+    from core.analysis.executor import ensure_research_tables
+    from core.persistence.db_ext import init_db_ext
+    from core.analysis.hypothesis_service import register_hypothesis
+    from core.persistence.repository.strategy import save_strategy
+    from core.strategy.dna import (
+        ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole,
+        StrategyDNA)
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from core.persistence.orm.models import ValidationRecord
+    from api.app import create_app
+
+    db = tmp_path / "q.db"
+    init_db_ext(db)
+    ensure_research_tables(db)
+    d = tmp_path / "market"
+    d.mkdir()
+    rng = np.random.default_rng(11)
+    idx = pd.date_range("2022-10-01", periods=2000, freq="4h", tz="UTC",
+                        name="timestamp")
+    close = 60000 + np.cumsum(rng.normal(0, 110, 2000))
+    pd.DataFrame({"open": close, "high": close + 60, "low": close - 60,
+                  "close": close, "volume": rng.uniform(100, 800, 2000),
+                  "trades": 40}, index=idx).to_parquet(
+        d / "BTCUSDT_4h.parquet")
+    dna = StrategyDNA(
+        signal_genes=[SignalGene("RSI", {"period": 14},
+                                 SignalRole.ENTRY_TRIGGER, "rsi_14",
+                                 {"type": "lt", "threshold": 35}),
+                      SignalGene("RSI", {"period": 14},
+                                 SignalRole.EXIT_TRIGGER, "rsi_14",
+                                 {"type": "gt", "threshold": 1e9})],
+        logic_genes=LogicGenes(),
+        execution_genes=ExecutionGenes(timeframe="4h"),
+        risk_genes=RiskGenes())
+    save_strategy(db, strategy_id="st_cards", dna_json=dna.to_json(),
+                  symbol="BTCUSDT", timeframe="4h")
+    conds = {"when_conditions": [
+        {"subject": {"indicator": "RSI", "params": {"period": 14}},
+         "action": "lt", "target": 35}],
+        "then_conditions": [{"subject": "close", "action": "gt",
+                             "target": 0}]}
+    rng_h = [{"symbol": "BTCUSDT", "timeframe": "4h",
+              "start": "2023-01-01T00:00:00Z",
+              "end": "2023-02-01T00:00:00Z"}]
+    hid = register_hypothesis(
+        db, conditions=conds, statement="卡片排除 H",
+        data_ranges=rng_h, strategy_params={"stop_loss": 0.05}
+    )["hypothesis_id"]
+    # H2 独立身份（conditions target 36≠35——register 身份幂等下同
+    # conditions+ranges 会返回 H 原 id，卡片断言对象错位）
+    hid2 = register_hypothesis(
+        db, conditions={
+            "when_conditions": [
+                {"subject": {"indicator": "RSI", "params": {"period": 14}},
+                 "action": "lt", "target": 36}],
+            "then_conditions": [{"subject": "close", "action": "gt",
+                                 "target": 0}]},
+        statement="卡片排除 H2",
+        data_ranges=rng_h, strategy_params={"stop_loss": 0.05}
+    )["hypothesis_id"]
+    S = sessionmaker(bind=create_engine(f"sqlite:///{db}"))
+    with S() as sess:
+        for rid, verdict, ts in (("rec_f1", "pass", _ts(-7)),
+                                 ("rec_f2", "fail", _ts(-1))):
+            sess.add(ValidationRecord(
+                record_id=rid, hypothesis_id=hid, strategy_id="st_cards",
+                level="isolated_backtest", segmentation="", verdict=verdict,
+                range_hash=f"rh_{rid}", params="{}", result="{}",
+                created_at=ts))
+        sess.commit()
+    app = create_app(db_path=db, data_dir=d)
+    with TestClient(app, raise_server_exceptions=False) as c:
+        yield c, db, d, hid, hid2
+
+
+def _card(client, hid: str) -> dict:
+    items = client.get("/api/research/hypothesis-cards",
+                       params={"page_size": 200}).json()["items"]
+    return next(c for c in items if c["hypothesis_id"] == hid)
+
+
+def _run_sbx(db: Path, d: Path, hid, n: int = 1) -> list:
+    from core.analysis.validation_service import run_sandbox_backtest
+    return [run_sandbox_backtest(
+        db, d, strategy_id="st_cards", symbol="BTCUSDT", timeframe="4h",
+        start="2023-03-01", end="2023-03-10", hypothesis_id=hid)
+        for _ in range(n)]
+
+
+class TestCardsSandboxExclusion:
+    """TC-3-1~3-4：主任务卡口径=正式验证（level≠sandbox_backtest）——
+    沙盒不推高计数、不占据最新结论位；composite 死值域照现状计入；
+    下钻组合查询分页取尽（A6 数据链路）。"""
+
+    def test_cards_three_numbers_unpolluted_by_sandbox(
+            self, sbcards_env):
+        """TC-3-1：三数字沙盒前后快照一致；recent_activity_at 推进。"""
+        client, db, d, hid, _hid2 = sbcards_env
+        before = _card(client, hid)
+        assert (before["validation_count"], before["latest_verdict"],
+                before["latest_record_id"]) == (2, "fail", "rec_f2")
+        _run_sbx(db, d, hid, n=3)
+        after = _card(client, hid)
+        assert after["validation_count"] == 2
+        assert after["latest_verdict"] == "fail"
+        assert after["latest_record_id"] == "rec_f2"
+        # 沙盒日志照常推进活动时间（沙盒可视性走记录流不走卡片）
+        assert after["recent_activity_at"] > before["recent_activity_at"]
+
+    def test_cards_sandbox_only_hypothesis_zero_counts(
+            self, sbcards_env):
+        """TC-3-2：全沙盒假设零计数不捏造（G7）。"""
+        client, db, d, _hid, hid2 = sbcards_env
+        _run_sbx(db, d, hid2, n=1)
+        card = _card(client, hid2)
+        assert card["validation_count"] == 0
+        assert card["latest_verdict"] is None
+        assert card["latest_record_id"] is None
+        assert card["recent_activity_at"] is not None  # 沙盒日志照常
+
+    def test_cards_composite_still_counted(self, sbcards_env):
+        """TC-3-3：排除面恰 sandbox_backtest 一值——composite 照现状计入。"""
+        client, db, d, hid, _hid2 = sbcards_env
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from core.persistence.orm.models import ValidationRecord
+        S = sessionmaker(bind=create_engine(f"sqlite:///{db}"))
+        with S() as sess:
+            sess.add(ValidationRecord(
+                record_id="rec_cp1", hypothesis_id=hid,
+                strategy_id="st_cards", level="composite",
+                segmentation="", verdict="pass", range_hash="rh_cp1",
+                params="{}", result="{}", created_at=_ts(-3)))
+            sess.commit()
+        card = _card(client, hid)
+        assert card["validation_count"] == 3  # 2 正式+1 composite
+
+    def test_drill_down_combined_query_exhausts(self, sbcards_env):
+        """TC-3-4：?hypothesis_id&level=sandbox_backtest total=全数
+        分页取尽无重复无遗漏（A6/V16）。"""
+        client, db, d, hid, _hid2 = sbcards_env
+        outs = _run_sbx(db, d, hid, n=5)
+        ids, offset = set(), 0
+        while True:
+            body = client.get(
+                "/api/research/validation-records",
+                params={"hypothesis_id": hid,
+                        "level": "sandbox_backtest",
+                        "limit": 1, "offset": offset}).json()
+            ids.update(x["record_id"] for x in body["records"])
+            if not body["has_more"]:
+                break
+            offset += 1
+        assert body["total"] == 5
+        assert ids == {o["record_id"] for o in outs}
