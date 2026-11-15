@@ -70,7 +70,7 @@ def _credentials_path() -> Path:
     env = os.environ.get("MYQUANT_CREDENTIALS_FILE")
     if env:
         return Path(env)
-    project_root = Path(__file__).resolve().parents[3]
+    project_root = Path(__file__).resolve().parents[2]
     return project_root / "data" / "credentials.json"
 
 
