@@ -96,7 +96,7 @@ def migrate_legacy_credentials(db_path: Path) -> None:
       +物理删除 config.json 凭据键（非置空——merge 回显风险在案）
       +warning 说明迁移去向；
     ②credentials.json 已有非空值 → 不覆盖（凭据文件优先）仅删
-      config.json 凭据键+冲突 warning 提示待用户确认；
+      config.json 凭据键+冲突 warning 诚实告知不可逆；
     ③config.json 无凭据键 → 零动作。
     多库语义：各库凭据均迁至同一固定凭据文件（credentials.json 不随
     db_path 走——环境身份唯一）。
@@ -139,8 +139,9 @@ def migrate_legacy_credentials(db_path: Path) -> None:
         # ②凭据文件已有非空值：不覆盖（凭据文件优先）仅删键+冲突提示
         logger.warning(
             "config.json 检出存量币安凭据，但凭据文件 %s 已有配置——"
-            "不覆盖（凭据文件优先），仅移除 config.json 凭据键；"
-            "若 config.json 中的值才是想要的，请手工确认后覆写凭据文件。",
+            "已保留凭据文件值，不覆盖（凭据文件优先）；config.json 中的"
+            "存量凭据键将被永久删除、不可恢复；如需改用 config.json 中的"
+            "值，请在本次启动前（或从备份中）先人工取出该值，再配置到凭据文件。",
             cred_path,
         )
     else:
