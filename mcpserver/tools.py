@@ -328,9 +328,10 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
         exit_max_hold/exit_time/exit_liquidation）；outcome=执行结果
         三值——filled=成交（fill_seq 关联成交流水 (task_id,
         exec_bar_time, fill_seq) 三元组）/rejected=被规则拦截
-        （reject_reason 枚举：insufficient_funds 资金不足/
-        exposure_cap 敞口上限/context_invalid 语境防御/below_min_
-        notional 最小名义值——后者拦截机制在后续变更落地）/expired=
+        （reject_reason 枚举五值：insufficient_funds 资金不足/
+        below_min_notional 最小名义值/exposure_cap 敞口上限/
+        context_invalid 语境防御/halted_drawdown 账户级硬熔断拦截
+        开仓）/expired=
         意图随任务终态消亡（窗口末根未消费 pending 的收割记录，
         exec_bar_time=终态 last_bar_time、seq=0）；bar_time_start+
         bar_time_end=信号产生 bar 闭区间（ISO，两侧含入）。
