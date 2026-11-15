@@ -22,6 +22,37 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("S-02 运行时 API key 注入（runtime-config）", () => {
+  it("runtime config 设 key → 请求携带 Bearer（部署期注入通道）", async () => {
+    vi.resetModules();
+    (globalThis as Record<string, unknown>).__MYQUANT_RUNTIME_CONFIG__ = {
+      MYQUANT_API_KEY: "runtime-injected-key-456",
+    };
+    try {
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+      const { api: apiFresh } = await import("@/services/api");
+      await apiFresh.get("/api/config");
+      // ky 底层以 Request 对象调 fetch——Authorization 在 request.headers
+      const req = fetchMock.mock.calls[0]?.[0] as unknown as Request;
+      expect(String(req.url)).toContain("/api/config");
+      expect(req.headers.get("Authorization")).toBe(
+        "Bearer runtime-injected-key-456",
+      );
+    } finally {
+      delete (globalThis as Record<string, unknown>).__MYQUANT_RUNTIME_CONFIG__;
+    }
+  });
+
+  it("runtime config 未设 → 请求无 Authorization 头（兼容放行态）", async () => {
+    vi.resetModules();
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    const { api: apiFresh } = await import("@/services/api");
+    await apiFresh.get("/api/config");
+    const req = fetchMock.mock.calls[0]?.[0] as unknown as Request;
+    expect(req.headers.get("Authorization")).toBeNull();
+  });
+});
+
 describe("G16.0 拦截器契约：HTTP 分层", () => {
   it("409 conflict：透出后端业务 detail（可理解冲突）", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(409, { detail: "已有运行中的交易任务" }));

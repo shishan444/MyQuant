@@ -8,6 +8,8 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- 运行时配置先行加载（S-02：部署期注入 API key，构建产物零内联密钥） -->
+    <script src="/runtime-config.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
