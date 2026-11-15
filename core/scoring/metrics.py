@@ -78,6 +78,11 @@ def compute_metrics(
         calmar_ratio, total_trades, alpha, market_annual_return, backtest_years,
         benchmark_return (区间基准收益，None=无基准), excess_return
         (区间超额=total_return-benchmark_return，None=无基准).
+
+    爆仓口径（fix-audit-correctness E-01）：total_return <= -1（权益末值
+    不大于 0）时 annual_return 截断 -1.0、max_drawdown 下界 -1.0、
+    calmar_ratio 置 0.0——全部有界实数，不产 nan/警告；正常曲线全部
+    指标与该分支加入前逐值一致。
     """
     if len(equity_curve) < 2 or total_trades == 0:
         # 零交易：win_rate 为缺失语义（None），不参与评分维度
@@ -105,7 +110,15 @@ def compute_metrics(
     total_return = (equity_curve.iloc[-1] / equity_curve.iloc[0]) - 1
     n_bars = len(equity_curve)
     years = n_bars / bars_per_year
-    annual_return = _annualize(total_return, years)
+    # 爆仓分支（fix-audit-correctness E-01）：total_return <= -1 即全损
+    # （权益末值不大于 0），annual 截断 -1.0——_annualize 对爆仓形
+    # (1+r)**x 的负底数分数幂产 nan/复数（numpy 标量语义链），
+    # 截断优于哨兵；清算判定权威在 backtest-liquidation-detection，
+    # 绩效层不建第二权威（不新增 liquidated 键）
+    if total_return <= -1.0:
+        annual_return = -1.0
+    else:
+        annual_return = _annualize(total_return, years)
 
     # Max drawdown (from equity curve - standard)
     cummax = equity_curve.cummax()
@@ -113,6 +126,10 @@ def compute_metrics(
     max_drawdown = float(drawdown.min())
     if np.isnan(max_drawdown):
         max_drawdown = 0.0
+    # 爆仓口径（E-01）：回撤语义域 [-1, 0]——负权益深坑截断下界 -1.0，
+    # 超界亏损的识别由回测清算判定承载，不在回撤指标重复表达
+    if max_drawdown < -1.0:
+        max_drawdown = -1.0
 
     # Sharpe ratio: prefer trade-level, fallback to bar-level
     sharpe_ratio = 0.0
@@ -145,8 +162,12 @@ def compute_metrics(
             win_rate = None
 
     # Calmar ratio
-    # 除零保护：回撤近零（<0.001）时 calmar 无意义，置 0 不除近零数
-    if abs(max_drawdown) > 0.001:
+    # 除零保护：回撤近零（<0.001）时 calmar 无意义，置 0 不除近零数；
+    # 爆仓置 0.0（E-01）：全损时该比率无意义（-1/-1 数值上=1 会
+    # 误导性呈现「好」比率），沿除零保护同哲学
+    if total_return <= -1.0:
+        calmar_ratio = 0.0
+    elif abs(max_drawdown) > 0.001:
         calmar_ratio = abs(annual_return / max_drawdown)
     else:
         calmar_ratio = 0.0
