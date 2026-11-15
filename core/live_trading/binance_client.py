@@ -88,7 +88,9 @@ class BinanceDemoClient:
                 creds = load_credentials()
             if creds is None:
                 raise CredentialMissingError(
-                    "未找到 demo 凭证。请先 save_credentials() 存入 Keychain。"
+                    "未找到 demo 凭证。请配置 data/credentials.json"
+                    "（或 MYQUANT_CREDENTIALS_FILE 指定路径，两键 "
+                    "binance_api_key/binance_secret_key）。"
                 )
             creds.validate()
             # ping=False：跳过现货 ping（否则连 demo-api.binance.com 现货 demo 超时）。

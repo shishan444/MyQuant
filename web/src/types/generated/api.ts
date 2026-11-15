@@ -941,8 +941,9 @@ export interface paths {
          *     四维（kind 十值/outcome 三值/bar_time 闭区间两界）+bar_time+seq
          *     升序审计读序+limit+1 探测式分页；字段字典权威在 openspec
          *     paper-signal-log spec「字段族明细」（gene_hits 命中基因六字段/
-         *     indicator_snapshot 指标快照/reject_reason 拒因枚举四值——
-         *     below_min_notional 生产者在后续变更）。
+         *     indicator_snapshot 指标快照/reject_reason 拒因枚举五值——
+         *     insufficient_funds/below_min_notional/exposure_cap/context_invalid/
+         *     halted_drawdown）。
          */
         get: operations["get_signals_api_paper_trading_tasks__task_id__signals_get"];
         put?: never;
@@ -1681,7 +1682,7 @@ export interface paths {
         };
         /**
          * Indicators
-         * @description 内置指标元数据（48 项，含 lookback——warmup 推导依据）。
+         * @description 内置指标元数据（55 项，含 lookback——warmup 推导依据）。
          */
         get: operations["indicators_api_research_indicators_get"];
         put?: never;
@@ -2353,12 +2354,6 @@ export interface components {
             notify_evolution?: boolean | null;
             /** Notify Signal */
             notify_signal?: boolean | null;
-            /** Binance Api Key */
-            binance_api_key?: string | null;
-            /** Binance Secret Key */
-            binance_secret_key?: string | null;
-            /** Binance Connected */
-            binance_connected?: boolean | null;
             /** Init Cash */
             init_cash?: number | null;
             /** Maker Fee */
@@ -3004,6 +2999,10 @@ export interface components {
             add_suppress_conditions?: components["schemas"]["ConditionItem"][] | null;
             /** Direction */
             direction?: string | null;
+            /** Exit Logic */
+            exit_logic?: string | null;
+            /** Partial Exit Logic */
+            partial_exit_logic?: string | null;
         };
         /** HypothesisListResponse */
         HypothesisListResponse: {
@@ -3138,6 +3137,10 @@ export interface components {
             threshold_profile?: {
                 [key: string]: unknown;
             } | null;
+            /** Leverage */
+            leverage?: number | null;
+            /** Margin Cap */
+            margin_cap?: number | null;
         };
         /** LiveTradingTaskCreate */
         LiveTradingTaskCreate: {
@@ -3555,6 +3558,8 @@ export interface components {
             window_bars: number | null;
             /** Stop Loss Pct */
             stop_loss_pct?: number | null;
+            /** Halt Drawdown Pct */
+            halt_drawdown_pct?: number | null;
         };
         /** PaperTaskListResponse */
         PaperTaskListResponse: {
@@ -3613,6 +3618,12 @@ export interface components {
             position_entry_bar_seq?: number | null;
             /** Unrealized Pnl */
             unrealized_pnl?: number | null;
+            /** Halt Drawdown Pct */
+            halt_drawdown_pct?: number | null;
+            /** Halted At */
+            halted_at?: string | null;
+            /** Halt Reason */
+            halt_reason?: string | null;
             /** Total Trades */
             total_trades: number;
             /** Qualification Progress */
@@ -3742,6 +3753,10 @@ export interface components {
             seed: number;
             /** Hypothesis Id */
             hypothesis_id?: string | null;
+            /** Leverage */
+            leverage?: number | null;
+            /** Margin Cap */
+            margin_cap?: number | null;
         };
         /**
          * RequirementsConfigModel
@@ -3977,6 +3992,12 @@ export interface components {
             init_cash: number;
             /** Hypothesis Id */
             hypothesis_id?: string | null;
+            /** Leverage */
+            leverage?: number | null;
+            /** Margin Cap */
+            margin_cap?: number | null;
+            /** Halt Drawdown Pct */
+            halt_drawdown_pct?: number | null;
         };
         /** SceneRequest */
         SceneRequest: {
@@ -4144,6 +4165,10 @@ export interface components {
             segments?: {
                 [key: string]: unknown;
             }[] | null;
+            /** Leverage */
+            leverage?: number | null;
+            /** Margin Cap */
+            margin_cap?: number | null;
         };
         /** StrategyCreate */
         StrategyCreate: {
@@ -4306,14 +4331,13 @@ export interface components {
         /**
          * TranslateRequest
          * @description 转化请求（R2 契约：strategy_timeframe 缺省 None=继承假设基准
-         *     周期 data_ranges[0].timeframe——回执 execution_timeframe 可查）。
+         *     周期 data_ranges[0].timeframe——回执 execution_timeframe 可查；
+         *     fr_296f43410afb 修复①：strategy_symbol 缺省 None=继承区间源
+         *     data_ranges[0].symbol，显式传参优先）。
          */
         TranslateRequest: {
-            /**
-             * Strategy Symbol
-             * @default BTCUSDT
-             */
-            strategy_symbol: string;
+            /** Strategy Symbol */
+            strategy_symbol?: string | null;
             /** Strategy Timeframe */
             strategy_timeframe?: string | null;
         };

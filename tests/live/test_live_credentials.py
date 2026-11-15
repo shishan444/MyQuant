@@ -1,19 +1,18 @@
-"""第1步 凭证管理 单元测试。
+"""凭证管理单元测试（fix-audit-disclosure-security S-01 文件通道版）。
 
-用内存 keyring backend 隔离真实 macOS Keychain，不依赖真实凭证。
-核心安全约束：禁止非 demo 凭证（demo=False 被 reject，防生产/主网 key）。
+凭据存储=本地凭据文件（MYQUANT_CREDENTIALS_FILE 环境覆写指向 tmp_path
+隔离，不触真实 data/credentials.json）。核心安全约束：禁止非 demo 凭证
+（demo=False 被 reject，防生产/主网 key；load 侧恒 demo=True 代码承载）。
 """
+
+import json
+import os
+import stat
 
 import pytest
 
 pytestmark = [pytest.mark.integration]  # B10.1 标记激活
-import json
 
-import pytest
-from keyring.backend import KeyringBackend
-from keyring.errors import PasswordDeleteError
-
-from core.live_trading import credentials as cred_mod
 from core.live_trading.credentials import (
     BinanceCredentials,
     CredentialError,
@@ -24,35 +23,12 @@ from core.live_trading.credentials import (
 )
 
 
-class _MemoryKeyring(KeyringBackend):
-    """内存钥匙串 backend（测试隔离用）。"""
-
-    priority = 1
-
-    def __init__(self) -> None:
-        self._store: dict[tuple[str, str], str] = {}
-
-    def set_password(self, service, username, password):  # noqa: ANN001
-        self._store[(service, username)] = password
-
-    def get_password(self, service, username):  # noqa: ANN001
-        return self._store.get((service, username))
-
-    def delete_password(self, service, username):  # noqa: ANN001
-        key = (service, username)
-        if key not in self._store:
-            raise PasswordDeleteError("not found")
-        del self._store[key]
-
-
 @pytest.fixture
-def mem_keyring(monkeypatch):
-    """替换 credentials 模块内的 keyring 调用为内存实现。"""
-    backend = _MemoryKeyring()
-    monkeypatch.setattr(cred_mod, "get_password", backend.get_password)
-    monkeypatch.setattr(cred_mod, "set_password", backend.set_password)
-    monkeypatch.setattr(cred_mod, "delete_password", backend.delete_password)
-    return backend
+def cred_file(tmp_path, monkeypatch):
+    """凭据文件隔离：MYQUANT_CREDENTIALS_FILE 覆写指向临时路径。"""
+    path = tmp_path / "credentials.json"
+    monkeypatch.setenv("MYQUANT_CREDENTIALS_FILE", str(path))
+    return path
 
 
 _VALID_KEY = "t" * 64
@@ -84,7 +60,10 @@ class TestCredentialsValidate:
 
 
 class TestCredentialsStore:
-    def test_save_load_roundtrip(self, mem_keyring):
+    """文件通道形制（keyring 退役）：save 写文件（两键+chmod 600）、
+    load 读回恒 demo=True、缺失三形态 None、delete 删文件。"""
+
+    def test_save_load_roundtrip(self, cred_file):
         c = _valid()
         save_credentials(c)
         assert has_credentials() is True
@@ -92,29 +71,50 @@ class TestCredentialsStore:
         assert loaded is not None
         assert loaded.api_key == c.api_key
         assert loaded.api_secret == c.api_secret
-        assert loaded.demo is True
+        assert loaded.demo is True, "load 侧恒构造 demo=True（代码承载）"
 
-    def test_save_validates_first(self, mem_keyring):
+    def test_save_validates_first(self, cred_file):
         # 无效凭证（非 demo）不写入
         with pytest.raises(CredentialError):
             save_credentials(_valid(demo=False))
         assert has_credentials() is False
+        assert not cred_file.exists()
 
-    def test_load_none_when_absent(self, mem_keyring):
+    def test_load_none_when_absent(self, cred_file):
         assert load_credentials() is None
         assert has_credentials() is False
 
-    def test_delete(self, mem_keyring):
+    def test_load_none_when_corrupt(self, cred_file):
+        """缺失形态②：JSON 损坏按未配置处理（不炸启动）。"""
+        cred_file.write_text("not-json{", encoding="utf-8")
+        assert load_credentials() is None
+
+    def test_load_none_when_key_empty(self, cred_file):
+        """缺失形态③：任一键空按未配置处理。"""
+        cred_file.write_text(json.dumps({
+            "binance_api_key": "", "binance_secret_key": _VALID_SECRET}),
+            encoding="utf-8")
+        assert load_credentials() is None
+
+    def test_delete(self, cred_file):
         save_credentials(_valid())
         assert delete_credentials() is True
         assert has_credentials() is False
         assert delete_credentials() is False  # 再删返回 False
 
-    def test_stored_payload_is_json(self, mem_keyring):
-        # keyring 存 JSON payload（供 load 解析），走 Keychain 不落盘工程目录
+    def test_saved_file_form(self, cred_file):
+        """文件形制锚：仅两键+chmod 0600+无 demo 键（收紧）。"""
         save_credentials(_valid())
-        payload = mem_keyring.get_password(cred_mod.SERVICE_DEMO, "default")
-        assert payload is not None
-        data = json.loads(payload)
-        assert data["api_key"] == _VALID_KEY
-        assert data["demo"] is True
+        data = json.loads(cred_file.read_text(encoding="utf-8"))
+        assert set(data.keys()) == {"binance_api_key", "binance_secret_key"}, \
+            "凭据文件仅两键——demo 约束由代码承载，文件无 demo 键"
+        assert data["binance_api_key"] == _VALID_KEY
+        mode = stat.S_IMODE(os.stat(cred_file).st_mode)
+        assert mode == 0o600, f"凭据文件权限应 0600，实际 {oct(mode)}"
+
+    def test_env_override_effective(self, tmp_path, monkeypatch):
+        """MYQUANT_CREDENTIALS_FILE 覆写路径生效。"""
+        alt = tmp_path / "alt-creds.json"
+        monkeypatch.setenv("MYQUANT_CREDENTIALS_FILE", str(alt))
+        save_credentials(_valid())
+        assert alt.exists()

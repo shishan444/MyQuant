@@ -2902,7 +2902,7 @@
           "paper-trading"
         ],
         "summary": "Get Signals",
-        "description": "信号记录查询（change paper-signal-log 决策过程回溯面）：过滤\n四维（kind 十值/outcome 三值/bar_time 闭区间两界）+bar_time+seq\n升序审计读序+limit+1 探测式分页；字段字典权威在 openspec\npaper-signal-log spec「字段族明细」（gene_hits 命中基因六字段/\nindicator_snapshot 指标快照/reject_reason 拒因枚举四值——\nbelow_min_notional 生产者在后续变更）。",
+        "description": "信号记录查询（change paper-signal-log 决策过程回溯面）：过滤\n四维（kind 十值/outcome 三值/bar_time 闭区间两界）+bar_time+seq\n升序审计读序+limit+1 探测式分页；字段字典权威在 openspec\npaper-signal-log spec「字段族明细」（gene_hits 命中基因六字段/\nindicator_snapshot 指标快照/reject_reason 拒因枚举五值——\ninsufficient_funds/below_min_notional/exposure_cap/context_invalid/\nhalted_drawdown）。",
         "operationId": "get_signals_api_paper_trading_tasks__task_id__signals_get",
         "parameters": [
           {
@@ -4693,7 +4693,7 @@
           "research"
         ],
         "summary": "Indicators",
-        "description": "内置指标元数据（48 项，含 lookback——warmup 推导依据）。",
+        "description": "内置指标元数据（55 项，含 lookback——warmup 推导依据）。",
         "operationId": "indicators_api_research_indicators_get",
         "responses": {
           "200": {
@@ -5220,7 +5220,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 200
                 },
                 {
                   "type": "null"
@@ -6474,39 +6475,6 @@
               }
             ],
             "title": "Notify Signal"
-          },
-          "binance_api_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Binance Api Key"
-          },
-          "binance_secret_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Binance Secret Key"
-          },
-          "binance_connected": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Binance Connected"
           },
           "init_cash": {
             "anyOf": [
@@ -8140,6 +8108,28 @@
               }
             ],
             "title": "Direction"
+          },
+          "exit_logic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Logic"
+          },
+          "partial_exit_logic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partial Exit Logic"
           }
         },
         "type": "object",
@@ -8432,6 +8422,28 @@
               }
             ],
             "title": "Threshold Profile"
+          },
+          "leverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leverage"
+          },
+          "margin_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin Cap"
           }
         },
         "type": "object",
@@ -9501,6 +9513,19 @@
               }
             ],
             "title": "Stop Loss Pct"
+          },
+          "halt_drawdown_pct": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMaximum": 1.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Halt Drawdown Pct"
           }
         },
         "additionalProperties": false,
@@ -9727,6 +9752,39 @@
               }
             ],
             "title": "Unrealized Pnl"
+          },
+          "halt_drawdown_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Halt Drawdown Pct"
+          },
+          "halted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Halted At"
+          },
+          "halt_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Halt Reason"
           },
           "total_trades": {
             "type": "integer",
@@ -10045,6 +10103,28 @@
               }
             ],
             "title": "Hypothesis Id"
+          },
+          "leverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leverage"
+          },
+          "margin_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin Cap"
           }
         },
         "type": "object",
@@ -10502,6 +10582,39 @@
               }
             ],
             "title": "Hypothesis Id"
+          },
+          "leverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leverage"
+          },
+          "margin_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin Cap"
+          },
+          "halt_drawdown_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Halt Drawdown Pct"
           }
         },
         "type": "object",
@@ -10826,6 +10939,28 @@
               }
             ],
             "title": "Segments"
+          },
+          "leverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leverage"
+          },
+          "margin_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin Cap"
           }
         },
         "type": "object",
@@ -11420,9 +11555,15 @@
       "TranslateRequest": {
         "properties": {
           "strategy_symbol": {
-            "type": "string",
-            "title": "Strategy Symbol",
-            "default": "BTCUSDT"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy Symbol"
           },
           "strategy_timeframe": {
             "anyOf": [
@@ -11438,7 +11579,7 @@
         },
         "type": "object",
         "title": "TranslateRequest",
-        "description": "转化请求（R2 契约：strategy_timeframe 缺省 None=继承假设基准\n周期 data_ranges[0].timeframe——回执 execution_timeframe 可查）。"
+        "description": "转化请求（R2 契约：strategy_timeframe 缺省 None=继承假设基准\n周期 data_ranges[0].timeframe——回执 execution_timeframe 可查；\nfr_296f43410afb 修复①：strategy_symbol 缺省 None=继承区间源\ndata_ranges[0].symbol，显式传参优先）。"
       },
       "TriggerDetail": {
         "properties": {
@@ -11536,6 +11677,7 @@
         "properties": {
           "pair": {
             "type": "string",
+            "maxLength": 32,
             "title": "Pair"
           },
           "timeframe": {

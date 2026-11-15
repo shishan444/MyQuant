@@ -1,8 +1,8 @@
 /**
- * 10 设置页对齐批单测（alignment-batch D5）。
- * B1 config 消费：masked 回显（***，不明文）+保存走 PUT（*** 原样传回由
- * 后端哨兵跳过）/B2 指标参数本地 persist（zustand persist→localStorage，
- * 重进恢复）。服务层全 mock（零外网红线）。
+ * 10 设置页对齐批单测（alignment-batch D5；fix-audit-disclosure-security
+ * S-01 拆链改写：凭据表单退役，卡片承载配置指引——币安凭据经
+ * data/credentials.json 本地文件配置）/B2 指标参数本地 persist
+ * （zustand persist→localStorage，重进恢复）。服务层全 mock（零外网红线）。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -16,14 +16,11 @@ import { api } from "@/services/api";
 import { useChartSettings } from "@/stores/chart-settings";
 import { CHART_INDICATOR_DEFAULTS } from "@/lib/constants";
 
-const MASKED_CONFIG = {
+const CONFIG_NO_CREDENTIALS = {
   language: "zh-CN",
   timezone: "UTC+8",
   notify_evolution: true,
   notify_signal: true,
-  binance_api_key: "***",
-  binance_secret_key: "***",
-  binance_connected: true,
   init_cash: 250000,
   maker_fee: 0.1,
   taker_fee: 0.1,
@@ -32,7 +29,7 @@ const MASKED_CONFIG = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(api.get).mockResolvedValue(MASKED_CONFIG as never);
+  vi.mocked(api.get).mockResolvedValue(CONFIG_NO_CREDENTIALS as never);
   // 指标 store 复位（persist 内存态+localStorage 双清，防用例间污染）
   useChartSettings.setState({
     emaList: CHART_INDICATOR_DEFAULTS.ema_periods.map((period) => ({
@@ -53,32 +50,27 @@ function setup() {
 
 /** 切到「指标参数」tab（antd Tabs；先等 config 加载出真实内容再点） */
 async function openIndicatorTab() {
-  await screen.findByTestId("binance-save");
+  await screen.findByText("Binance API 配置");
   fireEvent.click(screen.getByRole("tab", { name: "指标参数" }));
   await screen.findByLabelText("BOLL 周期");
 }
 
 describe("Settings（10 设置·对齐批）", () => {
-  it("B1 masked 回显：凭证键回显 *** 全掩码（非明文），状态=GET 真值", async () => {
+  it("S-01 拆链：凭据卡承载配置指引（data/credentials.json），无表单无明文", async () => {
     setup();
-    const keyField = await screen.findByTestId("binance-api-key-field");
-    const keyInput = keyField.querySelector("input");
-    expect(keyInput?.value).toBe("***");
-    const secretInput = screen.getByTestId("binance-secret-key-field").querySelector("input");
-    expect(secretInput?.value).toBe("***");
-    // 状态行=GET 返回的 binance_connected（真实回显非本地推断）
-    expect(screen.getByTestId("binance-connected")).toHaveTextContent("已连接");
+    const hint = await screen.findByTestId("binance-credentials-hint");
+    expect(hint).toHaveTextContent("data/credentials.json");
+    // 凭据输入表单退役（键不再经页面流转）
+    expect(screen.queryByTestId("binance-api-key-field")).toBeNull();
+    expect(screen.queryByTestId("binance-secret-key-field")).toBeNull();
+    expect(screen.queryByTestId("binance-connected")).toBeNull();
   });
 
-  it("B1 保存走 PUT：未修改的 *** 原样传回（后端哨兵跳过不覆盖已存密钥）", async () => {
+  it("S-01 拆链：凭据卡无保存动作（PUT 零凭据面）", async () => {
     setup();
-    await screen.findByTestId("binance-save");
-    fireEvent.click(screen.getByTestId("binance-save"));
-    await waitFor(() => {
-      expect(api.put).toHaveBeenCalledWith("/api/config", {
-        json: { binance_api_key: "***", binance_secret_key: "***" },
-      });
-    });
+    await screen.findByTestId("binance-credentials-hint");
+    expect(screen.queryByTestId("binance-save")).toBeNull();
+    expect(api.put).not.toHaveBeenCalled();
   });
 
   it("B1 交易配置回显 GET 值（init_cash 250000）", async () => {
@@ -89,7 +81,7 @@ describe("Settings（10 设置·对齐批）", () => {
 
   it("假「测试连接」已移除（后端无凭证校验端点，不呈现假成功）", async () => {
     setup();
-    await screen.findByTestId("binance-save");
+    await screen.findByTestId("binance-credentials-hint");
     expect(screen.queryByText("测试连接")).toBeNull();
     expect(screen.queryByText("连接成功")).toBeNull();
   });

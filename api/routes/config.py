@@ -12,25 +12,23 @@ from api.schemas import ConfigUpdate
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
-# B9.2 S1：凭证键集合（GET masked 回显 + PUT 哨兵识别——前端零改动）
-_CREDENTIAL_KEYS = ("binance_api_key", "binance_secret_key")
-_MASK = "***"
+# 退役凭据键集（fix-audit-disclosure-security S-01 拆链）：config 通道
+# 不再承载凭据——GET/PUT 响应剔除存量键（迁移窗口防明文回显），PUT
+# 形制已摘（ConfigUpdate 无凭据字段）。凭据唯一通道=data/credentials.json
+_RETIRED_CRED_KEYS = ("binance_api_key", "binance_secret_key",
+                      "binance_connected")
 
 
-def _mask(value: str) -> str:
-    """全掩码回显（不泄露任何片段）；未配置回 ""。"""
-    if not value:
-        return ""
-    return _MASK
+def _without_credentials(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """剔除凭据键的响应视图（拆链后 GET/PUT 共用；存量迁移前窗口
+    防明文回显——迁移清理后 config.json 物理无这三键）。"""
+    return {k: v for k, v in cfg.items() if k not in _RETIRED_CRED_KEYS}
 
 _DEFAULT_CONFIG: Dict[str, Any] = {
     "language": "zh-CN",
     "timezone": "UTC+8",
     "notify_evolution": True,
     "notify_signal": True,
-    "binance_api_key": "",
-    "binance_secret_key": "",
-    "binance_connected": False,
     "init_cash": 100000,
     "maker_fee": 0.1,
     "taker_fee": 0.1,
@@ -66,19 +64,11 @@ def _write_config(db_path: Path, config: Dict[str, Any]) -> None:
     _os.chmod(path, 0o600)
 
 
-def _masked_view(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """凭证键 masked 后的完整回显视图（GET 与 PUT 响应共用）。"""
-    return {
-        **cfg,
-        **{k: _mask(str(cfg[k])) for k in _CREDENTIAL_KEYS if k in cfg},
-    }
-
-
 @router.get("")
 def get_config(db_path: Path = Depends(get_db_path)) -> Dict[str, Any]:
     cfg = _read_config(db_path)
-    # S1：凭证键 masked 回显（显式声明不做文件加密——本地单用户威胁模型）
-    return _masked_view(cfg)
+    # S-01 拆链：响应剔除凭据键（含迁移前存量窗口——零明文回显）
+    return _without_credentials(cfg)
 
 
 @router.put("")
@@ -87,12 +77,91 @@ def update_config(
     db_path: Path = Depends(get_db_path),
 ) -> Dict[str, Any]:
     current = _read_config(db_path)
-    # 部分更新：仅显式传入的字段（exclude_unset 区分未传与显式传参）
+    # 部分更新：仅显式传入的字段（exclude_unset 区分未传与显式传参）。
+    # S-01 拆链：ConfigUpdate 已无凭据字段（extra=ignore——客户端误传
+    # 凭据键被静默忽略，不落盘）
     for key, value in payload.model_dump(exclude_unset=True).items():
-        # S1 哨兵语义：含 *** 的凭证值=未修改回显，不覆盖已存值
-        if key in _CREDENTIAL_KEYS and isinstance(value, str) and _MASK in value:
-            continue
         current[key] = value
     _write_config(db_path, current)
-    # 响应同样 masked（与 GET 一致）
-    return _masked_view(current)
+    return _without_credentials(current)
+
+
+def migrate_legacy_credentials(db_path: Path) -> None:
+    """存量凭据一次性迁移清理（fix-audit-disclosure-security S-01）。
+
+    app lifespan 启动时执行；被检测 config.json 经 _config_path(db_path)
+    同源解析（与 config API 读写同一文件——MYQUANT_DB_PATH 切库/e2e
+    随机库场景即该运行库目录的 config.json）。三分支：
+    ①credentials.json 不存在或两键均空 → 自动迁移（写入+chmod 600）
+      +物理删除 config.json 凭据键（非置空——merge 回显风险在案）
+      +warning 说明迁移去向；
+    ②credentials.json 已有非空值 → 不覆盖（凭据文件优先）仅删
+      config.json 凭据键+冲突 warning 提示待用户确认；
+    ③config.json 无凭据键 → 零动作。
+    多库语义：各库凭据均迁至同一固定凭据文件（credentials.json 不随
+    db_path 走——环境身份唯一）。
+    """
+    import logging
+    import os
+
+    from core.live_trading.credentials import _credentials_path, save_credentials
+
+    logger = logging.getLogger(__name__)
+    cfg_path = _config_path(db_path)
+    if not cfg_path.exists():
+        return
+    try:
+        with open(cfg_path, encoding="utf-8") as f:
+            saved = json.load(f)
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return  # config.json 损坏：普通配置读取面既有语义承载，迁移零动作
+    if not isinstance(saved, dict):
+        return
+    legacy_keys = ("binance_api_key", "binance_secret_key")
+    legacy = {k: saved.get(k) for k in legacy_keys}
+    has_legacy = any(legacy.get(k) for k in legacy_keys)
+    if not has_legacy:
+        return  # ③无凭据键（或全空）→ 零动作
+
+    cred_path = _credentials_path()
+    existing: Dict[str, Any] = {}
+    if cred_path.exists():
+        try:
+            existing = json.loads(cred_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            existing = {}
+    cred_has_value = bool(existing.get("binance_api_key")) and         bool(existing.get("binance_secret_key")) if isinstance(existing, dict) else False
+
+    if cred_has_value:
+        # ②凭据文件已有非空值：不覆盖（凭据文件优先）仅删键+冲突提示
+        logger.warning(
+            "config.json 检出存量币安凭据，但凭据文件 %s 已有配置——"
+            "不覆盖（凭据文件优先），仅移除 config.json 凭据键；"
+            "若 config.json 中的值才是想要的，请手工确认后覆写凭据文件。",
+            cred_path,
+        )
+    else:
+        # ①自动迁移：写入凭据文件（两键形制+chmod 600）
+        from core.live_trading.credentials import BinanceCredentials
+        save_credentials(BinanceCredentials(
+            api_key=str(legacy["binance_api_key"]),
+            api_secret=str(legacy["binance_secret_key"]),
+        ))
+        logger.warning(
+            "config.json 检出存量币安凭据——已自动迁移至凭据文件 %s"
+            "（chmod 600），config.json 凭据键已移除。凭据唯一通道为"
+            "该文件（MYQUANT_CREDENTIALS_FILE 可覆写路径）。",
+            cred_path,
+        )
+
+    # 物理删除 config.json 凭据键（含 binance_connected；非置空——
+    # _read_config merge 形制下置空保留键使 GET 语义含糊）
+    changed = False
+    for k in _RETIRED_CRED_KEYS:
+        if k in saved:
+            del saved[k]
+            changed = True
+    if changed:
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(saved, f, indent=2, ensure_ascii=False)
+        os.chmod(cfg_path, 0o600)

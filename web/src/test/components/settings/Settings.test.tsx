@@ -25,9 +25,6 @@ const baseConfig = {
   timezone: "UTC+8",
   notify_evolution: true,
   notify_signal: true,
-  binance_api_key: "",
-  binance_secret_key: "",
-  binance_connected: false,
   init_cash: 100000,
   maker_fee: 0.1,
   taker_fee: 0.1,
@@ -78,7 +75,7 @@ describe("Settings（AntD）", () => {
     const cashInput = screen.getByRole("spinbutton", { name: /初始资金/ });
     await user.clear(cashInput);
     await user.type(cashInput, "-5");
-    // 两个「保存」按钮（Binance 区块+模拟交易区块），取后者
+    // S-01 拆链后 Binance 区块无保存钮——「保存」仅模拟交易区块
     const saveBtns = screen.getAllByRole("button", { name: /^保\s*存$/ });
     await user.click(saveBtns[saveBtns.length - 1]);
     await waitFor(() =>

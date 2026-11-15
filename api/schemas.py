@@ -633,9 +633,6 @@ class ConfigUpdate(BaseModel):
     timezone: Optional[str] = None
     notify_evolution: Optional[bool] = None
     notify_signal: Optional[bool] = None
-    binance_api_key: Optional[str] = None
-    binance_secret_key: Optional[str] = None
-    binance_connected: Optional[bool] = None
     init_cash: Optional[int] = None
     maker_fee: Optional[float] = None
     taker_fee: Optional[float] = None
