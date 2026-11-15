@@ -502,24 +502,37 @@ class TestQueryPaperSignals:
     def test_reject_reason_impl_domain_subset_of_disclosure(self) -> None:
         """A-02 守护锚：实现值域 ⊆ 披露枚举（防未来新增拒因漏披露）。
 
-        提取面：ledger 三常量+runtime executor 熔断拒因 halted_
-        drawdown（账户级硬熔断拦截开仓）。未来新增拒因值必须同步
-        spec 字典与双侧 docstring，否则本锚红。
+        提取面：ledger 模块 REJECT_ 前缀常量自动收集（新增拒因常量
+        自动进面，CARD-26）+ 字面量产生点双源在场性提取——executor
+        熔断拒因 halted_drawdown（账户级硬熔断拦截开仓）与 intents
+        敞口拒因 exposure_cap（敞口上限拦截开仓，CARD-26 补面）。
+        未来新增拒因值必须同步 spec 字典与双侧 docstring，否则本锚红。
         """
+        from core.paper_trading.kernel import intents as pt_intents
         from core.paper_trading.kernel import ledger
         from core.paper_trading.runtime import executor as pt_executor
 
+        # ledger 拒因常量按 REJECT_ 前缀自动收集（未来新增自动进提取面）
         impl_values = {
-            ledger.REJECT_INSUFFICIENT_FUNDS,
-            ledger.REJECT_CONTEXT_INVALID,
-            ledger.REJECT_BELOW_MIN_NOTIONAL,
+            value for name, value in vars(ledger).items()
+            if name.startswith("REJECT_") and isinstance(value, str)
         }
-        # 熔断拒因字面量在 executor 源在场性+值集提取
-        src = Path(pt_executor.__file__).read_text(encoding="utf-8")
-        assert '"halted_drawdown"' in src, (
-            "executor 熔断拒因 halted_drawdown 字面量缺失（守护锚"
-            "提取面失效，请同步锚）")
-        impl_values.add("halted_drawdown")
+        assert impl_values, "ledger REJECT_ 常量清空（提取面失效，请同步锚）"
+        # 产生点形制在场性提取——绑定代码形制而非裸字面量：docstring
+        # 中提及字面量不产生守护力（变异自证实录：intents docstring
+        # 里的 "exposure_cap" 曾兜住改名变异使裸字面量锚不红）
+        executor_src = Path(pt_executor.__file__).read_text(encoding="utf-8")
+        intents_src = Path(pt_intents.__file__).read_text(encoding="utf-8")
+        assert 'reject_reason="halted_drawdown"' in executor_src, (
+            "executor 熔断拒因产生点形制缺失（守护锚提取面失效，"
+            "请同步锚）")
+        assert 'reason: str = "exposure_cap"' in intents_src, (
+            "intents 敞口拒因默认值产生点形制缺失（守护锚提取面失效，"
+            "请同步锚）")
+        assert 'reason="exposure_cap"' in intents_src, (
+            "intents 敞口拒因构造产生点形制缺失（守护锚提取面失效，"
+            "请同步锚）")
+        impl_values |= {"halted_drawdown", "exposure_cap"}
         disclosed = {
             "insufficient_funds", "below_min_notional", "exposure_cap",
             "context_invalid", "halted_drawdown",

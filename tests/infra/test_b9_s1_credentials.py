@@ -47,7 +47,8 @@ class TestConfigChannelCredentialFree:
             assert k not in r.json()
         db_dir = client.app.state.db_path.parent
         stored = json.loads((db_dir / "config.json").read_text())
-        assert "binance_api_key" not in stored, "凭据键不得经 PUT 落盘"
+        for k in (*CREDS, "binance_connected"):
+            assert k not in stored, f"凭据键 {k} 不得经 PUT 落盘"
 
     def test_non_credentials_passthrough(self, client):
         """非凭据键不受拆链影响。"""

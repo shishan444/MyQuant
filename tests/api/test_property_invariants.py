@@ -3,7 +3,7 @@
 对纯计算函数验证一类输入应保持的关系（明确成立条件）：
 - compute_verify_star 属性段已随旧验证会话体系退役
   （retire-verify-sessions）
-- _mask/_masked_view：任意非空凭证恒全掩码、空恒空串（不依赖输入形态）
+- _without_credentials：任意配置 dict（含存量凭据键）→ 视图零凭据键、其余键原样透传（S-01 拆链后承载）
 - _safe_error_message：任意异常实例消息恒取自有限值域
   {数据文件缺失*, 内部错误}（不泄露 str(exc) 原文）
 """
@@ -16,7 +16,7 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 
-class TestMaskInvariant:
+class TestCredentialFreeView:
     """S-01 拆链后形制：掩码函数族已随凭据通道退役——原不变量面
     （_mask/_masked_view）改承载为「响应零凭据键」不变量
     （fix-audit-disclosure-security）。"""

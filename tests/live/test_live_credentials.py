@@ -8,6 +8,7 @@
 import json
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +17,7 @@ pytestmark = [pytest.mark.integration]  # B10.1 标记激活
 from core.live_trading.credentials import (
     BinanceCredentials,
     CredentialError,
+    _credentials_path,
     delete_credentials,
     has_credentials,
     load_credentials,
@@ -118,3 +120,14 @@ class TestCredentialsStore:
         monkeypatch.setenv("MYQUANT_CREDENTIALS_FILE", str(alt))
         save_credentials(_valid())
         assert alt.exists()
+
+    def test_default_path_resolves_inside_project(self, monkeypatch):
+        """缺省路径锚（CARD-21）：不设 MYQUANT_CREDENTIALS_FILE 时解析到
+        <MyQuant>/data/credentials.json——工程根内层，与 .gitignore 条目、
+        binance_client 错误消息指引、db_path 缺省先例（api/app.py
+        _default_db_path）同层对位；parents 上推越层（落到工程父目录）
+        即红。本锚随 CARD-21 修复转绿。"""
+        monkeypatch.delenv("MYQUANT_CREDENTIALS_FILE", raising=False)
+        assert _credentials_path() == (
+            Path(__file__).resolve().parents[2]
+            / "data" / "credentials.json")
