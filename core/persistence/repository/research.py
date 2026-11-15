@@ -896,36 +896,60 @@ def count_validation_records(
 # random result $.summary.worst_window.metrics.total_return / staged
 # result $.summary.worst_segment.total_return——composite/component
 # 死值域落 NULL 计入 unsortable）。
+# 先验 json_valid CASE（fix-audit-correctness D-01，照 _PARENT_HYP_ID/
+# _BASE_SYMBOL_EXPR 先例族）：result/params 列无机制保证恒 JSON，
+# corrupt 行（裸串/坏 JSON）使 json_extract 直接求值抛 OperationalError
+# 炸整端点——先验后 corrupt 行提取值归 NULL（与「level 不匹配→NULL」
+# 同 unsortable 语义）；分支列各自判（_WORST 三分支均判 result；
+# symbol/timeframe 路由 isolated 判 result、random/staged 判 params）。
 _WORST_RETURN_EXPR = case(
     (ValidationRecord.level == "isolated_backtest",
-     func.json_extract(ValidationRecord.result, "$.metrics.total_return")),
+     case((func.json_valid(ValidationRecord.result) == 1,
+           func.json_extract(ValidationRecord.result,
+                             "$.metrics.total_return")), else_=None)),
     (ValidationRecord.level == "random_window",
-     func.json_extract(ValidationRecord.result,
-                       "$.summary.worst_window.metrics.total_return")),
+     case((func.json_valid(ValidationRecord.result) == 1,
+           func.json_extract(ValidationRecord.result,
+                             "$.summary.worst_window.metrics.total_return")),
+          else_=None)),
     (ValidationRecord.level == "staged_validation",
-     func.json_extract(ValidationRecord.result,
-                       "$.summary.worst_segment.total_return")),
+     case((func.json_valid(ValidationRecord.result) == 1,
+           func.json_extract(ValidationRecord.result,
+                             "$.summary.worst_segment.total_return")),
+          else_=None)),
     )
 
-# 记录侧标的/周期（B1.4 泛化双路——三型键位路由）
+# 记录侧标的/周期（B1.4 泛化双路——三型键位路由；先验同上 D-01）
 _REC_SYMBOL_EXPR = case(
     (ValidationRecord.level == "isolated_backtest",
-     func.json_extract(ValidationRecord.result, "$.symbol")),
+     case((func.json_valid(ValidationRecord.result) == 1,
+           func.json_extract(ValidationRecord.result, "$.symbol")),
+          else_=None)),
     (ValidationRecord.level == "random_window",
-     func.json_extract(ValidationRecord.params, "$.symbol")),
+     case((func.json_valid(ValidationRecord.params) == 1,
+           func.json_extract(ValidationRecord.params, "$.symbol")),
+          else_=None)),
     (ValidationRecord.level == "staged_validation",
-     func.json_extract(ValidationRecord.params,
-                       "$.request_range.symbol")),
+     case((func.json_valid(ValidationRecord.params) == 1,
+           func.json_extract(ValidationRecord.params,
+                             "$.request_range.symbol")),
+          else_=None)),
     )
 
 _REC_TIMEFRAME_EXPR = case(
     (ValidationRecord.level == "isolated_backtest",
-     func.json_extract(ValidationRecord.result, "$.timeframe")),
+     case((func.json_valid(ValidationRecord.result) == 1,
+           func.json_extract(ValidationRecord.result, "$.timeframe")),
+          else_=None)),
     (ValidationRecord.level == "random_window",
-     func.json_extract(ValidationRecord.params, "$.timeframe")),
+     case((func.json_valid(ValidationRecord.params) == 1,
+           func.json_extract(ValidationRecord.params, "$.timeframe")),
+          else_=None)),
     (ValidationRecord.level == "staged_validation",
-     func.json_extract(ValidationRecord.params,
-                       "$.request_range.timeframe")),
+     case((func.json_valid(ValidationRecord.params) == 1,
+           func.json_extract(ValidationRecord.params,
+                             "$.request_range.timeframe")),
+          else_=None)),
     )
 
 # 基准侧标的/周期（策略原生——strategy.parent_ids 首父假设的
