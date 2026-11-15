@@ -84,13 +84,13 @@ def env(tmp_path_factory):
     from api.app import create_app
     app = create_app(db_path=db, data_dir=d)
     with TestClient(app, raise_server_exceptions=False) as c:
-        yield c, hid, out
+        yield c, hid, out, db, d
 
 
 class TestSandboxRecordsApi:
     def test_sandbox_record_immediately_visible(self, env):
         """TC-2-1：沙盒成功后立即 ?level=sandbox_backtest 与无过滤均含该行。"""
-        client, hid, out = env
+        client, hid, out, _db, _d = env
         r1 = client.get("/api/research/validation-records",
                         params={"level": "sandbox_backtest"})
         assert r1.status_code == 200
@@ -102,7 +102,7 @@ class TestSandboxRecordsApi:
 
     def test_sandbox_filterable_three_ways(self, env):
         """TC-2-2：level/strategy_id/hypothesis_id 三路各自命中沙盒行。"""
-        client, hid, out = env
+        client, hid, out, _db, _d = env
         for params in ({"level": "sandbox_backtest"},
                        {"strategy_id": "st_api"},
                        {"hypothesis_id": hid}):
@@ -114,7 +114,7 @@ class TestSandboxRecordsApi:
 
     def test_sandbox_rows_in_unified_stream(self, env):
         """TC-2-3：正式（早）+沙盒（晚）created_at 降序混排同一条记录流。"""
-        client, hid, out = env
+        client, hid, out, _db, _d = env
         r = client.get("/api/research/validation-records")
         recs = r.json()["records"]
         ids = [x["record_id"] for x in recs]
@@ -128,7 +128,64 @@ class TestSandboxRecordsApi:
 
     def test_level_enum_six_values_422_face_unchanged(self, env):
         """TC-2-4：扩值不扩 422 面——新值 200、bogus 仍 422、旧五值不变。"""
-        client, hid, out = env
+        client, hid, out, _db, _d = env
+
+
+def _insert(db: Path, record_id: str, hid: str, level: str,
+            verdict: str, created_at: str) -> None:
+    """直插正式对照行（沿 _seed_records 先例——测试专用种子）。"""
+    from sqlalchemy import text
+    from core.persistence.orm.engine import engine_for
+    with engine_for(db).begin() as conn:
+        conn.execute(text(
+            "INSERT INTO validation_records (record_id, hypothesis_id,"
+            " strategy_id, level, segmentation, verdict, range_hash,"
+            " params, result, created_at) VALUES"
+            f" ('{record_id}', '{hid}', 'st_api', '{level}', '',"
+            f" '{verdict}', 'rh_{record_id}', '{{}}', '{{}}',"
+            f" '{created_at}')"))
+
+
+class TestVerdictCountsFourKeys:
+    def test_verdict_counts_four_keys_three_pure(self, env):
+        """TC-2-5：四键恒在场+sandbox 按 level 计数+三键纯净+互斥边界
+        （G5/G10——verdict 筛选不命中沙盒行/composite 不落键）。"""
+        client, hid, out, db, d = env
+        # 补直插基线：module env 已有正式 pass×1（rec_formal_1）与真实
+        # 沙盒×1；补 pass×1+fail×1+composite×1（verdict 非三态——死值域
+        # 行不落键演示）
+        _insert(db, "rec_c2", hid, "isolated_backtest", "pass",
+                "2026-01-02T00:00:00Z")
+        _insert(db, "rec_c3", hid, "random_window", "fail",
+                "2026-01-03T00:00:00Z")
+        _insert(db, "rec_c4", hid, "composite", "",
+                "2026-01-04T00:00:00Z")
+        base = client.get("/api/research/validation-records").json()
+        assert base["verdict_counts"] == {
+            "pass": 2, "fail": 1, "inconclusive": 0, "sandbox": 1}
+        # 再真实跑沙盒 2 次 → 沙盒×3；三键纯净（沙盒插入前后不变）
+        for _ in range(2):
+            run_sandbox_backtest(
+                db, d, strategy_id="st_api", symbol="BTCUSDT",
+                timeframe="4h", start="2023-03-01", end="2023-03-10",
+                hypothesis_id=hid)
+        full = client.get("/api/research/validation-records").json()
+        assert full["verdict_counts"] == {
+            "pass": 2, "fail": 1, "inconclusive": 0, "sandbox": 3}
+        assert full["total"] == 7  # 四键和 6<7——composite 不落键
+        # level 互斥过滤：sandbox=0 恒在场
+        iso = client.get("/api/research/validation-records",
+                         params={"level": "isolated_backtest"}).json()
+        assert iso["verdict_counts"] == {
+            "pass": 2, "fail": 0, "inconclusive": 0, "sandbox": 0}
+        assert iso["total"] == 2
+        # verdict=pass 筛选：沙盒行不在 records 不在计数（G5）
+        vp = client.get("/api/research/validation-records",
+                        params={"verdict": "pass"}).json()
+        assert not any(x["level"] == "sandbox_backtest"
+                       for x in vp["records"])
+        assert vp["verdict_counts"]["sandbox"] == 0
+        assert vp["total"] == vp["verdict_counts"]["pass"]
         ok = client.get("/api/research/validation-records",
                         params={"level": "sandbox_backtest"})
         assert ok.status_code == 200
