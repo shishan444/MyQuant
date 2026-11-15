@@ -49,13 +49,22 @@ def reference_metrics(
 
     total_return = float(equity[-1] / equity[0]) - 1.0
     years = n / bars_per_year
-    annual_return = (1.0 + total_return) ** (1.0 / max(years, 0.01)) - 1.0
+    # 爆仓分支（fix-audit-correctness E-01 同语义收口）：total_return
+    # <= -1（权益末值不大于 0）时年化截断 -1.0——负底数分数幂在
+    # numpy 路径产 nan（比对器两侧同形，D-2 排除随本收口退役）
+    if total_return <= -1.0:
+        annual_return = -1.0
+    else:
+        annual_return = (1.0 + total_return) ** (1.0 / max(years, 0.01)) - 1.0
 
     cummax = np.maximum.accumulate(equity)
     drawdown = (equity - cummax) / cummax
     max_drawdown = float(np.min(drawdown))
     if np.isnan(max_drawdown):
         max_drawdown = 0.0
+    # 爆仓口径（E-01）：回撤语义域 [-1, 0]——负权益深坑截断下界
+    if max_drawdown < -1.0:
+        max_drawdown = -1.0
 
     sharpe_ratio = 0.0
     trade_returns = pnl_arr / init_cash
