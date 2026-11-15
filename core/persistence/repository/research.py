@@ -892,10 +892,10 @@ def count_validation_records(
 
 # ── B1 过滤/排序 SQL 表达式（upgrade-validation-records-list 1.1）──
 # worst 双路径（B1.3）：三型 level 各自的 result/params JSON 键位路由
-# （validation_service 实锚：isolated result $.metrics.total_return /
-# random result $.summary.worst_window.metrics.total_return / staged
-# result $.summary.worst_segment.total_return——composite/component
-# 死值域落 NULL 计入 unsortable）。
+# （validation_service 实锚：isolated 型走 result $.metrics.total_return、
+# random 型走 result $.summary.worst_window.metrics.total_return、
+# staged 型走 result $.summary.worst_segment.total_return——composite/
+# component 死值域落 NULL 计入 unsortable）。
 # 先验 json_valid CASE（fix-audit-correctness D-01，照 _PARENT_HYP_ID/
 # _BASE_SYMBOL_EXPR 先例族）：result/params 列无机制保证恒 JSON，
 # corrupt 行（裸串/坏 JSON）使 json_extract 直接求值抛 OperationalError

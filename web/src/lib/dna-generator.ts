@@ -1,9 +1,13 @@
 /**
- * Generate a minimal DNA from WHEN/THEN validation conditions.
+ * 从验证记录 WHEN/THEN 条件生成最小可保存 DNA（fix-audit-correctness
+ * F-01 救活）。
  *
- * This is a lossy mapping: Lab conditions become entry/exit signal genes,
- * while full strategy DNA supports guards, logic, risk genes etc.
- * The generated DNA is sufficient for saving and basic backtesting.
+ * 职责边界：这是有损映射（lossy mapping）——Lab 条件仅映射为入场/出场
+ * signal genes，完整策略 DNA 还支持 guards、logic、risk genes 等，
+ * 不在本模块表达；生成的 DNA 足够保存与基础回测。
+ * 服务对象：Lab.tsx 保存链与验证页（validateLabConditions/
+ * mapActionToCondType/parseThreshold）；generateDnaFromValidation
+ * 本体当前仅测试消费，生产消费方为零（全域检索在案）。
  */
 import type { ConditionInput, DNA, SignalGene } from "@/types/api";
 

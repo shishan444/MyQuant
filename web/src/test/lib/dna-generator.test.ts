@@ -1,5 +1,5 @@
 /**
- * Unit tests for lib/dna-generator.ts: DNA generation from validation conditions.
+ * lib/dna-generator.ts 单元测试：验证条件→DNA 生成（映射、防御与校验）。
  */
 import { describe, it, expect } from "vitest";
 import {
