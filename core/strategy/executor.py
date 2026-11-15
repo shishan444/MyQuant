@@ -753,10 +753,13 @@ def evaluate_layer(
             if isinstance(exc.detail, dict) and "indicator" not in exc.detail:
                 exc.detail["indicator"] = gene.indicator
             raise
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             # R1 收口（fix-review CARD-06 边界退役）：「静默跳过该基因」
-            # 改结构化拒绝直达顶层——与单周期路径 :954-969 同款转译，
-            # 基因信号不产生即红（残缺 SignalSet 缺陷形态消灭）
+            # 改结构化拒绝直达顶层——与单周期路径同款转译，基因信号
+            # 不产生即红（残缺 SignalSet 缺陷形态消灭）。TypeError 并入
+            # （fix-audit-correctness F-01 求值纵深）：str threshold 等
+            # 类型形制异常在不走装载校验的直达路径（进化评估直达形、
+            # 未来新入口）从 500 裸冒泡转结构化拒绝
             raise ResearchError(
                 "RESEARCH_CONDITION_INVALID",
                 f"策略基因不可求值：indicator={gene.indicator}",
@@ -1202,13 +1205,15 @@ def dna_to_signal_set(
             if isinstance(exc.detail, dict) and "indicator" not in exc.detail:
                 exc.detail["indicator"] = gene.indicator
             raise
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             # unify-tool-return-contract D7 第二静默面收口：本 except 块
-            # 内唯一 ValueError 源即列解析（_get_indicator_column）与
-            # 求值路径——「静默跳过该基因」退役，结构化拒绝直达顶层
-            # （冒泡应用层全局兜底 research_error_to_http 单源转
-            # 422）；已知 type 畸形参数防御分支（全 False）
-            # 属 evaluate_condition 内部形态，不经此面
+            # 内 ValueError 源即列解析（_get_indicator_column）与求值
+            # 路径——「静默跳过该基因」退役，结构化拒绝直达顶层（冒泡
+            # 应用层全局兜底 research_error_to_http 单源转 422）；已知
+            # type 畸形参数防御分支（全 False）属 evaluate_condition
+            # 内部形态，不经此面。TypeError 并入（fix-audit-correctness
+            # F-01 求值纵深）：str threshold 等类型形制异常在不走装载
+            # 校验的直达路径从 500 裸冒泡转结构化拒绝
             raise ResearchError(
                 "RESEARCH_CONDITION_INVALID",
                 f"策略基因不可求值：indicator={gene.indicator}",

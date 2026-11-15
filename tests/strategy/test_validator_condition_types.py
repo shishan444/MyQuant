@@ -71,6 +71,56 @@ _LEGAL_CASES = {
 }
 
 
+class TestThresholdFormValidation:
+    """threshold 类型形制前置校验（fix-audit-correctness F-01 保存面主防线）。
+
+    消费 threshold 的类型集（eq/lt/gt/le/ge/cross_above/cross_below，
+    顶层与 inner 同判）：threshold 键存在时必须 int/float 且非 bool
+    ——字符串阈值从保存链静默落库（落库后求值 gt 族 TypeError 出站
+    500、eq 静默全 False）改为 422 前置拦截。
+    """
+
+    def test_gt_str_threshold_rejected(self):
+        result = validate_dna(_mk_dna_with_condition(
+            {"type": "gt", "threshold": "2.5"}))
+        msgs = [e for e in result.errors if "threshold" in e]
+        assert msgs, "gt + 字符串 threshold 必须产 error"
+        assert any("must be int/float" in e and "str" in e for e in msgs), \
+            "error 点名实际类型（形制沿合法集判据）"
+
+    def test_gt_numeric_threshold_passes(self):
+        result = validate_dna(_mk_dna_with_condition(
+            {"type": "gt", "threshold": 2.5}))
+        assert not [e for e in result.errors if "threshold" in e]
+
+    def test_cross_above_str_threshold_rejected(self):
+        result = validate_dna(_mk_dna_with_condition(
+            {"type": "cross_above", "threshold": "70"}))
+        assert any("threshold" in e for e in result.errors)
+
+    def test_bool_threshold_rejected(self):
+        """bool 是 int 子类——显式排除防 isinstance 漏网。"""
+        result = validate_dna(_mk_dna_with_condition(
+            {"type": "eq", "threshold": True}))
+        assert any(
+            "threshold" in e and "bool" in e for e in result.errors)
+
+    def test_dead_key_on_non_bearing_type_not_judged(self):
+        """price_above 不消费 threshold——多余键不判（已知面）。"""
+        result = validate_dna(_mk_dna_with_condition(
+            {"type": "price_above", "threshold": "2.5"}))
+        assert not [e for e in result.errors if "threshold" in e]
+
+    def test_lookback_inner_str_threshold_rejected(self):
+        """inner 层同款延伸：阈值四类 inner 的 str threshold 拦截。"""
+        result = validate_dna(_mk_dna_with_condition({
+            "type": "lookback_any", "window": 5,
+            "inner": {"type": "gt", "threshold": "70"}}))
+        msgs = [e for e in result.errors if "threshold" in e]
+        assert msgs, "inner + 字符串 threshold 必须产 error"
+        assert any("inner" in e for e in msgs)
+
+
 class TestCondTypeLegalSet:
     """cond_type 合法集校验：非法拒绝、合法全放行。"""
 

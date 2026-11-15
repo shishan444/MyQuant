@@ -726,6 +726,18 @@ def validate_trading_compatibility(dna: StrategyDNA, link: str) -> List[str]:
     return reasons
 
 
+_THRESHOLD_BEARING_TYPES = frozenset({
+    "eq", "lt", "gt", "le", "ge", "cross_above", "cross_below",
+})
+"""消费 threshold 的条件类型集（fix-audit-correctness F-01）。
+
+= executor 实测消费 threshold 做数值比较/穿越判定的类型集；这些类型
+的 threshold 键存在时必须为数值（int/float，bool 排除）——保存面前置
+拦截字符串阈值静默落库（落库后求值三分叉：gt 族 TypeError 出站 500、
+eq 静默全 False、死键无影响）。
+"""
+
+
 def _validate_condition_structure(
     condition: dict, gene_idx: int, prefix: str = "",
 ) -> List[str]:
@@ -751,6 +763,14 @@ def _validate_condition_structure(
         errors.append(
             f"{label}: condition type must be one of "
             f"{sorted(EVALUABLE_CONDITION_TYPES)}, got '{cond_type}'")
+    elif cond_type in _THRESHOLD_BEARING_TYPES and "threshold" in condition:
+        # threshold 类型形制判据（F-01 保存面主防线）：键存在时必须
+        # int/float 且非 bool——缺失键不判（eq 等类型 threshold 可选）
+        th = condition["threshold"]
+        if isinstance(th, bool) or not isinstance(th, (int, float)):
+            errors.append(
+                f"{label}: {cond_type} 'threshold' must be int/float, "
+                f"got {type(th).__name__}")
     elif cond_type in ("cross_above_series", "cross_below_series"):
         if "target_indicator" not in condition:
             errors.append(f"{label}: {cond_type} requires 'target_indicator'")
@@ -784,6 +804,16 @@ def _validate_condition_structure(
                     errors.append(
                         f"{label}: {cond_type} inner condition "
                         f"({inner_type}) requires 'threshold'")
+                elif inner_type in _THRESHOLD_BEARING_TYPES \
+                        and "threshold" in inner:
+                    # inner 层 threshold 形制同款延伸（F-01）
+                    inner_th = inner["threshold"]
+                    if isinstance(inner_th, bool) or not isinstance(
+                            inner_th, (int, float)):
+                        errors.append(
+                            f"{label}: {cond_type} inner condition "
+                            f"({inner_type}) 'threshold' must be int/float, "
+                            f"got {type(inner_th).__name__}")
     elif cond_type == "touch_bounce":
         if "direction" not in condition:
             errors.append(f"{label}: touch_bounce requires 'direction'")
