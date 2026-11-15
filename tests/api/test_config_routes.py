@@ -255,6 +255,52 @@ class TestLegacyCredentialMigration:
         for k in ("binance_api_key", "binance_secret_key"):
             assert k not in cfg, f"半迁移态仍物理删除 {k}"
 
+    @pytest.mark.parametrize("payload", [
+        pytest.param("not-json{", id="损坏 JSON"),
+        pytest.param("[1, 2, 3]", id="合法 JSON 非对象"),
+    ])
+    def test_corrupt_config_zero_action(
+        self, tmp_path, monkeypatch, caplog, payload,
+    ) -> None:
+        """迁移对损坏/非对象 config.json 零动作（gate2 盲区消解：
+        :116-119 两个防御 return 形态）——不迁移、不删键、不炸启动，
+        文件逐字节原样。"""
+        cred = tmp_path / "creds" / "credentials.json"
+        monkeypatch.setenv("MYQUANT_CREDENTIALS_FILE", str(cred))
+        db_path = tmp_path / "db" / "quant.db"
+        db_path.parent.mkdir(parents=True)
+        (db_path.parent / "config.json").write_text(payload, encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="api.routes.config"):
+            self._run_migration(db_path)
+        assert not cred.exists(), "损坏 config.json 不应触发迁移"
+        raw = (db_path.parent / "config.json").read_text(encoding="utf-8")
+        assert raw == payload, "损坏 config.json 应逐字节原样保留"
+
+    def test_corrupt_credfile_migrates_over(
+        self, tmp_path, monkeypatch,
+    ) -> None:
+        """凭据文件自身损坏（合法 JSON 解析失败）→ existing={} 按无值
+        走分支①迁移（gate2 盲区消解：:131-132 except 形态）——损坏文件
+        被迁移值覆盖重写，config 键删除。"""
+        cred = tmp_path / "creds" / "credentials.json"
+        cred.parent.mkdir(parents=True)
+        cred.write_text("corrupt{", encoding="utf-8")
+        monkeypatch.setenv("MYQUANT_CREDENTIALS_FILE", str(cred))
+        db_path = tmp_path / "db" / "quant.db"
+        db_path.parent.mkdir(parents=True)
+        (db_path.parent / "config.json").write_text(json.dumps({
+            "binance_api_key": "k" * 64, "binance_secret_key": "s" * 64,
+            "language": "zh-CN",
+        }), encoding="utf-8")
+        self._run_migration(db_path)
+        saved = json.loads(cred.read_text(encoding="utf-8"))
+        assert saved["binance_api_key"] == "k" * 64, \
+            "损坏凭据文件应被迁移值覆盖重写"
+        cfg = json.loads((db_path.parent / "config.json").read_text(
+            encoding="utf-8"))
+        for k in ("binance_api_key", "binance_secret_key"):
+            assert k not in cfg
+
     def test_branch3_no_credentials_zero_action(
         self, tmp_path, monkeypatch, caplog,
     ) -> None:

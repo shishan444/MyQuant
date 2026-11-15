@@ -98,6 +98,15 @@ class TestCredentialsStore:
             encoding="utf-8")
         assert load_credentials() is None
 
+    def test_load_none_when_not_dict(self, cred_file):
+        """缺失形态④（gate2 盲区消解）：合法 JSON 但非对象（数组/
+        字符串）按未配置处理——load None 不炸启动，与「损坏」同语义
+        （spec credentials-channel 缺失语义邻界形态）。"""
+        cred_file.write_text("[1, 2, 3]", encoding="utf-8")
+        assert load_credentials() is None
+        cred_file.write_text('"plain-string"', encoding="utf-8")
+        assert load_credentials() is None
+
     def test_delete(self, cred_file):
         save_credentials(_valid())
         assert delete_credentials() is True
