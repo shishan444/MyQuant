@@ -2,11 +2,17 @@
  * 权益曲线共享组件（lightweight-charts 单库形态，fe-chart-single-lib 组 2）。
  * Trading/Lab/BatchBacktest 共用；resolveEquityColor 随迁本文件。
  * jsdom 降级：内建 canvas 可用性检测，jsdom 下跳过初始化保留容器与空态。
+ * 悬停浮层（fix-chart-tooltip-restore F1）：subscribeCrosshairMove 订阅，
+ * 浮层只消费事件回调与 props 两源数据（R-A），全 JSX 渲染零 HTML 注入面（R-D）。
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createChart, AreaSeries } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, MouseEventParams, UTCTimestamp } from 'lightweight-charts';
 import { withAlpha } from '@/components/charts/core/chartThemes';
+import {
+  computeTooltipPosition,
+  type TooltipPositionResult,
+} from '@/components/charts/core/tooltipPosition';
 import { POLARITY, ATTENTION } from '@/theme/tokens';
 
 /** equity 点（UTC ISO 串时间轴，旧形制承继，装配时转 epoch 秒） */
@@ -25,6 +31,28 @@ export function resolveEquityColor(data: EquityPoint[], baseline?: number) {
   return last >= baseline ? POLARITY.up : POLARITY.down;
 }
 
+/** 悬停时间行（旧 equityOption.ts:16-18 逐字恢复）：原始串字面切片 MM-DD HH:mm。
+ * 对后端三种串形制（naive 无 Z/带 Z/空格分隔）恒与旧版字面一致（D3 反查链） */
+export function formatTime(ts: string): string {
+  return ts.slice(5, 16).replace("T", " ");
+}
+
+/** 悬停金额三档缩写（旧 equityOption.ts:20-24 逐字恢复，Math.abs 判档）：
+ * 百万档两位小数 M/千档一位小数 K/其余整数无后缀；负号夹在 $ 与数字间 */
+export function formatMoney(v: number): string {
+  if (Math.abs(v) >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(v) >= 1_000) return `$${(v / 1_000).toFixed(1)}K`;
+  return `$${v.toFixed(0)}`;
+}
+
+/** 悬停态存原始数据引用（格式化在 JSX 内完成，回调薄：只反查） */
+interface EquityHoverState {
+  timestamp: string;
+  value: number;
+  x: number;
+  y: number;
+}
+
 export interface EquityCurveProps {
   data: EquityPoint[];
   /** 初始资金基准；提供时按终点盈亏着色，缺省金色 */
@@ -36,6 +64,13 @@ export function EquityLineChart({ data, baseline, height = 200 }: EquityCurvePro
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
+  // 悬停浮层三通道：validDataRef（数据 effect 写入、订阅回调读——订阅挂初始化
+  // effect 只跑一次而数据随 props 重跑，直接闭包捕获会陈旧）、hover state（存
+  // 原始引用）、tooltipPos（measure 后的绝对定位值）
+  const validDataRef = useRef<EquityPoint[]>([]);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<EquityHoverState | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<TooltipPositionResult | null>(null);
   const hasData = data.length >= EQUITY_MIN_POINTS;
   // jsdom 降级：getContext("2d") 调用判空（jsdom 方法存在但返回 null，无绘制面）
   const canDraw = typeof document !== 'undefined' &&
@@ -53,6 +88,36 @@ export function EquityLineChart({ data, baseline, height = 200 }: EquityCurvePro
     // applyOptions 设置——两 effect 同轮 commit 内先后执行，首帧前已就位
     const series = chart.addSeries(AreaSeries, { lineWidth: 2 });
     seriesRef.current = series;
+    // 悬停订阅挂初始化 effect（D1：与图表实例同生共死，数据 effect 重跑不重复
+    // 订阅）。离图（time/point 任一 undefined）清态；seriesData 无值或 epoch 反查
+    // 未命中走防御态不更新（吸附语义下理论不可达的兜底）
+    chart.subscribeCrosshairMove((param: MouseEventParams) => {
+      if (param.time === undefined || param.point === undefined) {
+        setHover(null);
+        return;
+      }
+      const current = seriesRef.current;
+      if (!current) return;
+      const point = param.seriesData.get(current) as
+        | { value?: number }
+        | undefined;
+      if (!point || point.value === undefined || !Number.isFinite(point.value)) {
+        return;
+      }
+      // 时间反查与 setData 同用 Date.parse 直调（勿引 time.ts toTime——裸串补
+      // Z 按 UTC 解析与 Date.parse 本地时区解析在 naive 串上产出不同 epoch，
+      // 误引则谓词失配恒不命中）；显示走原始串字面切片（formatTime）
+      const hit = validDataRef.current.find(
+        (d) => Date.parse(d.timestamp) / 1000 === param.time,
+      );
+      if (!hit) return;
+      setHover({
+        timestamp: hit.timestamp,
+        value: point.value,
+        x: param.point.x,
+        y: param.point.y,
+      });
+    });
     return () => {
       chart.remove();
       chartRef.current = null;
@@ -73,6 +138,8 @@ export function EquityLineChart({ data, baseline, height = 200 }: EquityCurvePro
     const validData = data.filter(
       (d) => !Number.isNaN(Date.parse(d.timestamp)) && Number.isFinite(d.value),
     );
+    // ref 通道：同一过滤后序列供订阅回调反查（与绘制同源——原始数组含被过滤脏点）
+    validDataRef.current = validData;
     const points = validData.map(
       (d) => ({ time: (Date.parse(d.timestamp) / 1000) as UTCTimestamp, value: d.value }),
     );
@@ -96,6 +163,29 @@ export function EquityLineChart({ data, baseline, height = 200 }: EquityCurvePro
     chartRef.current.timeScale().fitContent();
   }, [data, baseline, canDraw]);
 
+  // 浮层定位（消费 charts/core/tooltipPosition 纯函数，锚点=param.point）：
+  // 渲染后 measure 实测尺寸再计算——useLayoutEffect 在 paint 前完成定位更新，
+  // 无闪烁；jsdom 下 offsetWidth 恒 0（宽高传反类缺陷归 e2e G-1 真布局终审）
+  useLayoutEffect(() => {
+    if (!hover || !tooltipRef.current || !containerRef.current) {
+      setTooltipPos(null);
+      return;
+    }
+    setTooltipPos(
+      computeTooltipPosition({
+        anchor: { x: hover.x, y: hover.y },
+        tooltip: {
+          width: tooltipRef.current.offsetWidth,
+          height: tooltipRef.current.offsetHeight,
+        },
+        container: {
+          width: containerRef.current.offsetWidth,
+          height: containerRef.current.offsetHeight,
+        },
+      }),
+    );
+  }, [hover]);
+
   if (!hasData) {
     return (
       <div className='flex items-center justify-center rounded-lg border border-border-default' style={{ height }}>
@@ -103,5 +193,36 @@ export function EquityLineChart({ data, baseline, height = 200 }: EquityCurvePro
       </div>
     );
   }
-  return <div ref={containerRef} style={{ height }} />;
+  return (
+    <div
+      ref={containerRef}
+      data-testid="equity-chart-container"
+      style={{ height, position: 'relative' }}
+    >
+      {hover && (
+        <div
+          ref={tooltipRef}
+          data-testid="equity-tooltip"
+          style={{
+            position: 'absolute',
+            left: tooltipPos?.left,
+            top: tooltipPos?.top,
+            zIndex: 10,
+            pointerEvents: 'none',
+            // 旧 tooltip 外层样式随迁（§1.2 Equity 侧清单，A1 视觉近似面）
+            backgroundColor: '#1a1a2e',
+            border: '1px solid #2a2a3e',
+            borderRadius: 8,
+            color: '#e2e8f0',
+            fontSize: 12,
+            padding: 8,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <div>{formatTime(hover.timestamp)}</div>
+          <div>{`Equity: ${formatMoney(hover.value)}`}</div>
+        </div>
+      )}
+    </div>
+  );
 }
