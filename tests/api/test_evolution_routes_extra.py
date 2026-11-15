@@ -195,6 +195,69 @@ class TestDiscoveredStrategies:
         )
         assert [i["strategy_id"] for i in response.json()] == []
 
+    @staticmethod
+    def _seed_scored_evolution(
+        db_path: Path, count: int = 30,
+    ) -> None:
+        """造 count 条分数 100 递减 1 的 evolution 策略（唯一签名防去重吞）。"""
+        from core.persistence.repository.strategy import save_strategy
+        for i in range(count):
+            save_strategy(
+                db_path, strategy_id=f"evo-sc-{i:02d}",
+                dna_json=make_dna().to_json(),
+                gene_signature=f"sig-scored-{i}",
+                symbol="BTCUSDT", timeframe="4h", name=f"Scored{i}",
+                source="evolution", source_task_id="task-sc",
+                best_score=float(100 - i),
+            )
+
+    def test_min_score_filter_precedes_limit_truncation(
+        self, api_client: TestClient,
+    ) -> None:
+        """A-01 修复锚：min_score=85 & limit=10 返回达标集 top10（100..91）。
+
+        best_score 降序下达标集 top-K 与全库 top-K 恒等，两形态本场景
+        返回集一致；本锚锁定过滤已语义化为「达标集中前 N 条」（limit
+        消耗在达标集上而非全库）。实施期勘正：规划锚「含 90..85 分段」
+        系探针造数缺陷误读（30 条同 DNA 被 save 去重吞 29），非真漏列。
+        """
+        self._seed_scored_evolution(api_client.app.state.db_path)
+        response = api_client.get(
+            "/api/evolution/strategies",
+            params={"min_score": 85.0, "limit": 10},
+        )
+        assert response.status_code == 200
+        items = response.json()
+        assert len(items) == 10
+        assert min(i["score"] for i in items) == 91.0, \
+            "达标集（>=85）top10 末位是 91（100..91）"
+
+    def test_min_score_full_pass_at_high_limit(
+        self, api_client: TestClient,
+    ) -> None:
+        """min_score=85 & limit=500：16 条达标策略全部单请求可见。"""
+        self._seed_scored_evolution(api_client.app.state.db_path)
+        response = api_client.get(
+            "/api/evolution/strategies",
+            params={"min_score": 85.0, "limit": 500},
+        )
+        assert response.status_code == 200
+        items = response.json()
+        assert len(items) == 16
+        assert all(i["score"] >= 85.0 for i in items)
+
+    def test_no_min_score_response_unchanged(
+        self, api_client: TestClient,
+    ) -> None:
+        """不带 min_score：默认 top20（limit 缺省）行为与下推前一致。"""
+        self._seed_scored_evolution(api_client.app.state.db_path)
+        response = api_client.get("/api/evolution/strategies")
+        assert response.status_code == 200
+        items = response.json()
+        assert len(items) == 20
+        assert items[0]["score"] == 100.0
+        assert items[19]["score"] == 81.0
+
     def test_task_discovered_strategies_scoped_to_task(
         self, api_client: TestClient,
     ) -> None:
@@ -347,7 +410,7 @@ class TestRowTransformCorruptJsonDegrades:
 
         rows = [{"strategy_id": "s_badjson", "best_score": 1.0,
                  "dna_json": "not-json-at-all"}]
-        out = _strategies_to_dicts(rows, None)
+        out = _strategies_to_dicts(rows)
         assert len(out) == 1
         assert out[0]["dna"] is None
         assert out[0]["strategy_id"] == "s_badjson"
@@ -419,5 +482,5 @@ class TestCreateTaskParquetTsProbeBoundaries:
         from api.routes.evolution import _strategies_to_dicts
 
         rows = [{"strategy_id": "s_nodna", "best_score": 1.0}]
-        out = _strategies_to_dicts(rows, None)
+        out = _strategies_to_dicts(rows)
         assert out[0]["dna"] is None

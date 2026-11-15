@@ -212,3 +212,71 @@ class TestWriteSurfaceLockdown:
         row = repo.get_strategy(db, "st_lock")
         assert row["status"] == "active"
         assert row["name"] is None
+
+
+class TestMinScoreFilterPushdown:
+    """min_score 存储层下推（fix-audit-correctness A-01）。
+
+    过滤必须在 SQL WHERE 完成（先于 limit 截断）——修复前路由层
+    内存过滤使 limit 截断吞掉达标但排序靠后的策略。
+    """
+
+    def test_30条库min_score_85恰16条全达标(self, db):
+        for i in range(30):
+            _strategy(db, f"st-{i:02d}", signature=f"sig-ms-{i}",
+                      score=float(100 - i))  # 100..71
+        rows = repo.list_strategies(db, min_score=85.0, limit=500)
+        assert len(rows) == 16, f"100..85 共 16 条，实得 {len(rows)}"
+        assert all(r["best_score"] >= 85.0 for r in rows)
+
+    def test_min_score_None全量可见(self, db):
+        for i in range(30):
+            _strategy(db, f"st-{i:02d}", signature=f"sig-msn-{i}",
+                      score=float(100 - i))
+        rows = repo.list_strategies(db, limit=500)
+        assert len(rows) == 30
+
+    def test_limit截断不再吞达标集(self, db):
+        """limit=10 + min_score=85 + created_at 排序：返回达标集内 top10。
+
+        下推真差异场景在非分数排序：created_at 序下旧路由形态（先截断
+        后内存过滤）会吞掉创建较晚的达标行；best_score 降序下达标集
+        top-K 与全库 top-K 数学恒等，两形态无差异（实施期勘正：规划锚
+        「min=90」系探针造数缺陷误读——30 条同 DNA 被 save 去重吞 29）。
+        """
+        for i in range(30):
+            _strategy(db, f"st-{i:02d}", signature=f"sig-ml-{i}",
+                      score=float(100 - i))
+        rows = repo.list_strategies(
+            db, sort_by="created_at", sort_order="desc",
+            min_score=85.0, limit=10,
+        )
+        assert len(rows) == 10
+        assert all(r["best_score"] >= 85.0 for r in rows), \
+            "created_at 序 + min_score：过滤先于截断，返回集全达标"
+
+    def test_best_score降序下达标集top10末位91(self, db):
+        """best_score 降序 + min_score=85 + limit=10：达标集 top10=100..91。
+
+        降序下达标集 top-K 与全库 top-K 恒等（达标行必排不达标行之前）
+        ——本锚锁定下推后该场景返回集与语义（达标集前 N 条）双正确。
+        """
+        for i in range(30):
+            _strategy(db, f"st-{i:02d}", signature=f"sig-bs-{i}",
+                      score=float(100 - i))
+        rows = repo.list_strategies(
+            db, sort_by="best_score", sort_order="desc",
+            min_score=85.0, limit=10,
+        )
+        assert [r["best_score"] for r in rows] ==             [float(x) for x in range(100, 90, -1)]
+
+    def test_NULL分行阈值等同0分(self, db):
+        _strategy(db, "st-null", signature="sig-null")  # score=None
+        _strategy(db, "st-5", signature="sig-5", score=5.0)
+        visible0 = repo.list_strategies(db, min_score=0.0, limit=500)
+        visible1 = repo.list_strategies(db, min_score=1.0, limit=500)
+        assert "st-null" in {r["strategy_id"] for r in visible0}, \
+            "min_score=0 时 NULL 分行可见（等同 0 分）"
+        assert "st-null" not in {r["strategy_id"] for r in visible1}, \
+            "min_score=1 时 NULL 分行不可见"
+

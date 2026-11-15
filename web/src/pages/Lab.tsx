@@ -27,6 +27,11 @@ import type { KlineChartHandle } from "@/components/charts/KlineChart";
 import { ChartToolbar } from "@/components/charts/ChartToolbar";
 import { Button as AntButton, Select as AntSelect, Skeleton } from "antd";
 import { formatTimestamp } from "@/lib/utils";
+import {
+  mapActionToCondType,
+  parseThreshold,
+  validateLabConditions,
+} from "@/lib/dna-generator";
 
 import {
   RuleConditionGroup,
@@ -426,24 +431,32 @@ export function Lab() {
 
   const handleSaveStrategy = useCallback(async (data: { name: string; description: string; tags: string }) => {
     if (!ruleResult) return;
+    // 保存链预检（fix-audit-correctness F-01 前端映射面）：无映射动作
+    // 与不可数值化阈值禁存并提示——直传 c.action 曾使 consecutive_up
+    // 等后端无对应类型的动作保存即 422、字符串 threshold 静默落库
+    const problems = validateLabConditions(entryConditions, exitConditions);
+    if (problems.length > 0) {
+      toast.error(problems[0], {
+        description: problems.length > 1 ? `共 ${problems.length} 项待修正` : undefined,
+      });
+      return;
+    }
     try {
-      // 从入场/出场条件构建简单 DNA
-      const entrySignals = entryConditions.map((c) => ({
+      // 从入场/出场条件构建简单 DNA（动作经映射表收敛到后端合法
+      // 条件类型、阈值 parseFloat 数值化）
+      const toSignal = (c: (typeof entryConditions)[number], role: "entry_trigger" | "exit_trigger") => ({
         indicator: c.subject,
         params: {},
-        role: "entry_trigger",
+        role,
         field_name: null,
-        condition: { type: c.action, threshold: c.target },
+        condition: {
+          type: mapActionToCondType(c.action)!,
+          threshold: parseThreshold(c.target) ?? 1,
+        },
         timeframe: c.timeframe,
-      }));
-      const exitSignals = exitConditions.map((c) => ({
-        indicator: c.subject,
-        params: {},
-        role: "exit_trigger",
-        field_name: null,
-        condition: { type: c.action, threshold: c.target },
-        timeframe: c.timeframe,
-      }));
+      });
+      const entrySignals = entryConditions.map((c) => toSignal(c, "entry_trigger"));
+      const exitSignals = exitConditions.map((c) => toSignal(c, "exit_trigger"));
       const generatedDna = {
         signal_genes: [...entrySignals, ...exitSignals],
         logic_genes: { entry_logic: "AND", exit_logic: "OR" },

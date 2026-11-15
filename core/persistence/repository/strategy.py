@@ -178,6 +178,7 @@ def _strategy_filters(
     tags: Optional[str] = None,
     qualified: Optional[bool] = None,
     status: Optional[str] = None,
+    min_score: Optional[float] = None,
 ):
     """过滤面组装（list/count 共用）。
 
@@ -201,6 +202,9 @@ def _strategy_filters(
                               Strategy.status != "draft"))
     else:
         stmt = stmt.where(Strategy.status == status)
+    # 分数阈值（A-01 下推）：NULL 分行等同 0 分（与既有内存过滤语义一致）
+    if min_score is not None:
+        stmt = stmt.where(func.coalesce(Strategy.best_score, 0.0) >= min_score)
     return stmt
 
 
@@ -238,6 +242,7 @@ def list_strategies(
     sort_order: str = "desc",
     limit: int = 100,
     offset: int = 0,
+    min_score: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     """列策略（过滤+白名单排序+分页）。
 
@@ -254,7 +259,7 @@ def list_strategies(
     stmt = _strategy_filters(
         select(Strategy), symbol=symbol, source=source,
         source_task_id=source_task_id, tags=tags, qualified=qualified,
-        status=status,
+        status=status, min_score=min_score,
     ).order_by(order_col).limit(limit).offset(offset)
     engine = _engine_for(db_path)
     with engine.connect() as conn:

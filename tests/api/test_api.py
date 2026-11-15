@@ -126,6 +126,30 @@ class TestStrategyCreate:
         data = response.json()
         assert data["symbol"] == "ETHUSDT"
 
+    def test_create_strategy_str_threshold_422(self, client: TestClient) -> None:
+        """F-01 保存面端到端：字符串 threshold 422 DNA_VALIDATION_FAILED。
+
+        修复前 pydantic 静默放行 201 落库，回测求值 gt 族 TypeError
+        出站 500。"""
+        import copy
+        payload = _sample_strategy_create()
+        payload["dna"] = copy.deepcopy(payload["dna"])
+        payload["dna"]["signal_genes"][0]["condition"] = {
+            "type": "gt", "threshold": "2.5"}
+        response = client.post("/api/strategies", json=payload)
+        assert response.status_code == 422
+        detail = response.json().get("detail", {})
+        assert detail.get("code") == "DNA_VALIDATION_FAILED"
+        err_text = " ".join(detail.get("errors", []))
+        assert "threshold" in err_text and "str" in err_text, \
+            "errors 点名 threshold 实际类型"
+
+    def test_create_strategy_numeric_threshold_201(self, client: TestClient) -> None:
+        """F-01 对照锚：数值 threshold 保存照旧 201（Lab 联调链）。"""
+        payload = _sample_strategy_create()
+        response = client.post("/api/strategies", json=payload)
+        assert response.status_code == 201
+
     def test_create_strategy_invalid_missing_required(self, client: TestClient) -> None:
         """POST with missing required fields should return 422."""
         response = client.post("/api/strategies", json={})

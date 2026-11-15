@@ -124,29 +124,52 @@ class TestGenericMissingColumns422:
         assert "timestamp" in resp.json()["detail"]
 
 
-class TestImportEndpointModeFallback:
-    """触碰端点分支消解：非法 mode 字符串回退 MERGE / batch 空 files 400。"""
+class TestImportEndpointModeValidation:
+    """mode 形制校验（fix-audit-correctness A-03——原 ModeFallback 类
+    固化缺陷现状「非法回退 MERGE」已反转）：非法 mode 422 显式拒零
+    副作用；batch 空 files 400 面保留。"""
 
-    def test_invalid_mode_falls_back_to_merge(self, api_client: TestClient) -> None:
-        """mode 非法字符串不报错：ImportMode 解析失败回退 MERGE 语义。"""
-        # 预置同名数据集两行（同时间戳不同值）：MERGE 取新值、REPLACE 覆盖
+    def test_invalid_mode_rejected_422_structured_detail(
+        self, api_client: TestClient
+    ) -> None:
+        """mode 非法字符串 422：detail 三键（code/实际值/合法值清单）。
+
+        修复前静默回退 MERGE——「替换」意图被静默改写为「合并」。"""
         first = (
             "1735689600000,42000.0,42580.0,41850.0,42310.0,312.5,1735693199999,13120000,450,250.0,10550000,0\n"
         ).encode()
         resp = api_client.post(
             "/api/data/import",
             files={"file": ("BTCUSDT-4h-2025-01.csv", first, "text/csv")},
-            data={"mode": "replace", "symbol": "BTCUSDT", "interval": "4h"},
-        )
-        assert resp.status_code == 200
-        # mode="bogus" 回退 MERGE：与既有行合并去重（仍 1 行）
-        resp2 = api_client.post(
-            "/api/data/import",
-            files={"file": ("BTCUSDT-4h-2025-01.csv", first, "text/csv")},
             data={"mode": "bogus", "symbol": "BTCUSDT", "interval": "4h"},
         )
-        assert resp2.status_code == 200
-        assert resp2.json()["rows_imported"] == 1
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert detail["code"] == "IMPORT_MODE_INVALID"
+        assert "bogus" in detail["message"]
+        assert detail["legal_values"] == ["merge", "replace", "new"]
+
+    def test_legal_three_modes_unchanged(self, api_client: TestClient) -> None:
+        """合法三值（merge/replace/new）行为与修复前一致。
+
+        三值各用独立 dataset（fixture 预置的 naive 索引 dummy 与系统
+        导入的 tz-aware 合并会 tz 冲突——原 batch 族测试在案坑位）。"""
+        first = (
+            "1735689600000,42000.0,42580.0,41850.0,42310.0,312.5,1735693199999,13120000,450,250.0,10550000,0\n"
+        ).encode()
+        cases = [
+            ("merge", "ETHUSDT", "4h"),
+            ("replace", "BTCUSDT", "1h"),
+            ("new", "ETHUSDT", "1h"),
+        ]
+        for mode, sym, iv in cases:
+            resp = api_client.post(
+                "/api/data/import",
+                files={"file": (f"{sym}-{iv}-2025-01.csv", first,
+                                "text/csv")},
+                data={"mode": mode, "symbol": sym, "interval": iv},
+            )
+            assert resp.status_code == 200, f"mode={mode} 应照旧 200"
 
     def test_batch_empty_files_rejected_422(self, api_client: TestClient) -> None:
         """空 files：FastAPI 请求校验先行拦 422（装载层责任）——
@@ -154,11 +177,10 @@ class TestImportEndpointModeFallback:
         resp = api_client.post("/api/data/import-batch", files=[])
         assert resp.status_code == 422
 
-    def test_batch_invalid_mode_falls_back_to_merge(
+    def test_batch_invalid_mode_rejected_422_same_form(
         self, api_client: TestClient
     ) -> None:
-        # 独立 dataset 避开 fixture 预置的 naive 索引 dummy（系统导入
-        # 恒产 tz-aware，naive 存量仅存在于测试 fixture，合并会 tz 冲突）
+        """batch 端点同款 422（与单端点复制粘贴级一致）。"""
         csv = (
             "1735689600000,42000.0,42580.0,41850.0,42310.0,312.5,1735693199999,13120000,450,250.0,10550000,0\n"
         ).encode()
@@ -167,8 +189,12 @@ class TestImportEndpointModeFallback:
             files=[("files", ("ETHUSDT-4h-2025-01.csv", csv, "text/csv"))],
             data={"symbol": "ETHUSDT", "interval": "4h", "mode": "bogus"},
         )
-        assert resp.status_code == 200
-        assert resp.json()["rows_imported"] == 1
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert detail["code"] == "IMPORT_MODE_INVALID"
+        assert "bogus" in detail["message"], \
+            "message 点名实际值——与单端点三键同形制"
+        assert detail["legal_values"] == ["merge", "replace", "new"]
 
 
 class TestImportBatchEndpointValidation:

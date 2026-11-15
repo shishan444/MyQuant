@@ -379,10 +379,12 @@ class TestMaxPositionLossEquivalence:
     闭合 bar 的收盘价（判定 bar 对齐）；出场价形制差属既有环境形制差
     ——引擎判定 bar 当根 close 成交、纸盘 pending 次根开盘成交，执行
     bar 恒差一根；平坦段构造（判定 bar 与次根同价）使两侧出场价数值
-    重合。资金费零差异构造【待 Q-1 批复收口】：lev=1 短线窗口不跨
-    结算点——两侧资金费分量恒零（引擎 lev=1 费率短路 funding_acc=0、
-    纸盘无结算点 funding_paid=0）；lev>1 双侧近似不可构造的实证见
-    TestNonEquivalenceLayerDeclaration 防线分叉用例。
+    重合。资金费零差异构造（Q-1 预排口径 2026-10-19 追认终局）：lev=1
+    短线窗口不跨结算点——两侧资金费分量恒零（引擎 lev=1 费率短路
+    funding_acc=0、纸盘无结算点 funding_paid=0）；lev>1 等价构造经
+    fix-audit-correctness E-02 收口（回测浮亏分量乘 leverage 与纸盘
+    名义口径单源）后同款成立——实证见
+    TestNonEquivalenceLayerDeclaration 防线用例（已翻转为等价断言）。
     """
 
     def test_trigger_bar_alignment_and_exit_price(self, tmp_path):
@@ -519,34 +521,39 @@ class TestNonEquivalenceLayerDeclaration:
       paper_trading/test_funding_backfill.py（挂起补记逐点对账）与
       tests/paper_trading/test_paper_executor.py TestFundingSettlement（金额
       =数量×结算价×费率×方向符号锚）承载；
-    - 金额防线 lev>1 判定输入口径（add-position-sizing-params 6.1）：
-      纸盘数量=margin×leverage/price（含杠杆的仓位口径）、浮亏随杠杆
-      放大 vs 回测 vbt 无杠杆股数+事后层放大+lev>1 funding_acc 估算
-      分量——两侧浮亏数值不同源，「双侧近似段」不可构造（实证见
-      test_lev_gt1_max_loss_trigger_diverges）；等价层防线对照限于
-      lev=1 资金费零差异构造（TestMaxPositionLossEquivalence）。
+    - 金额防线 lev>1 判定输入口径（add-position-sizing-params 6.1
+      历史规避面——fix-audit-correctness E-02 已收口退役）：回测防线
+      浮亏分量乘 leverage 后与纸盘名义口径单源，「双侧近似段不可
+      构造」不再成立——test_lev_gt1_max_loss_trigger_diverges 已
+      翻转为等价断言（原实证名保留、语义已反转为跨环境等价扩面）；
+      等价层防线对照在 lev=1 与 lev>1 两档均成立
+      （TestMaxPositionLossEquivalence 及上述翻转用例）。剩余不可
+      等价面为 funding 结算制差（纸盘真实结算点 vs 回测 bar 折算
+      估算），由资金费规避面继续承载。
     """
 
     def test_lev_gt1_max_loss_trigger_diverges(self, tmp_path):
-        """lev=2 防线判定输入口径差实证【待 Q-1 批复收口】：L=55 时
-        纸盘（杠杆仓位 100.7 股、bar 24 浮亏 70.5≥55）触发防线出场、
-        回测（无杠杆股数 50.4、bar 24 浮亏+funding_acc≈42.7<55）不触
-        发持有至末根——两侧判定分叉；且两侧数量恒差杠杆倍（分派口径
-        不同源的实证）。lev>1 防线不做跨环境等价对照（Q-1 预排口径
-        下限资金费零差异构造，而 lev>1 双侧近似段因数量口径差不可
-        构造——本用例即实证）。"""
+        """lev=2 防线等价断言（fix-audit-correctness E-02 翻转）：L=55
+        时纸盘（杠杆仓位口径浮亏≈70.5≥55）与回测（浮亏分量乘
+        leverage 后≈70.5+funding≈77.9≥55）同在 bar 24 判定达线触发
+        防线出场——原 1x 口径低估延迟触发形态消灭；数量恒差杠杆倍
+        断言保留（仓位模型分派口径实证，判定输入已同源）。Q-1 预排
+        口径 2026-10-19 追认终局，E-02 量纲口径对齐 2026-11 收口。"""
         dna = _guard_dna()
         dna.risk_genes.leverage = 2
         dna.risk_genes.max_position_loss = 55.0
         h = _Harness(tmp_path, dna=dna, df=_guard_df(), leverage=2)
-        # 纸盘触发防线；回测不触发（第一笔持有至末根）
+        # 两侧同 bar 触发防线（等价）
         paper_exits = [f for f in h.fills if f["kind"] == "exit_max_loss"]
         assert len(paper_exits) == 1, "纸盘杠杆仓位口径触发防线"
         r0 = h.bt_result.trades_df.iloc[0]
         bt_exit = int(h.df.index.get_loc(
             pd.Timestamp(r0["Exit Timestamp"])))
-        assert bt_exit == _GUARD_N - 1, \
-            f"回测不触发应持有至末根，实际 {bt_exit}"
+        assert bt_exit == 24, \
+            f"回测浮亏乘杠杆后应 bar 24 触发防线，实际 Exit bar {bt_exit}"
+        paper_exec = h.index_loc(paper_exits[0]["bar_time"])
+        assert paper_exec - 1 == bt_exit, \
+            f"判定 bar 两侧分叉: 纸盘执行 {paper_exec} 回测判定 {bt_exit}"
         # 数量口径差实证：纸盘=margin×lev/price（≈2×回测无杠杆股数）
         open_p = h.opens()[0]
         assert open_p["quantity"] == pytest.approx(

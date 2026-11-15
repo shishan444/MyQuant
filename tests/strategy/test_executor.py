@@ -1142,3 +1142,41 @@ class TestEqThresholdDefaultFallback:
         assert bool((out == (series == 1)).all()), \
             "缺省 threshold=1：恰 True bar 触发"
         assert int(out.sum()) == int(series.sum()) > 0
+
+
+class TestThresholdTypeErrorTranslation:
+    """F-01 求值面纵深（fix-audit-correctness）：TypeError 并入转译。
+
+    str threshold 的 gt 族比较在不走装载校验的直达路径（进化评估
+    直达形、绕过 validate_dna 的构造）从 500 裸冒泡转
+    RESEARCH_CONDITION_INVALID 结构化拒绝——与 ValueError 族同款
+    detail 四键，cause 保留底层异常文本。
+    """
+
+    def test_str_threshold_gt_direct_eval_structured_rejection(self):
+        """gt + str threshold 直达 dna_to_signal_set → 422 非 500，
+        detail.cause 含 Invalid comparison 文本。"""
+        df = make_enhanced_df(n=30)
+        gene = make_signal_gene(indicator="RSI", params={"period": 14},
+                                condition_type="gt", condition_value="70")
+        assert gene.condition["threshold"] == "70", "前提：直传 str 落进条件"
+        dna = make_dna()
+        dna.signal_genes = [gene]
+        with pytest.raises(ResearchError) as exc_info:
+            dna_to_signal_set(dna, df)
+        err = exc_info.value
+        assert err.code == "RESEARCH_CONDITION_INVALID"
+        assert err.status == 422, "结构化拒绝非 500 裸穿"
+        assert err.detail["indicator"] == "RSI"
+        assert err.detail["params"] == {"period": 14}
+        assert "Invalid comparison" in err.detail["cause"], \
+            "cause 保留底层 TypeError 文本（实测形制 'Invalid comparison " \
+            + "between dtype=float64 and str'）"
+
+    def test_str_threshold_numeric_column_comparison_raises_typeerror(self):
+        """前提锚：pandas 数值列 vs str threshold 的比较抛 TypeError
+        （Invalid comparison）——转译面的底层异常源实测在位。"""
+        df = make_enhanced_df(n=30)
+        series = df["close"]
+        with pytest.raises(TypeError):
+            _ = series > "not-a-number"

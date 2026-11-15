@@ -164,10 +164,9 @@ def test_cross_validation(case):
     eng, ref, ohlcv = _run_both(scenario, seed, **kw)
 
     m_eng, m_ref = _engine_metrics(eng), _ref_metrics(ref)
-    # D-2（已登记）：权益穿零时被测 annual_return 为复数（Python 负底数浮点幂），
-    # 参照 numpy 路径为 nan——比对排除该字段，缺陷由独立 fix 分支跟进
-    if eng.total_return <= -1.0 or ref.equity[-1] <= 0:
-        m_eng.pop("annual_return"), m_ref.pop("annual_return")
+    # D-2 排除退役（fix-audit-correctness E-01 收口）：权益穿零时
+    # 两侧 annual_return 均截断 -1.0 有界可比；max_drawdown 两侧
+    # 同语义截断下界 -1.0（参考实现随引擎同款收口）
     assert_metrics_equal(m_eng, m_ref, scenario=case_id)
 
     # 恒等式族：两实现各自独立断言

@@ -46,6 +46,16 @@ vi.mock("@/stores/chart-settings", () => ({
   })),
 }));
 
+// Mock dna-generator：仅放行保存链预检（fix-audit-correctness F-01 后
+// 保存前置 validateLabConditions——本文件用例一律使用未编辑的默认空条件，
+// 预检会拦截空 action 使保存链用例走不到保存步。预检判据本身由
+// src/test/lib/dna-generator.test.ts 的 validateLabConditions 用例族
+// 专属承载；本文件被测语义是保存链闭包，与条件可存性正交）
+vi.mock("@/lib/dna-generator", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("@/lib/dna-generator")>();
+  return { ...orig, validateLabConditions: () => [] };
+});
+
 vi.mock("@/hooks/useStrategies", () => ({
   useCreateStrategy: vi.fn(() => ({
     mutateAsync: vi.fn(),

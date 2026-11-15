@@ -374,9 +374,10 @@ class TestMetricProperties:
     """不变量与属性（V3 方法）：成立条件随用例注明，固定种子可复现。"""
 
     @pytest.mark.parametrize(
-        "total_return", [-0.5, -0.1, 0.0, 0.21, 1.5, 9.0])
+        "total_return", [-1.0, -0.5, -0.1, 0.0, 0.21, 1.5, 9.0])
     def test_annualization_one_year_identity(self, total_return):
-        # 属性：years=1 时年化恒等区间收益，(1+r)^1 - 1 = r
+        # 属性：years=1 时年化恒等区间收益，(1+r)^1 - 1 = r；
+        # -1.0 扩参（E-01 后）：爆仓截断值恰保恒等（截断 -1.0 == (1-1)^1-1）
         eq = _series([100.0, 100.0 * (1 + total_return)])
         m = compute_metrics(eq, total_trades=1, bars_per_year=2,
                             trade_returns=np.array([0.01]))
@@ -391,3 +392,75 @@ class TestMetricProperties:
         m = compute_metrics(eq, total_trades=10,
                             trade_returns=rng.normal(0.02, 0.05, 10))
         assert -1.0 <= m["max_drawdown"] <= 0.0
+
+    @pytest.mark.parametrize("seed", [11, 12, 13, 14, 15])
+    def test_穿零曲线指标全域有界属性(self, seed):
+        # 属性（E-01 截断后成立，修复前红）：权益曲线含负值段
+        # （total_return <= -1 爆仓域）时 max_drawdown 仍在 [-1,0]
+        # （修复前负权益深坑越界，如 dd≈-1.10）、annual_return >= -1.0
+        # （修复前 nan）、核心指标恒有界实数——截断使域属性从
+        # 「权益恒正前提」扩展到全域。构造：负漂移随机游走平移压入
+        # 穿零域（漂移 -0.02×120 根，末值为正概率 <0.001）
+        rng = np.random.default_rng(seed)
+        walk = np.cumprod(1 + rng.normal(-0.02, 0.04, 120))
+        eq = _series(10000 * walk - 4000.0)
+        assert eq.iloc[-1] < 0, "前提自检：构造曲线确已穿零"
+        m = compute_metrics(eq, total_trades=8,
+                            trade_returns=rng.normal(-0.05, 0.05, 8))
+        assert -1.0 <= m["max_drawdown"] <= 0.0
+        assert m["annual_return"] >= -1.0
+        for key in ("annual_return", "max_drawdown", "calmar_ratio",
+                    "alpha"):
+            assert math.isfinite(m[key]), f"{key} 爆仓域应恒有界实数"
+        # excess_return 契约两态：无基准 None 合法；有值则有界实数
+        assert m["excess_return"] is None or math.isfinite(
+            m["excess_return"])
+
+
+class TestLiquidationBoundedMetrics:
+    """爆仓态有界语义（fix-audit-correctness E-01）。
+
+    修复前形态：total_return <= -1 时 _annualize 对负底数分数幂产
+    nan（numpy 标量语义链：负底数分数幂 numpy=nan/纯 Python=complex），
+    max_drawdown 深坑越 -1、calmar 走 nan 比较漏网——指标静默 nan
+    失真参与排序。修复后全部有界实数。
+    """
+
+    def test_负权益曲线全指标有界(self):
+        import warnings
+        eq = _series([100000.0, 90000.0, 40000.0, 5000.0, -5000.0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            m = compute_metrics(eq, total_trades=4,
+                                trade_returns=np.array([-0.1, -0.2, -0.5, -0.5]))
+        assert m["annual_return"] == -1.0
+        assert m["max_drawdown"] == -1.0
+        assert m["calmar_ratio"] == 0.0
+        assert isinstance(m["alpha"], float) and math.isfinite(m["alpha"]), \
+            "alpha 随 annual_return 有界——爆仓段不产 nan"
+
+    def test_正常曲线零扰动(self):
+        """对照锚：正常曲线指标与爆仓分支加入前逐值相等。"""
+        eq = _series([100.0, 105.0, 102.0, 110.0, 121.0])
+        m = compute_metrics(eq, total_trades=3, bars_per_year=2,
+                            trade_returns=np.array([0.05, -0.01, 0.08]))
+        assert m["annual_return"] == pytest.approx(1.21 ** (2 / 5) - 1)
+        cummax = eq.cummax()
+        dd = (eq - cummax) / cummax
+        assert m["max_drawdown"] == pytest.approx(float(dd.min()))
+        assert m["calmar_ratio"] == pytest.approx(
+            abs(m["annual_return"] / m["max_drawdown"]))
+
+    def test_scorer_联动约束判别力恢复(self):
+        """爆仓 metrics 过 min_annual_return>0 约束时
+        hard_constraint_failed == 'annual_return'（fitness 归零，修复前 nan 比较漏网）。"""
+        from core.scoring.scorer import score_strategy
+        eq = _series([100000.0, 90000.0, 40000.0, 5000.0, -5000.0])
+        m = compute_metrics(eq, total_trades=4,
+                            trade_returns=np.array([-0.1, -0.2, -0.5, -0.5]))
+        result = score_strategy(
+            m, template_name="optimizer",
+            min_annual_return_limit=0.05, max_drawdown_limit=-0.5)
+        assert result["fitness"] == 0.0
+        assert result["hard_constraint_failed"] == "annual_return", \
+            "annual_return=-1.0 应触发 optimizer 硬约束失败（nan 时代比较漏网）"

@@ -1209,11 +1209,16 @@ def order_func_nb(c, entry_price, is_liquidated, peak_price, entry_bar,
     # return 全平单、当根 close 成交）。公式带符号天然双向：空头
     # position_now<0、价涨 (close−entry)>0，乘积为负取负号后为正=浮亏
     # 态；价跌时乘积为正、取负号为负=盈利态不触发——无方向分支。
+    # loss 式两分量同为名义敞口口径（fix-audit-correctness E-02）：
+    # 价格浮亏分量乘 leverage（仓位 1x 形制下浮亏按名义放大）、与
+    # funding 累计式同基（funding_acc 按名义结算额累计）、与纸盘
+    # -unrealized_pnl + funding_paid 口径单源——1x 口径曾使 lev>1
+    # 回测防线低估浮亏延迟触发，与纸盘触发时点漂移。
     # 0.0=禁用哨兵（装配层 None 物化，首判即假——存量零开销）
     if max_position_losses[col] > 0.0 and c.position_now != 0.0 \
             and entry_price[col] > 0.0:
         loss = -(c.position_now * (current_price - entry_price[col])) \
-            + funding_acc[col]
+            * leverage + funding_acc[col]
         if loss >= max_position_losses[col]:
             trace_buf[i, col] = 23.0  # 留痕：持仓金额防线出场
             entry_price[col] = 0.0
