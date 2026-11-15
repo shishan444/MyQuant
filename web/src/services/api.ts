@@ -76,12 +76,23 @@ function toNetworkApiError(method: string): ApiError {
   );
 }
 
+// 运行时配置（fix-audit-disclosure-security S-02）：API key 经部署期
+// 注入的 /runtime-config.js 读取（构建产物零内联密钥——旧形制
+// import.meta.env.VITE_MYQUANT_API_KEY 在 Vite 构建期把 key 明文编译
+// 进 dist，产物离机即泄）。未设不带 Authorization，兼容放行态。
+interface RuntimeConfig {
+  MYQUANT_API_KEY?: string;
+}
+const RUNTIME_CONFIG: RuntimeConfig =
+  (globalThis as { __MYQUANT_RUNTIME_CONFIG__?: RuntimeConfig })
+    .__MYQUANT_RUNTIME_CONFIG__ ?? {};
+
 const kyInstance = ky.create({
   timeout: 30000,
   headers: {
-    // A2：服务端启用 API key 时随请求携带（vite env 注入；未设不带，兼容放行态）
-    ...(import.meta.env.VITE_MYQUANT_API_KEY
-      ? { Authorization: `Bearer ${import.meta.env.VITE_MYQUANT_API_KEY}` }
+    // A2：服务端启用 API key 时随请求携带（运行时注入；未设不带）
+    ...(RUNTIME_CONFIG.MYQUANT_API_KEY
+      ? { Authorization: `Bearer ${RUNTIME_CONFIG.MYQUANT_API_KEY}` }
       : {}),
   },
   hooks: {

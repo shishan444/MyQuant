@@ -3,7 +3,7 @@
 对纯计算函数验证一类输入应保持的关系（明确成立条件）：
 - compute_verify_star 属性段已随旧验证会话体系退役
   （retire-verify-sessions）
-- _mask/_masked_view：任意非空凭证恒全掩码、空恒空串（不依赖输入形态）
+- _without_credentials：任意配置 dict（含存量凭据键）→ 视图零凭据键、其余键原样透传（S-01 拆链后承载）
 - _safe_error_message：任意异常实例消息恒取自有限值域
   {数据文件缺失*, 内部错误}（不泄露 str(exc) 原文）
 """
@@ -16,36 +16,27 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 
-class TestMaskInvariant:
-    def test_any_nonempty_value_masks_fully(self) -> None:
-        """任意非空输入（含 unicode/空白/超长/含 *** 本身）恒 "***"。"""
-        from api.routes.config import _mask
-        random.seed(7)
-        samples = [
-            "a", "x" * 5000, "***", "a***z", "  ", "中文凭证",
-            "".join(random.choice("abc XYZ09") for _ in range(64)),
-        ]
-        for value in samples:
-            assert _mask(value) == "***", f"输入 {value!r} 未全掩码"
+class TestCredentialFreeView:
+    """S-01 拆链后形制：掩码函数族已随凭据通道退役——原不变量面
+    （_mask/_masked_view）改承载为「响应零凭据键」不变量
+    （fix-audit-disclosure-security）。"""
 
-    def test_empty_always_empty(self) -> None:
-        from api.routes.config import _mask
-        assert _mask("") == ""
-
-    def test_masked_view_only_touches_credential_keys(self) -> None:
-        """_masked_view 只掩凭证键，其余键原样透传（任意配置 dict）。"""
-        from api.routes.config import _CREDENTIAL_KEYS, _masked_view
+    def test_response_view_drops_all_credential_keys(self) -> None:
+        """任意配置 dict（含存量凭据键）→ 响应视图零凭据键、其余
+        键原样透传（迁移窗口防明文回显的不变量承载）。"""
+        from api.routes.config import _without_credentials
         cfg = {
             "language": "zh-CN", "init_cash": 1,
-            "binance_api_key": "secret", "maker_fee": 0.1,
+            "binance_api_key": "secret", "binance_secret_key": "s2",
+            "binance_connected": True, "maker_fee": 0.1,
         }
-        view = _masked_view(cfg)
-        assert view["binance_api_key"] == "***"
+        view = _without_credentials(cfg)
+        assert "binance_api_key" not in view
+        assert "binance_secret_key" not in view
+        assert "binance_connected" not in view
         assert view["language"] == "zh-CN"
         assert view["init_cash"] == 1
-        # 非凭证键无掩码副作用
-        masked_keys = {k for k, v in view.items() if v == "***"}
-        assert masked_keys <= set(_CREDENTIAL_KEYS)
+        assert view["maker_fee"] == 0.1
 
 
 class TestSafeErrorMessageRange:

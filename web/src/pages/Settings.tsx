@@ -8,7 +8,6 @@ import { toast } from "sonner";
 import {
   Button as AntButton,
   Divider,
-  Input,
   InputNumber,
   Select,
   Skeleton,
@@ -35,9 +34,6 @@ interface AppConfig {
   timezone: string;
   notify_evolution: boolean;
   notify_signal: boolean;
-  binance_api_key: string;
-  binance_secret_key: string;
-  binance_connected: boolean;
   init_cash: number;
   maker_fee: number;
   taker_fee: number;
@@ -107,7 +103,7 @@ export function Settings() {
               children: (
                 <>
                   <GeneralSettings config={config} onSave={savePartial} />
-                  <BinanceApiSettings config={config} onSave={savePartial} />
+                  <BinanceApiSettings />
                   <TradingSettings config={config} onSave={savePartial} />
                 </>
               ),
@@ -206,65 +202,20 @@ function GeneralSettings({ config, onSave }: { config: AppConfig; onSave: (u: Pa
 }
 
 // ---------------------------------------------------------------------------
-// Binance API settings（凭证 masked 回显：GET /api/config 凭证键回 ***
-// 全掩码——B9.2 S1 后端已落地；保存走 PUT，*** 哨兵值后端跳过不覆盖
-// 已存密钥，前端无需特殊处理。「测试连接」假行为已删——后端无凭证
-// 校验端点，呈现只反映 GET 返回的真实 binance_connected 状态）
+// Binance API settings（fix-audit-disclosure-security S-01 拆链：凭据表单
+// 退役——币安凭据经 data/credentials.json 本地文件配置，不经网络与
+// config API；本卡片仅保留配置指引）
 // ---------------------------------------------------------------------------
 
-type BinanceFormValues = Pick<AppConfig, "binance_api_key" | "binance_secret_key">;
-
-function BinanceApiSettings({ config, onSave }: { config: AppConfig; onSave: (u: Partial<AppConfig>) => void }) {
-  const [form] = Form.useForm<BinanceFormValues>();
-
-  const handleSave = () => {
-    const values = form.getFieldsValue();
-    // *** 掩码原样传回：PUT 哨兵语义识别含 *** 的凭证值=未修改，不覆盖已存值
-    onSave(values);
-  };
-
+function BinanceApiSettings() {
   return (
     <GlassCard className="p-6 !mb-6" hover={false}>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-base font-medium text-text-primary">Binance API 配置</h2>
-        <AntButton size="small" type="primary" onClick={handleSave} data-testid="binance-save">
-          保存
-        </AntButton>
-      </div>
-
-      <Form form={form} layout="horizontal" initialValues={config} className="!mb-0">
-        <Form.Item
-          label="API Key"
-          name="binance_api_key"
-          className="!mb-3"
-          colon={false}
-          data-testid="binance-api-key-field"
-          extra={<span className="text-xs text-text-muted">已配置时回显 ***（全掩码）；保持 *** 不变即不修改已存密钥，清空后保存即删除</span>}
-        >
-          <Input.Password placeholder="输入 API Key" visibilityToggle={{ visible: false }} />
-        </Form.Item>
-        <Divider className="!my-3" />
-        <Form.Item
-          label="Secret Key"
-          name="binance_secret_key"
-          className="!mb-3"
-          colon={false}
-          data-testid="binance-secret-key-field"
-        >
-          <Input.Password placeholder="输入 Secret Key" visibilityToggle={{ visible: false }} />
-        </Form.Item>
-        <Divider className="!my-3" />
-        <div className="flex items-center gap-3" data-testid="binance-connected">
-          <span className="text-sm text-text-secondary w-24 shrink-0">状态</span>
-          <div className="flex items-center gap-2">
-            <span
-              className={`inline-block h-2 w-2 rounded-full ${config.binance_connected ? "bg-profit" : "bg-text-muted"}`}
-            />
-            {/* 状态非纯颜色载体：文字伴随指示点（值=GET /api/config 真实回显） */}
-            <span className="text-xs text-text-secondary">{config.binance_connected ? "已连接" : "未配置"}</span>
-          </div>
-        </div>
-      </Form>
+      <h2 className="text-base font-medium text-text-primary mb-3">Binance API 配置</h2>
+      <p className="text-sm text-text-secondary" data-testid="binance-credentials-hint">
+        币安凭据经 data/credentials.json 配置（详见 live-trading 文档）——
+        文件含 binance_api_key/binance_secret_key 两键，权限 0600；
+        亦可用 MYQUANT_CREDENTIALS_FILE 环境变量指定路径。
+      </p>
     </GlassCard>
   );
 }

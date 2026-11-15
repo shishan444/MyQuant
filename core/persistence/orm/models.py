@@ -816,9 +816,9 @@ class PtSignal(Base):
     indicator_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
     # filled/rejected/expired——expired=意图随任务终态消亡
     outcome: Mapped[str] = mapped_column(Text, nullable=False)
-    # rejected 必填。枚举四值：insufficient_funds/below_min_notional/
-    # exposure_cap/context_invalid——below_min_notional 生产者在
-    # change-4，建表时值域写全预留
+    # rejected 必填。枚举五值：insufficient_funds/below_min_notional/
+    # exposure_cap/context_invalid/halted_drawdown（账户级硬熔断拦截
+    # 开仓）——五值均已投产有生产者
     reject_reason: Mapped[Optional[str]] = mapped_column(Text)
     # filled 时关联 pt_fill 定位三元组 (task_id, exec_bar_time, fill_seq)
     fill_seq: Mapped[Optional[int]] = mapped_column(Integer)

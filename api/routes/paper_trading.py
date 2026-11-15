@@ -727,8 +727,9 @@ def get_signals(
     四维（kind 十值/outcome 三值/bar_time 闭区间两界）+bar_time+seq
     升序审计读序+limit+1 探测式分页；字段字典权威在 openspec
     paper-signal-log spec「字段族明细」（gene_hits 命中基因六字段/
-    indicator_snapshot 指标快照/reject_reason 拒因枚举四值——
-    below_min_notional 生产者在后续变更）。
+    indicator_snapshot 指标快照/reject_reason 拒因枚举五值——
+    insufficient_funds/below_min_notional/exposure_cap/context_invalid/
+    halted_drawdown）。
     """
     _require_task(db_path, task_id)
     # TD-02 点位 5/6：gene_hits/indicator_snapshot 库内 JSON 列走结构化

@@ -101,6 +101,11 @@ def create_app(
         init_db_ext(db_path)
         warn_if_no_api_key()
 
+        # 存量凭据一次性迁移清理（fix-audit-disclosure-security S-01）：
+        # config.json 明文凭据键 → data/credentials.json 后物理删键
+        from .routes.config import migrate_legacy_credentials
+        migrate_legacy_credentials(db_path)
+
         # 进化域恢复：上次运行的中断/崩溃任务先回收再起 runner
         from .runner import EvolutionRunner, set_ws_push_fn, recover_stale_tasks, restart_crashed_tasks
 

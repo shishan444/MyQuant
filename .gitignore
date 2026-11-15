@@ -61,7 +61,8 @@ data/*.db-journal
 # Coverage report (test artifact)
 coverage.json
 
-# Live trading credentials (keyring 存 Keychain；此为防泄露兜底，凭证文件绝不入库)
+# Live trading credentials (S-01 后唯一通道=本地凭据文件；绝不入库)
+data/credentials.json
 *.credential
 *.apikey
 *_api_key

@@ -123,8 +123,10 @@ class TestPositionMode:
 
 
 class TestCredentialLoad:
-    def test_missing_creds_raises(self, monkeypatch):
-        # 无注入 client + 无凭证 → 报错（不连实盘）
-        monkeypatch.setattr(cred_mod, "get_password", lambda *a, **k: None)
-        with pytest.raises(CredentialMissingError):
+    def test_missing_creds_raises(self, monkeypatch, tmp_path):
+        # 无注入 client + 无凭据文件 → 报错（不连实盘；S-01 文件通道：
+        # 指向不存在路径=未配置）。错误消息应含新配置指引。
+        monkeypatch.setenv("MYQUANT_CREDENTIALS_FILE",
+                           str(tmp_path / "nonexistent.json"))
+        with pytest.raises(CredentialMissingError, match="credentials.json"):
             BinanceDemoClient()

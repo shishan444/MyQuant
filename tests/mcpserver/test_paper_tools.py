@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -454,11 +455,91 @@ class TestQueryPaperSignals:
             "kind", "outcome", "filled", "rejected", "expired",
             "bar_time_start", "bar_time_end",
             "insufficient_funds", "exposure_cap", "context_invalid",
-            "below_min_notional",
+            "below_min_notional", "halted_drawdown",
             "gene_hits", "indicator_snapshot", "字段族明细",
             "has_more", "只读",
         ):
             assert token in doc, f"披露锚缺失: {token}"
+
+    def test_reject_reason_disclosure_matches_spec(self) -> None:
+        """A-02 值集双向断言：docstring 披露枚举 ↔ spec 权威字典同集。
+
+        fix-audit-disclosure-security：拒因五值（insufficient_funds/
+        below_min_notional/exposure_cap/context_invalid/halted_drawdown）
+        三面（spec 字典/双侧 docstring/本测试快照）同集锁定。
+        """
+        import textwrap
+
+        from conftest import _FakeMcp, RecordingFakeApi
+
+        from mcpserver.tools import register_readonly_tools
+
+        # spec 权威字典快照（硬编码——spec 漂移时与文件对拍红）
+        expected = {
+            "insufficient_funds", "below_min_notional", "exposure_cap",
+            "context_invalid", "halted_drawdown",
+        }
+        # ①快照 ↔ spec 文件双向（spec 在工程外层 openspec/，读不到
+        # 则跳过文件向——快照向与实现守护锚仍生效）
+        spec_path = (
+            Path(__file__).resolve().parents[2].parent
+            / "openspec" / "specs" / "paper-signal-log" / "spec.md")
+        if spec_path.exists():
+            spec_text = spec_path.read_text(encoding="utf-8")
+            in_spec = {v for v in expected if v in spec_text}
+            assert in_spec == expected, (
+                f"spec 权威字典缺拒因值: {expected - in_spec}")
+            assert "halted_drawdown" in spec_text and (
+                "硬熔断" in spec_text), "halted_drawdown 注解应在场"
+        # ②docstring 披露面 ⊇ 快照全集
+        fake = _FakeMcp()
+        register_readonly_tools(fake, RecordingFakeApi())
+        doc = "".join(textwrap.dedent(
+            fake.registered["query_paper_signals"].__doc__ or "").split())
+        for v in expected:
+            assert v in doc, f"docstring 披露缺拒因值: {v}"
+
+    def test_reject_reason_impl_domain_subset_of_disclosure(self) -> None:
+        """A-02 守护锚：实现值域 ⊆ 披露枚举（防未来新增拒因漏披露）。
+
+        提取面：ledger 模块 REJECT_ 前缀常量自动收集（新增拒因常量
+        自动进面，CARD-26）+ 字面量产生点双源在场性提取——executor
+        熔断拒因 halted_drawdown（账户级硬熔断拦截开仓）与 intents
+        敞口拒因 exposure_cap（敞口上限拦截开仓，CARD-26 补面）。
+        未来新增拒因值必须同步 spec 字典与双侧 docstring，否则本锚红。
+        """
+        from core.paper_trading.kernel import intents as pt_intents
+        from core.paper_trading.kernel import ledger
+        from core.paper_trading.runtime import executor as pt_executor
+
+        # ledger 拒因常量按 REJECT_ 前缀自动收集（未来新增自动进提取面）
+        impl_values = {
+            value for name, value in vars(ledger).items()
+            if name.startswith("REJECT_") and isinstance(value, str)
+        }
+        assert impl_values, "ledger REJECT_ 常量清空（提取面失效，请同步锚）"
+        # 产生点形制在场性提取——绑定代码形制而非裸字面量：docstring
+        # 中提及字面量不产生守护力（变异自证实录：intents docstring
+        # 里的 "exposure_cap" 曾兜住改名变异使裸字面量锚不红）
+        executor_src = Path(pt_executor.__file__).read_text(encoding="utf-8")
+        intents_src = Path(pt_intents.__file__).read_text(encoding="utf-8")
+        assert 'reject_reason="halted_drawdown"' in executor_src, (
+            "executor 熔断拒因产生点形制缺失（守护锚提取面失效，"
+            "请同步锚）")
+        assert 'reason: str = "exposure_cap"' in intents_src, (
+            "intents 敞口拒因默认值产生点形制缺失（守护锚提取面失效，"
+            "请同步锚）")
+        assert 'reason="exposure_cap"' in intents_src, (
+            "intents 敞口拒因构造产生点形制缺失（守护锚提取面失效，"
+            "请同步锚）")
+        impl_values |= {"halted_drawdown", "exposure_cap"}
+        disclosed = {
+            "insufficient_funds", "below_min_notional", "exposure_cap",
+            "context_invalid", "halted_drawdown",
+        }
+        assert impl_values <= disclosed, (
+            f"实现值域超出披露枚举: {impl_values - disclosed}——"
+            "新拒因须同步 spec 字典与双侧 docstring")
 
     def test_endpoint_whitelist_registered(self) -> None:
         """白名单登记：signals GET 端点在只读允许集（能力自述工具

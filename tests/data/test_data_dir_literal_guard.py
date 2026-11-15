@@ -80,6 +80,7 @@ _CORE_FILE_ANCHOR_WHITELIST = frozenset({
     "core/persistence/db_ext.py",
     "core/logging/config.py",
     "core/backtest/trace_resolver.py",
+    "core/live_trading/credentials.py",
     "api/app.py",
     "api/__main__.py",
     "scripts/export_openapi.py",
