@@ -7,8 +7,11 @@
  * 有→达标线）+champion 与种群边界 markers（lightweight 无竖线原语，边界
  * 竖线族改 marker 承载）。容器底色=CHART_VA（琥珀终端风，形制沿旧）。
  * jsdom 降级：内建 canvas 可用性检测，jsdom 下跳过初始化保留容器与空态。
+ * 悬停浮层（fix-chart-tooltip-restore F2）：subscribeCrosshairMove 订阅+
+ * 十字段富卡片（旧 scoreTrendOption renderPointTooltip 逐字段基准），浮层
+ * 只消费事件回调与 props 两源数据（R-A），全 JSX 渲染零 HTML 注入面（R-D）。
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   createChart,
   createSeriesMarkers,
@@ -19,6 +22,7 @@ import {
 import type {
   AutoscaleInfo,
   IChartApi,
+  MouseEventParams,
   ISeriesApi,
   ISeriesMarkersPluginApi,
   SeriesMarker,
@@ -27,8 +31,16 @@ import type {
 } from "lightweight-charts";
 import { withAlpha, SCORE_TREND_AVG_LINE_COLOR, SCORE_TREND_TARGET_LINE_COLOR, SCORE_TREND_AXIS_LABEL_COLOR, SCORE_TREND_GRID_LINE_COLOR } from "@/components/charts/core/chartThemes";
 import { CHART_VA, POLARITY, ATTENTION } from "@/theme/tokens";
+import {
+  computeTooltipPosition,
+  type TooltipPositionResult,
+} from "@/components/charts/core/tooltipPosition";
 import type { EvolutionHistoryRecord } from "@/types/api";
-import { transformChartData, type ChartTransformResult } from "@/utils/evolutionChart";
+import {
+  transformChartData,
+  type ChartTransformResult,
+  type ChartDataPoint,
+} from "@/utils/evolutionChart";
 
 // 系列色归宿（design D5）：scoreLine/fitnessLine/champion 直接 import tokens；
 // avgLine/targetLine/axisLabel/grid 四字面已迁 chartThemes 常量区（组 4.1 归宿，
@@ -38,6 +50,30 @@ interface ScoreTrendChartProps {
   records: EvolutionHistoryRecord[];
   targetScore: number;
   targetFitness?: number;
+}
+
+/** 悬停浮层字色（F2）：系列同色四值直接引用既有 tokens/chartThemes import
+ * （与图线同源）；浮层专属字面按 §1.2 旧 tooltip 字面收编 */
+const TOOLTIP_TEXT_COLORS = {
+  head: "#cbd5e1",
+  headSub: "#64748b",
+  deltaUp: "#34d399",
+  deltaDown: "#f87171b3",
+  avgTrades: "#94a3b8",
+  diversityHigh: "#34d399",
+  diversityMid: "#fbbf24",
+  diversityLow: "#f87171",
+  stagnation: "#fb923cb3",
+  newPopulation: "#22d3eecc",
+  champion: "#34d399",
+  divider: "rgba(51,65,85,0.3)",
+} as const;
+
+/** 悬停态存过滤后 ChartDataPoint 原始引用（格式化在 JSX 内完成，回调薄） */
+interface ScoreHoverState {
+  point: ChartDataPoint;
+  x: number;
+  y: number;
 }
 
 /** generation → epoch 秒承载（lightweight time 轴数值原语；tick 文本回显代数） */
@@ -72,6 +108,13 @@ export function ScoreTrendChart({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<TrendSeries>(EMPTY_SERIES);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  // 悬停浮层三通道：safeDataRef（数据 effect 写入过滤产物、订阅回调读——订阅
+  // 挂初始化 effect 只跑一次而数据随 props 重跑，直接闭包捕获会陈旧）、hover
+  // state（存原始引用）、tooltipPos（measure 后的绝对定位值）
+  const safeDataRef = useRef<ChartDataPoint[]>([]);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<ScoreHoverState | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<TooltipPositionResult | null>(null);
   const hasData = data.length > 0;
   // jsdom 降级：getContext("2d") 调用判空（jsdom 方法存在但返回 null，无绘制面）
   const canDraw = typeof document !== "undefined" &&
@@ -130,6 +173,23 @@ export function ScoreTrendChart({
     });
     seriesRef.current = { bestScore, bestFitness, cumulativeBest, avgScore };
 
+    // 悬停订阅挂初始化 effect（D1：与图表实例同生共死，数据 effect 重跑不
+    // 重复订阅）。离图（time/point 任一 undefined）清态；反查未命中走防御态
+    // 不更新。time=generation 承载值（genToTime 直承载），反查对象是过滤后
+    // 序列（与绘制同源——被过滤点不进 setData，反查 props 原始 records 会
+    // 显示画面上不存在的代）
+    chart.subscribeCrosshairMove((param: MouseEventParams) => {
+      if (param.time === undefined || param.point === undefined) {
+        setHover(null);
+        return;
+      }
+      const hit = safeDataRef.current.find(
+        (d) => d.generation === Number(param.time),
+      );
+      if (!hit) return;
+      setHover({ point: hit, x: param.point.x, y: param.point.y });
+    });
+
     return () => {
       chart.remove();
       chartRef.current = null;
@@ -155,6 +215,8 @@ export function ScoreTrendChart({
         Number.isFinite(d.cumulativeBest) &&
         (d.bestFitness == null || Number.isFinite(d.bestFitness)),
     );
+    // ref 通道：同一过滤后序列供订阅回调反查（与绘制同源）
+    safeDataRef.current = safeData;
 
     bestScore.setData(
       safeData.map((d) => ({ time: genToTime(d.generation), value: d.bestScore })),
@@ -257,6 +319,29 @@ export function ScoreTrendChart({
     chartRef.current.timeScale().fitContent();
   }, [hasData, canDraw, hasFitnessData, data, championChanges, targetScore, targetFitness]);
 
+  // 浮层定位（消费 charts/core/tooltipPosition 纯函数，锚点=param.point）：
+  // 渲染后 measure 实测尺寸再计算——useLayoutEffect 在 paint 前完成定位更新，
+  // 无闪烁；jsdom 下 offsetWidth 恒 0（宽高传反类缺陷归 e2e 真布局终审）
+  useLayoutEffect(() => {
+    if (!hover || !tooltipRef.current || !containerRef.current) {
+      setTooltipPos(null);
+      return;
+    }
+    setTooltipPos(
+      computeTooltipPosition({
+        anchor: { x: hover.x, y: hover.y },
+        tooltip: {
+          width: tooltipRef.current.offsetWidth,
+          height: tooltipRef.current.offsetHeight,
+        },
+        container: {
+          width: containerRef.current.offsetWidth,
+          height: containerRef.current.offsetHeight,
+        },
+      }),
+    );
+  }, [hover]);
+
   if (!hasData) {
     return (
       <div
@@ -269,13 +354,156 @@ export function ScoreTrendChart({
   }
 
   const lastRecord = data[data.length - 1];
+  // 悬停浮层派生值（格式化与判定在渲染层，回调薄）：delta 差分/达标判定/
+  // 多样性三档色——全部来自过滤后真实 ChartDataPoint 与 props.targetFitness
+  const hoverDelta =
+    hover?.point.prevBestScore != null
+      ? hover.point.bestScore - hover.point.prevBestScore
+      : undefined;
+  const hoverFitnessMet =
+    hover?.point.bestFitness != null && hover.point.bestFitness >= targetFitness;
+  const hoverDiversityColor =
+    hover?.point.diversity == null
+      ? undefined
+      : hover.point.diversity > 0.7
+        ? TOOLTIP_TEXT_COLORS.diversityHigh
+        : hover.point.diversity > 0.4
+          ? TOOLTIP_TEXT_COLORS.diversityMid
+          : TOOLTIP_TEXT_COLORS.diversityLow;
 
   return (
     <div
       className="rounded p-2"
       style={{ backgroundColor: CHART_VA.bg, border: `1px solid ${CHART_VA.line}` }}
     >
-      <div className="h-[200px] w-full" ref={containerRef} />
+      <div
+        className="h-[200px] w-full"
+        ref={containerRef}
+        data-testid="score-chart-container"
+        style={{ position: "relative" }}
+      >
+        {hover && (
+          <div
+            ref={tooltipRef}
+            data-testid="score-tooltip"
+            style={{
+              position: "absolute",
+              left: tooltipPos?.left,
+              top: tooltipPos?.top,
+              zIndex: 10,
+              pointerEvents: "none",
+              // 旧 tooltip 外层样式随迁（§1.2 ScoreTrend 侧清单，A1 视觉近似面）
+              backgroundColor: "rgba(13,17,23,0.95)",
+              border: "1px solid rgba(51,65,85,0.5)",
+              borderRadius: 8,
+              color: TOOLTIP_TEXT_COLORS.head,
+              fontSize: 12,
+              padding: 8,
+              minWidth: 160,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                marginBottom: 6,
+              }}
+            >
+              <span
+                style={{ fontWeight: 500, color: TOOLTIP_TEXT_COLORS.head }}
+              >
+                第 {hover.point.generation} 代
+              </span>
+              {hover.point.population > 1 && (
+                <span style={{ color: TOOLTIP_TEXT_COLORS.headSub }}>
+                  P{hover.point.population}
+                </span>
+              )}
+            </div>
+            <p style={{ margin: 0, color: ATTENTION.gold }}>
+              综合得分: {hover.point.bestScore.toFixed(1)}
+              {hoverDelta != null && hoverDelta !== 0 && (
+                <span
+                  style={{
+                    marginLeft: 4,
+                    color:
+                      hoverDelta > 0
+                        ? TOOLTIP_TEXT_COLORS.deltaUp
+                        : TOOLTIP_TEXT_COLORS.deltaDown,
+                  }}
+                >
+                  {hoverDelta > 0
+                    ? `+${hoverDelta.toFixed(1)}`
+                    : hoverDelta.toFixed(1)}
+                </span>
+              )}
+            </p>
+            {hover.point.bestFitness != null && (
+              <p
+                style={{
+                  margin: 0,
+                  // 未达标 70% 不透明（旧 b3 后缀语义）
+                  color: hoverFitnessMet
+                    ? POLARITY.up
+                    : withAlpha(POLARITY.up, 0.7),
+                }}
+              >
+                适应度: {hover.point.bestFitness.toFixed(2)}
+                {hoverFitnessMet && (
+                  <span
+                    style={{ marginLeft: 4, fontSize: 10, fontWeight: 500 }}
+                  >
+                    达标
+                  </span>
+                )}
+              </p>
+            )}
+            {hover.point.cumulativeBest !== hover.point.bestScore && (
+              <p
+                style={{
+                  margin: 0,
+                  color: withAlpha(POLARITY.up, 0.5),
+                }}
+              >
+                累计最佳: {hover.point.cumulativeBest.toFixed(1)}
+              </p>
+            )}
+            <p style={{ margin: 0, color: SCORE_TREND_AVG_LINE_COLOR }}>
+              平均得分: {hover.point.avgScore.toFixed(1)}
+            </p>
+            {hover.point.avgTrades != null && (
+              <p style={{ margin: 0, color: TOOLTIP_TEXT_COLORS.avgTrades }}>
+                种群平均交易: {hover.point.avgTrades}
+              </p>
+            )}
+            {hover.point.diversity != null && (
+              <p style={{ margin: 0, color: hoverDiversityColor }}>
+                种群多样性: {(hover.point.diversity * 100).toFixed(0)}%
+              </p>
+            )}
+            {hover.point.stagnationCount > 0 && (
+              <p style={{ margin: 0, color: TOOLTIP_TEXT_COLORS.stagnation }}>
+                停滞: {hover.point.stagnationCount} 代未突破
+              </p>
+            )}
+            {(hover.point.isPopulationBoundary || hover.point.isChampionChange) && (
+              <p
+                style={{
+                  margin: "4px 0 0",
+                  borderTop: `1px solid ${TOOLTIP_TEXT_COLORS.divider}`,
+                  paddingTop: 4,
+                  fontWeight: 500,
+                  color: hover.point.isPopulationBoundary
+                    ? TOOLTIP_TEXT_COLORS.newPopulation
+                    : TOOLTIP_TEXT_COLORS.champion,
+                }}
+              >
+                {hover.point.isPopulationBoundary ? "新种群开始" : "最优记录刷新"}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
       {/* Legend（文字色=va-dim；色块沿全局调色板） */}
       <div
         className="mt-1 flex items-center justify-center gap-4 text-[10px]"

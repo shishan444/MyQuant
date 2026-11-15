@@ -5,10 +5,22 @@
  * transformChartData 独立 L1 在 evolutionChart.test.ts，此处不重测。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, act } from "@testing-library/react";
+
+// tooltipPosition mock 转发（S-12 定位接线用）：默认透传真实实现（协作者由
+// tooltipPosition.test.ts 直测独立验证），受控返回仅 S-12 内设置
+vi.mock("@/components/charts/core/tooltipPosition", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/components/charts/core/tooltipPosition")
+  >();
+  return { ...actual, computeTooltipPosition: vi.fn(actual.computeTooltipPosition) };
+});
 
 vi.mock("lightweight-charts", () => {
-  const registry = { charts: [] as any[] };
+  const registry = {
+    charts: [] as any[],
+    crosshairHandlers: [] as Array<(p: unknown) => void>,
+  };
   const mkChart = () => {
     const chart: any = {
       series: [] as any[],
@@ -17,6 +29,10 @@ vi.mock("lightweight-charts", () => {
       remove: vi.fn(),
       removeSeries: vi.fn(),
       priceScale: vi.fn(() => ({ applyOptions: vi.fn() })),
+      subscribeCrosshairMove: vi.fn((h: (p: unknown) => void) => {
+        registry.crosshairHandlers.push(h);
+      }),
+      unsubscribeCrosshairMove: vi.fn(),
       addSeries: vi.fn((def: { _type?: string }, options: unknown) => {
         const priceLines: any[] = [];
         const s: any = {
@@ -65,10 +81,22 @@ import {
 } from "@/components/charts/core/chartThemes";
 import { POLARITY, ATTENTION } from "@/theme/tokens";
 import type { EvolutionHistoryRecord } from "@/types/api";
+import {
+  computeTooltipPosition,
+  type TooltipPositionResult,
+} from "@/components/charts/core/tooltipPosition";
 
 const createChartMock = vi.mocked(lightweightCharts.createChart);
 const createSeriesMarkersMock = vi.mocked(lightweightCharts.createSeriesMarkers);
-const registry = (lightweightCharts as unknown as { __registry: { charts: any[] } }).__registry;
+const registry = (
+  lightweightCharts as unknown as {
+    __registry: {
+      charts: any[];
+      crosshairHandlers: Array<(p: unknown) => void>;
+    };
+  }
+).__registry;
+const posMock = vi.mocked(computeTooltipPosition);
 
 function makeRecord(over: Partial<EvolutionHistoryRecord> = {}): EvolutionHistoryRecord {
   return {
@@ -107,6 +135,7 @@ function seriesPanel() {
 
 beforeEach(() => {
   registry.charts.length = 0;
+  registry.crosshairHandlers.length = 0;
   vi.clearAllMocks();
 });
 
@@ -383,6 +412,8 @@ describe("ScoreTrendChart component", () => {
     expect(createChartMock).not.toHaveBeenCalled();
     expect(screen.getByText("综合得分")).toBeInTheDocument();
     expect(screen.getByText(/最优刷新 2 次/)).toBeInTheDocument();
+    // S-11 降级面：订阅挂不上，浮层不渲染
+    expect(screen.queryByTestId("score-tooltip")).not.toBeInTheDocument();
   });
 
   it("renders legend and stats for fitness form", () => {
@@ -418,5 +449,285 @@ describe("ScoreTrendChart component", () => {
     // 目标线色块同入单源锚（CARD-01 两处同值项一并改引用形）
     const swatch = screen.getByText("目标线").firstElementChild as HTMLElement;
     expect(swatch).toHaveStyle({ borderColor: SCORE_TREND_TARGET_LINE_COLOR });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 悬停浮层链（fix-chart-tooltip-restore 组 3，stub getContext）：fixture 经
+// transformChartData 真实变换（变换本身不重测，独立 L1 在 evolutionChart.test），
+// 悬停注入走 crosshairHandlers 事件形制。嵌套行（综合得分+delta、适应度+达标）
+// 用 toHaveTextContent 断整行+getByText 命中嵌套 span（文本节点命中本身承载
+// React 文本渲染，R-D）
+// ---------------------------------------------------------------------------
+
+/** 全字段 fixture（5 代 pop=2 全程）：gen5 变换产物=delta+1.5/达标/累计 62/
+ *  停滞 3 代/非冠军非边界（十字段中互斥行由 S-4/S-5 独立承载——champion 点
+ *  cumulativeBest 恒等于 bestScore，累计行与冠军行不可同点在场，数据结构固有） */
+const S1_RECORDS = [
+  makeRecord({ generation: 1, best_score: 55.0, avg_score: 50.0, best_fitness: 0.95, top3_summary: 'pop=2|diag={"diversity":0.7,"avg_trades":3.0}' }),
+  makeRecord({ generation: 2, best_score: 62.0, avg_score: 52.0, best_fitness: 1.0, top3_summary: "pop=2" }),
+  makeRecord({ generation: 3, best_score: 59.7, avg_score: 54.0, best_fitness: 1.05, top3_summary: "pop=2" }),
+  makeRecord({ generation: 4, best_score: 59.7, avg_score: 54.5, best_fitness: 1.05, top3_summary: "pop=2" }),
+  makeRecord({ generation: 5, best_score: 61.2, avg_score: 55.0, best_fitness: 1.05, top3_summary: 'pop=2|diag={"diversity":0.75,"avg_trades":3.2}' }),
+];
+
+/** 悬停注入 helper：render 后以 gen 代注入 crosshair 事件（Score 侧 hover 反查
+ *  只消费 time/point，seriesData 形制保持与 Equity 侧一致） */
+function renderAndHover(
+  records: EvolutionHistoryRecord[],
+  gen: number,
+  point = { x: 100, y: 50 },
+) {
+  const result = render(
+    <ScoreTrendChart records={records} targetScore={60} targetFitness={1.0} />,
+  );
+  act(() => {
+    // 取最后注册的 handler：同 it 内多次 render 时 [0] 是已卸载组件残留
+    //（unmount 走 chart.remove()，mock 面不清注册表数组）
+    registry.crosshairHandlers[registry.crosshairHandlers.length - 1]({
+      time: gen,
+      point,
+      seriesData: new Map(),
+    });
+  });
+  return result;
+}
+
+describe("ScoreTrendChart 悬停浮层链（S-1~S-12）", () => {
+  let ctxSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    ctxSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockReturnValue({} as CanvasRenderingContext2D);
+  });
+  afterEach(() => ctxSpy.mockRestore());
+
+  it("S-1 十字段全字段在场逐字段文案（字段面缩水即不通过）", () => {
+    renderAndHover(S1_RECORDS, 5);
+    const tip = screen.getByTestId("score-tooltip");
+    expect(screen.getByText("第 5 代")).toBeInTheDocument();
+    expect(screen.getByText("P2")).toBeInTheDocument();
+    // 嵌套行：整行 toHaveTextContent+附注 span getByText
+    expect(tip).toHaveTextContent("综合得分: 61.2");
+    expect(screen.getByText("+1.5")).toBeInTheDocument();
+    expect(tip).toHaveTextContent("适应度: 1.05");
+    expect(screen.getByText("达标")).toBeInTheDocument();
+    // 独立行逐字
+    expect(screen.getByText("累计最佳: 62.0")).toBeInTheDocument();
+    expect(screen.getByText("平均得分: 55.0")).toBeInTheDocument();
+    expect(screen.getByText("种群平均交易: 3.2")).toBeInTheDocument();
+    expect(screen.getByText("种群多样性: 75%")).toBeInTheDocument();
+    expect(screen.getByText("停滞: 3 代未突破")).toBeInTheDocument();
+  });
+
+  it("S-2 颜色档：diversity>0.7 行色/delta 正色/达标附注在场（JSX style 断言）", () => {
+    renderAndHover(S1_RECORDS, 5);
+    expect(screen.getByText("种群多样性: 75%")).toHaveStyle({ color: "#34d399" });
+    expect(screen.getByText("+1.5")).toHaveStyle({ color: "#34d399" });
+    expect(screen.getByText("达标")).toBeInTheDocument();
+  });
+
+  it("S-3 条件不在场参数化：六类条件行全不在场", () => {
+    // 单代裸 fixture：population 缺省 1/bestFitness/avgTrades/diversity 全缺/
+    // cumulativeBest===bestScore（首代冠军）/stagnationCount=0
+    renderAndHover([makeRecord({ generation: 1, best_score: 50 })], 1);
+    expect(screen.queryByText(/^P\d+$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/适应度:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/累计最佳:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/种群平均交易:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/种群多样性:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/停滞:/)).not.toBeInTheDocument();
+    // 恒显行在场（对照组，防误断空浮层）
+    expect(screen.getByText("第 1 代")).toBeInTheDocument();
+    expect(screen.getByText("综合得分: 50.0")).toBeInTheDocument();
+  });
+
+  it("S-4 互斥+边界优先：双真点显示新种群开始、最优记录刷新不在场", () => {
+    // gen2 pop 1→2 触发 boundary，58>50 同时是冠军——双真点
+    const records = [
+      makeRecord({ generation: 1, best_score: 50, top3_summary: "pop=1" }),
+      makeRecord({ generation: 2, best_score: 58, top3_summary: "pop=2" }),
+    ];
+    renderAndHover(records, 2);
+    expect(screen.getByText("新种群开始")).toBeInTheDocument();
+    expect(screen.queryByText("最优记录刷新")).not.toBeInTheDocument();
+  });
+
+  it("S-5 非 boundary 冠军点：最优记录刷新在场", () => {
+    // gen1 首代冠军非边界（Pass2 从 i=1 起，首代永非 boundary）
+    const records = [
+      makeRecord({ generation: 1, best_score: 50, top3_summary: "pop=1" }),
+      makeRecord({ generation: 2, best_score: 45, top3_summary: "pop=1" }),
+    ];
+    renderAndHover(records, 1);
+    expect(screen.getByText("最优记录刷新")).toBeInTheDocument();
+    expect(screen.queryByText("新种群开始")).not.toBeInTheDocument();
+  });
+
+  it("S-6 delta 边界三态：boundary 无附注/delta===0 无附注/delta<0 负形在场", () => {
+    // boundary 代：prevBestScore 置 undefined（Pass4），无任何附注
+    const boundary = [
+      makeRecord({ generation: 1, best_score: 50, top3_summary: "pop=1" }),
+      makeRecord({ generation: 2, best_score: 58, top3_summary: "pop=2" }),
+    ];
+    const { unmount: u1 } = renderAndHover(boundary, 2);
+    expect(screen.queryByText("+8.0")).not.toBeInTheDocument();
+    u1();
+    // delta===0：同分连代，无 +0.0 附注
+    const zero = [
+      makeRecord({ generation: 1, best_score: 50 }),
+      makeRecord({ generation: 2, best_score: 50 }),
+    ];
+    const { unmount: u2 } = renderAndHover(zero, 2);
+    expect(screen.getByText("综合得分: 50.0")).toBeInTheDocument();
+    expect(screen.queryByText("+0.0")).not.toBeInTheDocument();
+    u2();
+    // delta<0：负形 -0.8 附注在场
+    const neg = [
+      makeRecord({ generation: 1, best_score: 50 }),
+      makeRecord({ generation: 2, best_score: 49.2 }),
+    ];
+    renderAndHover(neg, 2);
+    expect(screen.getByText("-0.8")).toBeInTheDocument();
+  });
+
+  it("S-7 达标判定反面：bestFitness<targetFitness 无达标附注、适应度行仍在场", () => {
+    renderAndHover(
+      [makeRecord({ generation: 1, best_score: 50, best_fitness: 0.8 })],
+      1,
+    );
+    const tip = screen.getByTestId("score-tooltip");
+    expect(tip).toHaveTextContent("适应度: 0.80");
+    expect(screen.queryByText("达标")).not.toBeInTheDocument();
+  });
+
+  it("S-8 缺失值非占位：optional 全缺时无 null/undefined 占位文本", () => {
+    renderAndHover([makeRecord({ generation: 1, best_score: 50 })], 1);
+    // 反向断言：缺失=行不在场，不是占位文本
+    expect(screen.queryByText(/null|undefined/)).not.toBeInTheDocument();
+  });
+
+  it("S-9 反查同源：注入 time=2 显示第 2 代真实字段（两代数值可判别）", () => {
+    renderAndHover(noFitnessRecords, 2);
+    expect(screen.getByText("第 2 代")).toBeInTheDocument();
+    expect(screen.getByText("综合得分: 55.0")).toBeInTheDocument();
+    expect(screen.queryByText("第 1 代")).not.toBeInTheDocument();
+  });
+
+  it("S-10 离图双通道+状态转移", () => {
+    render(<ScoreTrendChart records={noFitnessRecords} targetScore={60} />);
+    // 通道一：time undefined 初态不在场
+    act(() => {
+      registry.crosshairHandlers[0]({
+        time: undefined,
+        point: undefined,
+        seriesData: new Map(),
+      });
+    });
+    expect(screen.queryByTestId("score-tooltip")).not.toBeInTheDocument();
+    // 通道二：先悬停在场再 point undefined → 浮层消失（状态转移非仅初态）
+    act(() => {
+      registry.crosshairHandlers[0]({
+        time: 2,
+        point: { x: 100, y: 50 },
+        seriesData: new Map(),
+      });
+    });
+    expect(screen.getByTestId("score-tooltip")).toBeInTheDocument();
+    act(() => {
+      registry.crosshairHandlers[0]({
+        time: 2,
+        point: undefined,
+        seriesData: new Map(),
+      });
+    });
+    expect(screen.queryByTestId("score-tooltip")).not.toBeInTheDocument();
+  });
+
+  it("S-11 订阅唯一性：初始化订阅 1 次，records 重传后不重复", () => {
+    const { rerender } = render(
+      <ScoreTrendChart records={fitnessRecords} targetScore={60} targetFitness={1.0} />,
+    );
+    expect(registry.charts[0].subscribeCrosshairMove).toHaveBeenCalledTimes(1);
+    rerender(
+      <ScoreTrendChart records={[...fitnessRecords]} targetScore={60} targetFitness={1.0} />,
+    );
+    expect(registry.charts[0].subscribeCrosshairMove).toHaveBeenCalledTimes(1);
+    expect(registry.crosshairHandlers).toHaveLength(1);
+  });
+
+  it("S-12 定位接线：受控返回用于 style+锚点=param.point（R-F 组件层承载）", () => {
+    // jsdom measure 恒 0 使宽高传反类不可判别——该缺陷类归 e2e 真布局终审；
+    // 本用例锁「返回值用于 style」与「锚点来源」两面
+    posMock.mockClear();
+    posMock.mockReturnValue({ left: 11, top: 22, placement: "top" } as TooltipPositionResult);
+    renderAndHover(S1_RECORDS, 5);
+    const tip = screen.getByTestId("score-tooltip");
+    expect(tip.style.left).toBe("11px");
+    expect(tip.style.top).toBe("22px");
+    expect(posMock.mock.calls[0][0].anchor).toEqual({ x: 100, y: 50 });
+  });
+
+  it.each([
+    [0.75, "75%", "#34d399", "高档 >0.7"],
+    [0.5, "50%", "#fbbf24", "中档 >0.4（档位边界外侧）"],
+    [0.41, "41%", "#fbbf24", "中档边界内侧（>0.4 含）"],
+    [0.4, "40%", "#f87171", "低档边界（≤0.4 含）"],
+    [0.3, "30%", "#f87171", "低档常规"],
+  ] as Array<[number, string, string, string]>)(
+    "S-13 diversity=%s 行色 %s（%s）",
+    (diversity, pct, color) => {
+      // 设计卡 §1.2 条件表 #8 三档（>0.7 #34d399 / >0.4 #fbbf24 / ≤0.4
+      // #f87171）——S-2 仅断高档，此处按档位边界全枚举（含 0.4/0.41 两侧）
+      renderAndHover(
+        [
+          makeRecord({
+            generation: 1,
+            best_score: 50,
+            top3_summary: `pop=2|diag={"diversity":${diversity}}`,
+          }),
+        ],
+        1,
+      );
+      expect(screen.getByText(`种群多样性: ${pct}`)).toHaveStyle({ color });
+    },
+  );
+
+  it("S-14 delta 负档色与适应度未达标 70% 透明（旧字面补全）", () => {
+    // 设计卡 §1.2 条件表 #3a 负 #f87171b3、#4 未达标 70% 透明（b3 后缀语义）
+    // ——S-6 断负形在场未断色、S-7 断反面未断透明形
+    const { unmount: u1 } = renderAndHover(
+      [
+        makeRecord({ generation: 1, best_score: 50 }),
+        makeRecord({ generation: 2, best_score: 49.2 }),
+      ],
+      2,
+    );
+    // jsdom CSSOM 将 8 位 hex 序列化为 rgba 形（探针实测定形）：
+    // #f87171b3 = rgb(248,113,113) alpha 0xb3/255≈0.7
+    expect(screen.getByText("-0.8").style.color).toBe("rgba(248, 113, 113, 0.7)");
+    u1();
+    renderAndHover(
+      [makeRecord({ generation: 1, best_score: 50, best_fitness: 0.8 })],
+      1,
+    );
+    expect(screen.getByText(/适应度: 0\.80/)).toHaveStyle({
+      color: withAlpha(POLARITY.up, 0.7),
+    });
+  });
+
+  it("S-15 防御态：time 与 safeData 全不匹配 → 不在场不崩", () => {
+    // 设计卡 2 反查链契约「未命中 → 防御态（state=null）」（E-7 对称面）
+    renderAndHover(noFitnessRecords, 999);
+    expect(screen.queryByTestId("score-tooltip")).not.toBeInTheDocument();
+  });
+
+  it("S-16 浮层硬约束：pointerEvents none + zIndex 高于图（防 mouseleave 闪烁）", () => {
+    // 设计卡 2 浮层 DOM 契约（同卡 1）：pointerEvents:'none' 硬约束；
+    // zIndex 高于图取 10
+    renderAndHover(S1_RECORDS, 5);
+    const tip = screen.getByTestId("score-tooltip");
+    expect(tip.style.pointerEvents).toBe("none");
+    expect(tip.style.zIndex).toBe("10");
   });
 });
