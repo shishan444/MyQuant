@@ -1700,8 +1700,12 @@ describe("组装层标记管道（fe-vr-marker-fidelity ASM）", () => {
     const d = makeDetail();
     d.executions[0].trades = [];
     d.executions[0].trace_rows = [
-      makeTrace({ bar_time: "2026-04-02 00:00:00+00:00", price: 100 }), // 中点 101 → 下
-      makeTrace({ event_code: 13, seq: 1, bar_time: "2026-04-02 00:30:00+00:00", price: 101 }), // =中点 → 上
+      // F2 强化（reviewer3）：同 bar 同 action（open）不同价两行——异侧位
+      // 只能出自 markerSide（legacy 按 action 恒同侧）；原 04-02 00:30 行
+      // barMap 不中走 legacySide("exit")，与等号面期望巧合同值，等号判定
+      // 在组件层未被验证。bar 缺失回退面由 ASM-05 承担。
+      makeTrace({ bar_time: "2026-04-02 00:00:00+00:00", price: 100 }), // ＜中点 101 → 下
+      makeTrace({ seq: 1, bar_time: "2026-04-02 00:00:00+00:00", price: 101 }), // =中点（≥含等号）→ 上
       makeTrace({ event_code: 20, seq: 2, bar_time: "2026-04-03 00:00:00+00:00", price: 103 }), // 中点 102 → 上
     ];
     mockDetail.mockResolvedValue(d);
@@ -1902,10 +1906,19 @@ describe("组装层标记管道（fe-vr-marker-fidelity ASM）", () => {
     expect(kline).toHaveAttribute("data-markers", "1");
     expect(kline).toHaveAttribute("data-markers-text", "开多 100.0");
     // ②SignalTrace 动作列 35/36 行显「—」；③reason 列英文原字面兜底
+    // ——F1 强化（reviewer3）：td 列级锚替换容器级 toHaveTextContent；
+    // 行 10 正向对照（动作=「入场」/reason=「—」）排除全列退化巧合
     fireEvent.click(screen.getByRole("tab", { name: "信号回溯" }));
     const trace = await screen.findByTestId("vr-signal-trace");
-    expect(trace).toHaveTextContent("—");
-    expect(trace).toHaveTextContent("task_cap_scaled");
-    expect(trace).toHaveTextContent("halted_entry_blocked");
+    const trs = trace.querySelectorAll("tbody tr");
+    expect(trs).toHaveLength(3);
+    const cell = (row: number, col: number) => trs[row].querySelectorAll("td")[col];
+    // 列序：时间0/seq1/结果2/原因3/动作4/价格5/数量6/截断7
+    expect(cell(0, 4)).toHaveTextContent("入场"); // 10 行有词条→动作=label
+    expect(cell(0, 3)).toHaveTextContent("—"); // 10 行 reason=null
+    expect(cell(1, 4)).toHaveTextContent("—"); // 35 行动作列「—」
+    expect(cell(1, 3)).toHaveTextContent("task_cap_scaled"); // 35 reason 英文原字面
+    expect(cell(2, 4)).toHaveTextContent("—"); // 36 行动作列「—」
+    expect(cell(2, 3)).toHaveTextContent("halted_entry_blocked"); // 36 reason
   });
 });
