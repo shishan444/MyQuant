@@ -141,18 +141,28 @@ def migrate_legacy_credentials(db_path: Path) -> None:
             cred_path,
         )
     else:
-        # ①自动迁移：写入凭据文件（两键形制+chmod 600）
-        from core.live_trading.credentials import BinanceCredentials
-        save_credentials(BinanceCredentials(
-            api_key=str(legacy["binance_api_key"]),
-            api_secret=str(legacy["binance_secret_key"]),
-        ))
-        logger.warning(
-            "config.json 检出存量币安凭据——已自动迁移至凭据文件 %s"
-            "（chmod 600），config.json 凭据键已移除。凭据唯一通道为"
-            "该文件（MYQUANT_CREDENTIALS_FILE 可覆写路径）。",
-            cred_path,
-        )
+        # ①自动迁移：写入凭据文件（两键形制+chmod 600）；值不合法
+        # （空/长度异常）按无效存量处理——warning 记录后仍物理删键，
+        # 保住迁移链不炸启动（值本身不可用，删键不丢信息）
+        from core.live_trading.credentials import BinanceCredentials, CredentialError
+        try:
+            save_credentials(BinanceCredentials(
+                api_key=str(legacy["binance_api_key"]),
+                api_secret=str(legacy["binance_secret_key"]),
+            ))
+            logger.warning(
+                "config.json 检出存量币安凭据——已自动迁移至凭据文件 %s"
+                "（chmod 600），config.json 凭据键已移除。凭据唯一通道为"
+                "该文件（MYQUANT_CREDENTIALS_FILE 可覆写路径）。",
+                cred_path,
+            )
+        except CredentialError:
+            logger.warning(
+                "config.json 检出存量币安凭据但值不合法（空/长度异常）——"
+                "未迁移，请人工经凭据文件 %s 配置；config.json 存量凭据键"
+                "将移除（值本身不可用，删键不丢信息）。",
+                cred_path,
+            )
 
     # 物理删除 config.json 凭据键（含 binance_connected；非置空——
     # _read_config merge 形制下置空保留键使 GET 语义含糊）
