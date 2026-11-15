@@ -52,10 +52,14 @@ import {
   TRACE_FAMILY_COLOR,
   dnaIndicators,
   eventSemantics,
+  legacySide,
+  markerSide,
   recordSymbolTimeframe,
+  resolveDirectionLookup,
   snapToBars,
   traceMarkers,
   type DnaIndicatorExtract,
+  type TraceMarkerDraft,
 } from "./traceSemantics";
 
 const VERDICT_COLOR: Record<string, string> = {
@@ -259,6 +263,7 @@ function KlineReview({
   viewTf,
   deadTfs,
   onViewTf,
+  recordDirection,
 }: {
   executions: VrExecution[];
   fr: FullRangeResult;
@@ -274,6 +279,9 @@ function KlineReview({
   viewTf: string | null;
   deadTfs: ReadonlySet<string>;
   onViewTf: (tf: string | null) => void;
+  /** 记录级方向原样透传（fe-vr-marker-fidelity 契约 5：四态
+   *  undefined/"long"/"short"/"mixed"——值域判定在解析器内单点） */
+  recordDirection: string | undefined;
 }) {
   const execIdx = view === "all" ? -1 : view;
   const exec = execIdx >= 0 ? executions[execIdx] : null;
@@ -345,22 +353,33 @@ function KlineReview({
     }
     return exec ? perExecEquityPoints(exec, bars) : buildEquitySeries(executions, bars);
   }, [exec, executions, bars, snapActive, snapTfSec]);
-  // 契约 D：marker 单源合并（traceMarkers 带价；全份 flatMap 按 time 升序；
-  // 高周期视图吸附到所在 bar——左闭右开，超域丢弃计数披露）
+  // 契约 D：marker 单源合并（traceMarkers 带价方向代入；全份 flatMap 按
+  // time 升序；每份独立查表闭包——跨份共享边界 bar 的 marker 各自配对
+  // 本份桶；高周期视图吸附到所在 bar——左闭右开，超域丢弃计数披露）
   const markersRaw = useMemo(() => {
     const src = exec ? [exec] : executions;
     return src
-      .flatMap((e) => traceMarkers(e.trace_rows))
+      .flatMap((e) => traceMarkers(e.trace_rows, resolveDirectionLookup(recordDirection, e)))
       .sort((a, b) => (epochOf(a.time) ?? 0) - (epochOf(b.time) ?? 0));
-  }, [exec, executions]);
+  }, [exec, executions, recordDirection]);
+  // 侧位判定（fe-vr-marker-fidelity 契约 4/5，吸附之后——R5）：barMap
+  // 建自 bars 数组（与 snapToBars 同一数组：基准视图=基准 bar、吸附
+  // 视图=高周期 bar）；有价且 bar 命中 → markerSide 就近侧位（≥中点
+  // 标上），无价/bar 缺失 → legacySide 旧惯例（入场族下方/出场族上方）
   const markers = useMemo(() => {
-    if (!snapActive) return { list: markersRaw, dropped: 0 };
+    const barMap = new Map(bars.map((b) => [epochOf(b.timestamp), b]));
+    const locate = (m: TraceMarkerDraft): TraceMarkerDraft & { position: "aboveBar" | "belowBar" } => {
+      const bar = barMap.get(epochOf(m.time) ?? NaN);
+      const position = m.price != null && bar ? markerSide(m.price, bar) : legacySide(m.action);
+      return { ...m, position };
+    };
+    if (!snapActive) return { list: markersRaw.map(locate), dropped: 0 };
     const r = snapToBars(markersRaw.map((m) => m.time), bars, snapTfSec);
     const toOf = new Map(r.snapped.map((p) => [p.from, p.to]));
     return {
       list: markersRaw
         .filter((m) => toOf.has(m.time))
-        .map((m) => ({ ...m, time: toOf.get(m.time)! })),
+        .map((m) => locate({ ...m, time: toOf.get(m.time)! })),
       dropped: r.dropped,
     };
   }, [markersRaw, snapActive, snapTfSec, bars]);
@@ -502,6 +521,7 @@ function KlineReview({
       className="rounded p-2"
       style={{ backgroundColor: CHART_VC.bg, border: `1px solid ${CHART_VC.teal}22` }}
       data-testid="vr-kline-review"
+      data-record-direction={recordDirection ?? ""}
     >
       <p className="mb-1 text-[10px]" style={{ color: CHART_VC.dim }}>
         {symbol} · {timeframe} · {rangeLabel} ·
@@ -572,8 +592,8 @@ function KlineReview({
         {dnaBadges}
       </div>
       <p className="mb-1 flex flex-wrap gap-x-3 text-[10px]" style={{ color: CHART_VC.dim }}>
-        <span style={{ color: TRACE_FAMILY_COLOR.strategy }}>▲开多/▲加多/▽减仓/▼平多=策略动作（标=动作+成交价）</span>
-        <span style={{ color: TRACE_FAMILY_COLOR.risk }}>▼平多（金）=风控出场族</span>
+        <span style={{ color: TRACE_FAMILY_COLOR.strategy }}>标记=按方向生成的字义+成交价（蓝=策略动作：开多/开空/加仓/减仓/平多/平空，</span>
+        <span style={{ color: TRACE_FAMILY_COLOR.risk }}>金=风控出场：平多/平空）</span>
         <span>止损线{trail ? "（trail 真值）" : stopPrice === null ? "（产生于能力上线前）" : "（非 trail 档无序列）"}</span>
       </p>
       {stateMsg && (
@@ -1065,6 +1085,9 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
             viewTf={viewTf}
             deadTfs={deadTfs}
             onViewTf={handleViewTf}
+            recordDirection={
+              typeof record.result?.direction === "string" ? record.result.direction : undefined
+            }
           />
           {/* D3 资金曲线 */}
           <EquityReview exec={exec} bars={bars} record={record} />

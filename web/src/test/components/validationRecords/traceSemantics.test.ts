@@ -5,7 +5,7 @@
  * 数据零观点——断言对照后端 result/params 实际形状（validation_service
  * 三型组装实锚）。
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   buildCardModel,
   eventSemantics,
@@ -217,35 +217,49 @@ describe("recordSymbolTimeframe 值域闸（三型统一出口过闸）", () => 
   });
 });
 
-describe("eventSemantics/traceMarkers（色点单源+四类动作）", () => {
-  it("蓝族 10-13/金族 20-25/灰族不在标记（仅 filled）", () => {
-    expect(eventSemantics(10)).toMatchObject({ action: "open", family: "strategy", markerText: "▲开多" });
-    expect(eventSemantics(11)).toMatchObject({ action: "add", family: "strategy", markerText: "▲加多" });
-    expect(eventSemantics(12)).toMatchObject({ action: "reduce", family: "strategy", markerText: "▽减仓" });
-    expect(eventSemantics(13)).toMatchObject({ action: "exit", family: "strategy", markerText: "▼平多" });
-    expect(eventSemantics(20)).toMatchObject({ action: "exit", family: "risk", markerText: "▼平多" });
+describe("eventSemantics/traceMarkers（色点单源+四类动作——fe-vr-marker-fidelity 契约 2/3）", () => {
+  it("蓝族 10-13/金族 20-25/灰族不在标记（仅 filled）；条目 morph 结构对照", () => {
+    expect(eventSemantics(10)).toMatchObject({ action: "open", family: "strategy", morph: { long: "开多", short: "开空" } });
+    expect(eventSemantics(11)).toMatchObject({ action: "add", family: "strategy", morph: { long: "加仓", short: "加仓" } });
+    expect(eventSemantics(12)).toMatchObject({ action: "reduce", family: "strategy", morph: { long: "减仓", short: "减仓" } });
+    expect(eventSemantics(13)).toMatchObject({ action: "exit", family: "strategy", morph: { long: "平多", short: "平空" } });
+    expect(eventSemantics(20)).toMatchObject({ action: "exit", family: "risk", morph: { long: "平多", short: "平空" } });
     expect(eventSemantics(30)).toBeNull();
 
     const rows = [
       { exec_ref: "main", bar_time: "2026-08-01 00:00:00+00:00", seq: 0, outcome: "filled" as const, reason: null, event_code: 10, size: 1, price: 100, capped: null, gene_hits: null },
       { exec_ref: "main", bar_time: "2026-08-02 00:00:00+00:00", seq: 0, outcome: "filled" as const, reason: null, event_code: 20, size: 1, price: 90, capped: null, gene_hits: null },
       { exec_ref: "main", bar_time: "2026-08-03 00:00:00+00:00", seq: 0, outcome: "rejected" as const, reason: "exposure_cap", event_code: 30, size: null, price: null, capped: null, gene_hits: null },
+      { exec_ref: "main", bar_time: "2026-08-04 00:00:00+00:00", seq: 0, outcome: "filled" as const, reason: "task_cap_scaled", event_code: 35, size: 1, price: 100, capped: null, gene_hits: null },
     ];
-    const markers = traceMarkers(rows);
+    // direction=null 维持旧字义（D6）：开多/平多——35 无词条行滤除（Q1 保义）
+    const markers = traceMarkers(rows, () => null);
     expect(markers).toHaveLength(2);
-    expect(markers[0]).toMatchObject({ position: "belowBar", shape: "arrowUp", text: "▲开多 100.0" });
+    expect(markers[0]).toMatchObject({ shape: "arrowUp", text: "开多 100.0" });
     expect(markers[0].color).toBe(TRACE_FAMILY_COLOR.strategy);
-    expect(markers[1]).toMatchObject({ position: "aboveBar", shape: "arrowDown", color: TRACE_FAMILY_COLOR.risk, text: "▼平多 90.0" });
+    expect(markers[1]).toMatchObject({ shape: "arrowDown", color: TRACE_FAMILY_COLOR.risk, text: "平多 90.0" });
   });
 
-  it("价格形制（upgrade-vr-fullrange-chart 契约 D）：有价=动作名+空格+一位小数；无价仅动作名不伪造", () => {
+  it("价格形制（upgrade-vr-fullrange-chart 契约 D）：有价=字义+空格+一位小数；无价仅字义不伪造", () => {
     const rows = [
       { exec_ref: "main", bar_time: "2026-08-01 00:00:00+00:00", seq: 0, outcome: "filled" as const, reason: null, event_code: 10, size: 1, price: 103209.28, capped: null, gene_hits: null },
       { exec_ref: "main", bar_time: "2026-08-02 00:00:00+00:00", seq: 0, outcome: "filled" as const, reason: null, event_code: 11, size: 1, price: null, capped: null, gene_hits: null },
     ];
-    const [withPrice, withoutPrice] = traceMarkers(rows);
-    expect(withPrice.text).toBe("▲开多 103209.3");
-    expect(withoutPrice.text).toBe("▲加多");
+    const [withPrice, withoutPrice] = traceMarkers(rows, () => null);
+    expect(withPrice.text).toBe("开多 103209.3");
+    expect(withoutPrice.text).toBe("加仓");
+  });
+
+  it("方向代入端到端：闭包返 short → 开空/平空+箭头翻转；加/减仓方向不代入", () => {
+    const rows = [
+      { exec_ref: "main", bar_time: "2026-08-01 00:00:00+00:00", seq: 0, outcome: "filled" as const, reason: null, event_code: 10, size: 1, price: 100, capped: null, gene_hits: null },
+      { exec_ref: "main", bar_time: "2026-08-02 00:00:00+00:00", seq: 0, outcome: "filled" as const, reason: null, event_code: 13, size: 1, price: 110, capped: null, gene_hits: null },
+      { exec_ref: "main", bar_time: "2026-08-03 00:00:00+00:00", seq: 0, outcome: "filled" as const, reason: null, event_code: 11, size: 1, price: 105, capped: null, gene_hits: null },
+    ];
+    const markers = traceMarkers(rows, () => "short");
+    expect(markers[0]).toMatchObject({ text: "开空 100.0", shape: "arrowDown" });
+    expect(markers[1]).toMatchObject({ text: "平空 110.0", shape: "arrowUp" });
+    expect(markers[2]).toMatchObject({ text: "加仓 105.0", shape: "circle" });
   });
 });
 
@@ -615,27 +629,101 @@ describe("markerMorphText/markerShape 六字义矩阵（契约 2）", () => {
   });
 });
 
-describe("traceMarkers 行为面（T1 时点锚——旧签名现状；终态 draft 断言 T3 随签名切换落位）", () => {
-  const rows = [
-    { exec_ref: "main", bar_time: "2026-08-01 00:00:00+00:00", seq: 0, outcome: "filled" as const, reason: null, event_code: 10, size: 1, price: 100, capped: null, gene_hits: null },
-    { exec_ref: "main", bar_time: "2026-08-02 00:00:00+00:00", seq: 0, outcome: "filled" as const, reason: null, event_code: 20, size: 1, price: 90, capped: null, gene_hits: null },
-    { exec_ref: "main", bar_time: "2026-08-03 00:00:00+00:00", seq: 0, outcome: "rejected" as const, reason: "exposure_cap", event_code: 30, size: null, price: null, capped: null, gene_hits: null },
-  ];
-  it("MK-01 滤除行为：仅 filled 且有词条的行产标记（rejected 行与 30 无词条行滤除）", () => {
-    expect(traceMarkers(rows)).toHaveLength(2);
+describe("traceMarkers draft 形制（契约 3 终态——去符号六字义+方向代入+透传面）", () => {
+  const row = (over: Partial<VrTraceRow> = {}): VrTraceRow => ({
+    exec_ref: "main",
+    bar_time: "2026-08-01 00:00:00+00:00",
+    seq: 0,
+    outcome: "filled",
+    reason: null,
+    event_code: 10,
+    size: 1,
+    price: 100,
+    capped: null,
+    gene_hits: null,
+    ...over,
   });
-  it("MK-02 保序：输出序与输入序一致（time 升序由组装层负责）", () => {
-    const markers = traceMarkers(rows);
-    expect(markers.map((m) => m.time)).toEqual([
-      "2026-08-01 00:00:00+00:00",
+  it("MK-01 滤除行为：仅 filled 且有词条的行产 draft（rejected/swallowed 行、30/35 无词条行滤除）", () => {
+    const rows = [
+      row(),
+      row({ bar_time: "2026-08-02 00:00:00+00:00", event_code: 20, price: 90 }),
+      row({ bar_time: "2026-08-03 00:00:00+00:00", outcome: "rejected", event_code: 30, price: null }),
+      row({ bar_time: "2026-08-04 00:00:00+00:00", event_code: 35, reason: "task_cap_scaled" }),
+      row({ bar_time: "2026-08-05 00:00:00+00:00", outcome: "swallowed", event_code: 31, reason: "add_inhibited" }),
+    ];
+    expect(traceMarkers(rows, () => null)).toHaveLength(2);
+  });
+  it("MK-02 去符号 text（P2）：六字义纯文字，无 ▲▽▼ 方向符号前缀", () => {
+    const rows = [
+      row({ price: 100 }),
+      row({ bar_time: "2026-08-02 00:00:00+00:00", event_code: 13, price: 110 }),
+      row({ bar_time: "2026-08-03 00:00:00+00:00", event_code: 12, price: null }),
+    ];
+    const texts = traceMarkers(rows, () => null).map((m) => m.text);
+    expect(texts).toEqual(["开多 100.0", "平多 110.0", "减仓"]);
+    texts.forEach((t) => {
+      expect(t).not.toMatch(/^[▲▽▼]/);
+    });
+  });
+  it("MK-03 保序：输出序与输入序一致（time 升序归组装层，本函数不重排）", () => {
+    const rows = [
+      row({ bar_time: "2026-08-02 00:00:00+00:00" }),
+      row({ bar_time: "2026-08-01 00:00:00+00:00" }),
+    ];
+    expect(traceMarkers(rows, () => null).map((m) => m.time)).toEqual([
       "2026-08-02 00:00:00+00:00",
+      "2026-08-01 00:00:00+00:00",
     ]);
   });
-  it("MK-03 颜色族与时间透传：color=TRACE_FAMILY_COLOR[family]、time=bar_time 原值", () => {
-    const markers = traceMarkers(rows);
-    expect(markers[0].color).toBe(TRACE_FAMILY_COLOR.strategy);
-    expect(markers[1].color).toBe(TRACE_FAMILY_COLOR.risk);
-    expect(markers[0].time).toBe("2026-08-01 00:00:00+00:00");
+  it("MK-04 无词条行不调 direction 不消费桶：35 行零调用；同键后续行仍得桶首笔", () => {
+    const spy = vi.fn(() => null);
+    const rows = [
+      row({ event_code: 35, reason: "task_cap_scaled" }),
+      row({ event_code: 10 }),
+    ];
+    const out = traceMarkers(rows, spy);
+    expect(out).toHaveLength(1);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ event_code: 10 }));
+    // 联动真实闭包：35 行未消费桶——同键 10 行拿到桶首笔（Short→开空）
+    const trade = { seq: 0, entry_time: "2026-08-01 00:00:00+00:00", exit_time: null, entry_price: 100, exit_price: null, size: 1, direction: "Short", pnl: null };
+    const exec = { exec_ref: "main", exec_index: 0, range_start: "2026-08-01 00:00:00+00:00", range_end: "2026-08-31 00:00:00+00:00", trades: [trade], equity: { grid_aligned: false, timeframe: "4h", timestamps: null, values: [] }, trail_series: null, trace_rows: [] };
+    const out2 = traceMarkers(rows, resolveDirectionLookup("mixed", exec));
+    expect(out2[0].text).toBe("开空 100.0");
+  });
+  it("MK-05 draft 无 position 键（侧位判定归组装层——D3；残留 position 必红）", () => {
+    const markers = traceMarkers([row()], () => null);
+    expect(markers).toHaveLength(1);
+    expect(markers[0]).not.toHaveProperty("position");
+  });
+  it("MK-06 price 透传：有价=number 原值、无价=null（不伪造）", () => {
+    const rows = [
+      row({ price: 99.96 }),
+      row({ bar_time: "2026-08-02 00:00:00+00:00", event_code: 11, price: null }),
+    ];
+    const [withPrice, withoutPrice] = traceMarkers(rows, () => null);
+    expect(withPrice.price).toBe(99.96);
+    expect(withoutPrice.price).toBeNull();
+  });
+  it("MK-07 action 透传：open/add/reduce/exit 四族对照（组装层侧位与 P1 分桶输入）", () => {
+    const rows = [
+      row({ event_code: 10 }),
+      row({ bar_time: "2026-08-02 00:00:00+00:00", event_code: 11 }),
+      row({ bar_time: "2026-08-03 00:00:00+00:00", event_code: 12 }),
+      row({ bar_time: "2026-08-04 00:00:00+00:00", event_code: 20 }),
+    ];
+    expect(traceMarkers(rows, () => null).map((m) => m.action)).toEqual([
+      "open", "add", "reduce", "exit",
+    ]);
+  });
+  it("MK-08 text 价格后缀形制：有价=字义+空格+一位小数（toFixed(1)）、无价仅字义", () => {
+    const rows = [
+      row({ price: 103209.28 }),
+      row({ bar_time: "2026-08-02 00:00:00+00:00", event_code: 11, price: null }),
+    ];
+    const [withPrice, withoutPrice] = traceMarkers(rows, () => null);
+    expect(withPrice.text).toBe("开多 103209.3");
+    expect(withoutPrice.text).toBe("加仓");
   });
 });
 

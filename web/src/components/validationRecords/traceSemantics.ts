@@ -71,31 +71,30 @@ export interface SemanticsEntry {
 }
 
 /** 事件码 → 动作语义+色族+中文标签（四类动作标记的单源；金族出场
- *  细分标签用于信号回溯/逐笔表）。fe-vr-marker-fidelity 契约 2 体系内
- *  扩展：条目追加 morph/arrowLong/arrowShort 方向代入面（六字义=开多/
- *  开空/加仓/减仓/平多/平空）；markerText 旧字段 T1 暂留（T3 原子切换
- *  时删除）。词表覆盖域=10-25 的 filled 面，35/36 无词条维持现状
- *  （Q1 基线不收编——实施不得顺手补词条）。 */
-const EVENT_SEMANTICS: Record<number, SemanticsEntry & { markerText: string }> = {
-  10: { action: "open", family: "strategy", markerText: "▲开多", label: "入场",
+ *  细分标签用于信号回溯/逐笔表）。fe-vr-marker-fidelity 契约 2 终态：
+ *  morph/arrowLong/arrowShort 方向代入面（六字义=开多/开空/加仓/
+ *  减仓/平多/平空）。词表覆盖域=10-25 的 filled 面，35/36 无词条
+ *  维持现状（Q1 基线不收编——实施不得顺手补词条）。 */
+const EVENT_SEMANTICS: Record<number, SemanticsEntry> = {
+  10: { action: "open", family: "strategy", label: "入场",
     morph: { long: "开多", short: "开空" }, arrowLong: "arrowUp", arrowShort: "arrowDown" },
-  11: { action: "add", family: "strategy", markerText: "▲加多", label: "加仓",
+  11: { action: "add", family: "strategy", label: "加仓",
     morph: { long: "加仓", short: "加仓" }, arrowLong: "circle", arrowShort: "circle" },
-  12: { action: "reduce", family: "strategy", markerText: "▽减仓", label: "减仓",
+  12: { action: "reduce", family: "strategy", label: "减仓",
     morph: { long: "减仓", short: "减仓" }, arrowLong: "circle", arrowShort: "circle" },
-  13: { action: "exit", family: "strategy", markerText: "▼平多", label: "信号离场",
+  13: { action: "exit", family: "strategy", label: "信号离场",
     morph: { long: "平多", short: "平空" }, arrowLong: "arrowDown", arrowShort: "arrowUp" },
-  20: { action: "exit", family: "risk", markerText: "▼平多", label: "止损",
+  20: { action: "exit", family: "risk", label: "止损",
     morph: { long: "平多", short: "平空" }, arrowLong: "arrowDown", arrowShort: "arrowUp" },
-  21: { action: "exit", family: "risk", markerText: "▼平多", label: "止盈",
+  21: { action: "exit", family: "risk", label: "止盈",
     morph: { long: "平多", short: "平空" }, arrowLong: "arrowDown", arrowShort: "arrowUp" },
-  22: { action: "exit", family: "risk", markerText: "▼平多", label: "清算强平",
+  22: { action: "exit", family: "risk", label: "清算强平",
     morph: { long: "平多", short: "平空" }, arrowLong: "arrowDown", arrowShort: "arrowUp" },
-  23: { action: "exit", family: "risk", markerText: "▼平多", label: "金额防线",
+  23: { action: "exit", family: "risk", label: "金额防线",
     morph: { long: "平多", short: "平空" }, arrowLong: "arrowDown", arrowShort: "arrowUp" },
-  24: { action: "exit", family: "risk", markerText: "▼平多", label: "固定时刻",
+  24: { action: "exit", family: "risk", label: "固定时刻",
     morph: { long: "平多", short: "平空" }, arrowLong: "arrowDown", arrowShort: "arrowUp" },
-  25: { action: "exit", family: "risk", markerText: "▼平多", label: "max_hold",
+  25: { action: "exit", family: "risk", label: "max_hold",
     morph: { long: "平多", short: "平空" }, arrowLong: "arrowDown", arrowShort: "arrowUp" },
 };;
 
@@ -241,34 +240,46 @@ export const OUTCOME_LABELS: Record<VrTraceRow["outcome"], string> = {
   swallowed: "吞没",
 };
 
-/** K 线四类动作标记（trace_rows filled 行 → 标记形制；标记/逐笔/定位
- *  统一成交锚=bar_time 执行锚）。text=动作名+成交价（price null 历史行
- *  仅动作名不伪造——EVENT_SEMANTICS 唯一权威，其余映射逐位不动） */
-export function traceMarkers(rows: VrTraceRow[]): Array<{
+/** marker 草稿（契约 3）：rows→draft 纯函数产出——侧位不在本层
+ *  （position 依赖「吸附后 bar」，属组装层信息 D3，由 markerSide/
+ *  legacySide 在组装层判定）；price 非 null=锚定通道依据与锚定价位。 */
+export interface TraceMarkerDraft {
   time: string;
-  position: "aboveBar" | "belowBar";
   color: string;
-  shape: "arrowUp" | "arrowDown" | "circle";
+  shape: MarkerShape;
   text: string;
-}> {
+  price: number | null;
+  action: "open" | "add" | "reduce" | "exit";
+}
+
+/** K 线四类动作标记（trace_rows filled 行 → draft；标记/逐笔/定位
+ *  统一成交锚=bar_time 执行锚）。fe-vr-marker-fidelity 契约 3 终态：
+ *  filter filled（不变）→ 逐行查词条（无词条滤除不变，35/36 现状）
+ *  → 方向代入生成 morph 字义+箭头（P2 去符号——text=六字义纯文字+
+ *  可选价格后缀 toFixed(1) 现状形制；direction=null 维持旧字义 D6）
+ *  → price/action 透传（侧位判定与锚定通道输入）。direction 参数=
+ *  查表闭包（契约 1 产出）注入式保纯函数可单测；闭包按「每行恰调用
+ *  一次」契约使用——无词条行不调用（不消费桶）。 */
+export function traceMarkers(
+  rows: VrTraceRow[],
+  direction: (row: VrTraceRow) => "long" | "short" | null,
+): TraceMarkerDraft[] {
   return rows
     .filter((r) => r.outcome === "filled")
-    .map((r) => {
+    .map((r): TraceMarkerDraft | null => {
       const sem = eventSemantics(r.event_code);
       if (!sem) return null;
+      const dir = direction(r);
       return {
         time: r.bar_time,
-        position: sem.action === "open" || sem.action === "add"
-          ? ("belowBar" as const)
-          : ("aboveBar" as const),
         color: TRACE_FAMILY_COLOR[sem.family],
-        shape: sem.action === "open" || sem.action === "exit"
-          ? (sem.action === "open" ? ("arrowUp" as const) : ("arrowDown" as const))
-          : ("circle" as const),
-        text: sem.markerText + (r.price != null ? ` ${r.price.toFixed(1)}` : ""),
+        shape: markerShape(sem, dir),
+        text: markerMorphText(sem, dir) + (r.price != null ? ` ${r.price.toFixed(1)}` : ""),
+        price: r.price,
+        action: sem.action,
       };
     })
-    .filter((m): m is NonNullable<typeof m> => m !== null);
+    .filter((m): m is TraceMarkerDraft => m !== null);
 }
 
 /** 卡片四段模型（L1——行内嵌 result JSON 直读非自算；三型键位路由与

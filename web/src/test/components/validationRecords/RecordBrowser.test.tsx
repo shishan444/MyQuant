@@ -58,7 +58,7 @@ vi.mock("@/components/charts/primitives/segmentBand", async () => {
 });
 vi.mock("@/components/charts/KlineChart", () => ({
   KlineChart: (props: {
-    signalMarkers?: Array<{ text?: string }>;
+    signalMarkers?: Array<{ text?: string; position?: string; price?: number | null }>;
     height?: number;
     equityData?: Array<unknown>;
     subChartType?: string;
@@ -74,6 +74,8 @@ vi.mock("@/components/charts/KlineChart", () => ({
         data-testid="vr-kline"
         data-markers={props.signalMarkers?.length ?? 0}
         data-markers-text={(props.signalMarkers ?? []).map((m) => m.text).join("|")}
+        data-markers-positions={(props.signalMarkers ?? []).map((m) => m.position).join("|")}
+        data-markers-prices={(props.signalMarkers ?? []).map((m) => m.price ?? "null").join("|")}
         data-height={props.height}
         data-equity-len={props.equityData?.length ?? 0}
         data-equity-times={(props.equityData ?? []).map((p) => (p as { time: string }).time).join(",")}
@@ -474,7 +476,7 @@ describe("RecordDetail（D1-D3/V1-V4）", () => {
     ];
     d.mtf_gated_bars = 7;
     mockDetail.mockResolvedValue(d);
-    ui(<RecordDetail record={makeRow()} />);
+    ui(<RecordDetail record={makeRow({ result: { direction: "short" } })} />);
     // D2 全区间装载（契约 A）：显式 limit 50000 + 全区间 start/end 单次拉取
     await waitFor(() => {
       expect(mockOhlcv).toHaveBeenCalledWith(
@@ -488,7 +490,7 @@ describe("RecordDetail（D1-D3/V1-V4）", () => {
     expect(kline).toHaveAttribute("data-markers", "4");
     expect(kline).toHaveAttribute(
       "data-markers-text",
-      "▲开多 100.0|▲加多 100.0|▼平多 98.0|▽减仓 100.0",
+      "开空 100.0|加仓 100.0|平空 98.0|减仓 100.0",
     );
     // 契约 C：equity 副图（subChartType=equity；mock 5 bar vs 4 值 mismatch
     // → 份级降级锚 compact 重建 4 点——zip 前提由按份对账保证）
@@ -953,7 +955,7 @@ describe("契约 H/I/J/K：DNA 指标叠加+手动开关+周期切换吸附（up
     await waitFor(() => {
       const kline = screen.getByTestId("vr-kline");
       expect(kline).toHaveAttribute("data-markers", "2");
-      expect(kline).toHaveAttribute("data-markers-text", "▲开多 100.0|▼平多 100.0");
+      expect(kline).toHaveAttribute("data-markers-text", "开多 100.0|平多 100.0");
     });
     // 切回基准：queryKey 复基准档
     openTfSelect();
@@ -1602,5 +1604,287 @@ describe("切档假态豁免组件面（change-3 CARD-02——源头豁免回归
       expect(screen.getByTestId("vr-kline")).toBeInTheDocument();
       expect(screen.queryByTestId("vr-kline-state")).toBeNull();
     });
+  });
+});
+
+/* ══ fe-vr-marker-fidelity T3：组装层管道（ASM）——方向代入/侧位判定/
+    吸附重判/35·36 保义/图例定稿 端到端 ══ */
+
+describe("组装层标记管道（fe-vr-marker-fidelity ASM）", () => {
+  // 默认 mockOhlcv（beforeEach）：5 根 30m bar 04-01..04-05——bar_i 的
+  // high=105+i、low=95+i（04-02 bar 中点 101；04-03 bar 中点 102）
+  const makeStrategy = (dna: unknown) =>
+    ({ dna, strategy_id: "st_y1", name: "s", generation: 1 }) as never;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    mockList.mockResolvedValue({
+      records: [makeRow()],
+      total: 1, offset: 0, limit: 50, has_more: false,
+      verdict_counts: { pass: 31, fail: 9, inconclusive: 7 },
+      unsortable_count: 0,
+    } as never);
+    mockOhlcv.mockResolvedValue({
+      data: Array.from({ length: 5 }, (_, i) => ({
+        timestamp: `2026-04-0${i + 1} 00:00:00+00:00`,
+        open: 100 + i, high: 105 + i, low: 95 + i, close: 100 + i, volume: 10,
+      })),
+    } as never);
+    mockUnion.mockResolvedValue({
+      hypothesis_id: "hyp_x1", symbol: "BTCUSDT", timeframe: "30m",
+      remaining_bars: 100, remaining: [],
+    } as never);
+    mockGetStrategy.mockResolvedValue(makeStrategy(null));
+  });
+
+  it("ASM-01 空头端到端：result.direction=short → 开仓字义开空+箭头向下（记录级直判零 join）", async () => {
+    const d = makeDetail();
+    d.executions[0].trace_rows = [
+      makeTrace({ bar_time: "2026-04-02 00:00:00+00:00", price: 100 }),
+      makeTrace({ event_code: 20, seq: 1, bar_time: "2026-04-03 00:00:00+00:00", price: 98 }),
+    ];
+    // trades direction=long 在场亦不干扰——记录级 short 常量优先（契约 1 ①）
+    mockDetail.mockResolvedValue(d);
+    ui(<RecordDetail record={makeRow({ result: { direction: "short" } })} />);
+    const kline = await screen.findByTestId("vr-kline");
+    expect(await screen.findByTestId("vr-kline-review")).toHaveAttribute("data-record-direction", "short");
+    expect(kline).toHaveAttribute("data-markers-text", "开空 100.0|平空 98.0");
+    // 侧位：04-02 bar 中点 101——price 100<101 → belowBar；04-03 中点 102——98<102 → belowBar
+    expect(kline).toHaveAttribute("data-markers-positions", "belowBar|belowBar");
+    expect(kline).toHaveAttribute("data-markers-prices", "100|98");
+  });
+
+  it("ASM-02 三型记录 mixed 各一：行级桶序配对按逐笔方向出词（大写 Short 值域归一）", async () => {
+    // 三型 symbol/timeframe 提取路由各异（isolated result 直嵌/random
+    // params 平铺/staged request_range）——各按其形构造，direction 同走
+    // result 键（三型写入点同源）
+    for (const level of ["isolated_backtest", "random_window", "staged_validation"] as const) {
+      const d = makeDetail();
+      d.executions[0].trades = [
+        { seq: 0, entry_time: "2026-04-02 00:00:00+00:00", exit_time: "2026-04-03 00:00:00+00:00",
+          entry_price: 100, exit_price: 110, size: 1, direction: "Short", pnl: 10 },
+      ];
+      mockDetail.mockResolvedValue(d);
+      const row =
+        level === "isolated_backtest"
+          ? makeRow({ level, result: { symbol: "BTCUSDT", timeframe: "30m", direction: "mixed" } })
+          : level === "random_window"
+            ? makeRow({
+                level,
+                params: { symbol: "BTCUSDT", timeframe: "30m", data_start: "2026-04-01", data_end: "2026-09-01" },
+                result: { direction: "mixed" },
+              })
+            : makeRow({ level, result: { direction: "mixed" } });
+      const { unmount } = ui(<RecordDetail record={row} />);
+      const kline = await screen.findByTestId("vr-kline");
+      expect(await screen.findByTestId("vr-kline-review")).toHaveAttribute("data-record-direction", "mixed");
+      expect(kline).toHaveAttribute("data-markers-text", "开空 100.0");
+      unmount();
+    }
+  });
+
+  it("ASM-03 方向不可得维持旧字义（D6）：无 direction 键+trades 空 → 开多/平多如实维持不猜", async () => {
+    const d = makeDetail();
+    d.executions[0].trades = [];
+    d.executions[0].trace_rows = [
+      makeTrace({ bar_time: "2026-04-02 00:00:00+00:00", price: 100 }),
+      makeTrace({ event_code: 13, seq: 1, bar_time: "2026-04-03 00:00:00+00:00", price: 110 }),
+    ];
+    mockDetail.mockResolvedValue(d);
+    ui(<RecordDetail record={makeRow()} />);
+    const kline = await screen.findByTestId("vr-kline");
+    expect(kline).toHaveAttribute("data-markers-text", "开多 100.0|平多 110.0");
+  });
+
+  it("ASM-04 侧位序列：成交价与所在 bar 中点比较——≥中点标上、＜中点标下（就近侧位 R2）", async () => {
+    const d = makeDetail();
+    d.executions[0].trades = [];
+    d.executions[0].trace_rows = [
+      makeTrace({ bar_time: "2026-04-02 00:00:00+00:00", price: 100 }), // 中点 101 → 下
+      makeTrace({ event_code: 13, seq: 1, bar_time: "2026-04-02 00:30:00+00:00", price: 101 }), // =中点 → 上
+      makeTrace({ event_code: 20, seq: 2, bar_time: "2026-04-03 00:00:00+00:00", price: 103 }), // 中点 102 → 上
+    ];
+    mockDetail.mockResolvedValue(d);
+    ui(<RecordDetail record={makeRow()} />);
+    const kline = await screen.findByTestId("vr-kline");
+    expect(kline).toHaveAttribute("data-markers-positions", "belowBar|aboveBar|aboveBar");
+  });
+
+  it("ASM-05 bar 缺失回退旧惯例（R4）：有价但 barMap 不中 → 入场族下方/出场族上方", async () => {
+    const d = makeDetail();
+    d.executions[0].trades = [];
+    d.executions[0].trace_rows = [
+      makeTrace({ bar_time: "2026-04-10 00:00:00+00:00", price: 100 }), // 超 bars 域（04-01..05）
+      makeTrace({ event_code: 13, seq: 1, bar_time: "2026-04-11 00:00:00+00:00", price: 120 }),
+      makeTrace({ event_code: 11, seq: 2, bar_time: "2026-04-12 00:00:00+00:00", price: null }), // 无价同走旧惯例
+    ];
+    mockDetail.mockResolvedValue(d);
+    ui(<RecordDetail record={makeRow()} />);
+    const kline = await screen.findByTestId("vr-kline");
+    expect(kline).toHaveAttribute("data-markers-positions", "belowBar|aboveBar|belowBar");
+  });
+
+  it("ASM-06 吸附重判与价位保真（R5）：切 1d 后侧位按吸附后日 bar 中点重判、锚定价位仍真实成交价", async () => {
+    const d = makeDetail();
+    d.executions[0].trades = [];
+    d.executions[0].trace_rows = [
+      makeTrace({ bar_time: "2026-04-02 00:00:00+00:00", price: 100 }),
+    ];
+    mockDetail.mockResolvedValue(d);
+    mockOhlcv.mockImplementation((
+      _s: string, tf: string,
+    ) => Promise.resolve({
+      data: tf === "1d"
+        ? ["2026-04-01", "2026-04-02", "2026-04-03"].map((day) => ({
+            timestamp: `${day} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          }))
+        : Array.from({ length: 5 }, (_, i) => ({
+            timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 100 + i, high: 105 + i, low: 95 + i, close: 100 + i,
+          })),
+    }) as never);
+    ui(<RecordDetail record={makeRow()} />);
+    const kline0 = await screen.findByTestId("vr-kline");
+    // 基准 30m：04-02 bar 中点 101——100<101 标下
+    await waitFor(() => {
+      expect(kline0).toHaveAttribute("data-markers-positions", "belowBar");
+    });
+    // 切 1d：吸附到 04-02 日 bar（中点 1.25）——100≥1.25 重判标上；价位仍 100
+    openTfSelect();
+    const opt = await screen.findByText("1d", { selector: ".ant-select-item-option-content" });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      const kline = screen.getByTestId("vr-kline");
+      expect(kline).toHaveAttribute("data-markers-positions", "aboveBar");
+      expect(kline).toHaveAttribute("data-markers-prices", "100");
+      expect(kline).toHaveAttribute("data-markers-text", "开多 100.0");
+    });
+  });
+
+  it("ASM-07 dropped 披露保持：吸附超域标记计数如实提示不静默", async () => {
+    const d = makeDetail();
+    d.executions[0].trades = [];
+    d.executions[0].trace_rows = [
+      makeTrace({ bar_time: "2026-03-31 00:00:00+00:00", price: 100 }), // 早于首 1d bar（04-01）→ 超域丢弃
+      makeTrace({ event_code: 13, seq: 1, bar_time: "2026-04-02 00:00:00+00:00", price: 110 }),
+    ];
+    mockDetail.mockResolvedValue(d);
+    mockOhlcv.mockImplementation((
+      _s: string, tf: string,
+    ) => Promise.resolve({
+      data: tf === "1d"
+        ? ["2026-04-01", "2026-04-02", "2026-04-03"].map((day) => ({
+            timestamp: `${day} 00:00:00+00:00`, open: 1, high: 2, low: 0.5, close: 1.5,
+          }))
+        : Array.from({ length: 5 }, (_, i) => ({
+            timestamp: `2026-04-0${i + 1} 00:00:00+00:00`, open: 100 + i, high: 105 + i, low: 95 + i, close: 100 + i,
+          })),
+    }) as never);
+    ui(<RecordDetail record={makeRow()} />);
+    await screen.findByTestId("vr-kline");
+    openTfSelect();
+    const opt = await screen.findByText("1d", { selector: ".ant-select-item-option-content" });
+    fireEvent.click(opt.closest(".ant-select-item-option") ?? opt);
+    await waitFor(() => {
+      const kline = screen.getByTestId("vr-kline");
+      expect(kline).toHaveAttribute("data-markers", "1");
+      expect(screen.getByTestId("vr-kline-review")).toHaveTextContent("1 个标记超出区间");
+    });
+  });
+
+  it("ASM-08 图例定稿（§2.6）：六词枚举方向中性文案", async () => {
+    mockDetail.mockResolvedValue(makeDetail());
+    ui(<RecordDetail record={makeRow()} />);
+    const review = await screen.findByTestId("vr-kline-review");
+    expect(review).toHaveTextContent(
+      "标记=按方向生成的字义+成交价（蓝=策略动作：开多/开空/加仓/减仓/平多/平空，金=风控出场：平多/平空）",
+    );
+  });
+
+  it("ASM-09 边界 bar 跨份：相邻份共享边界 bar 同 bar 同族出场——各自独立配对本份桶不丢", async () => {
+    const d = makeDetail();
+    d.executions[0].trace_rows = [
+      makeTrace({ bar_time: "2026-04-02 00:00:00+00:00", price: 100 }),
+    ];
+    d.executions.push({
+      ...d.executions[0],
+      exec_ref: "趋势", exec_index: 1,
+      range_start: "2026-04-02", range_end: "2026-04-20",
+      trades: [
+        { seq: 0, entry_time: "2026-04-02 00:00:00+00:00", exit_time: "2026-04-03 00:00:00+00:00",
+          entry_price: 200, exit_price: 210, size: 1, direction: "Short", pnl: 10 },
+      ],
+      equity: {
+        grid_aligned: false, timeframe: "30m", start: null, length: 2,
+        timestamps: ["2026-04-02 00:00:00+00:00", "2026-04-02 00:30:00+00:00"],
+        values: [100000, 101500],
+      },
+      trace_rows: [makeTrace({ exec_ref: "趋势", bar_time: "2026-04-02 00:00:00+00:00", price: 200 })],
+      trail_series: null,
+    });
+    // 份 main 的桶 direction=long（makeDetail 默认）、份 趋势 桶 Short——
+    // 同 bar 两个 10 码 marker 各自配对本份桶：开多|开空（份序 flatMap 序）
+    mockDetail.mockResolvedValue(d);
+    ui(<RecordDetail record={makeRow({ result: { direction: "mixed" } })} />);
+    const kline = await screen.findByTestId("vr-kline");
+    expect(kline).toHaveAttribute("data-markers", "2");
+    expect(kline).toHaveAttribute("data-markers-text", "开多 100.0|开空 200.0");
+    expect(kline).toHaveAttribute("data-markers-prices", "100|200");
+  });
+
+  it("ASM-10 加仓/减仓不带方向词缀：short 记录下 morph 两态同值", async () => {
+    const d = makeDetail();
+    d.executions[0].trades = [];
+    d.executions[0].trace_rows = [
+      makeTrace({ event_code: 11, seq: 0, bar_time: "2026-04-02 00:00:00+00:00", price: 100 }),
+      makeTrace({ event_code: 12, seq: 1, bar_time: "2026-04-03 00:00:00+00:00", price: 99 }),
+    ];
+    mockDetail.mockResolvedValue(d);
+    ui(<RecordDetail record={makeRow({ result: { direction: "short" } })} />);
+    const kline = await screen.findByTestId("vr-kline");
+    expect(kline).toHaveAttribute("data-markers-text", "加仓 100.0|减仓 99.0");
+  });
+
+  it("ASM-11 价格形制端到端：大价一位小数舍入+无价行仅字义", async () => {
+    const d = makeDetail();
+    d.executions[0].trades = [];
+    d.executions[0].trace_rows = [
+      makeTrace({ bar_time: "2026-04-02 00:00:00+00:00", price: 103209.28 }),
+      makeTrace({ event_code: 11, seq: 1, bar_time: "2026-04-03 00:00:00+00:00", price: null }),
+    ];
+    mockDetail.mockResolvedValue(d);
+    ui(<RecordDetail record={makeRow()} />);
+    const kline = await screen.findByTestId("vr-kline");
+    expect(kline).toHaveAttribute("data-markers-text", "开多 103209.3|加仓");
+    expect(kline).toHaveAttribute("data-markers-prices", "103209.28|null");
+  });
+
+  it("ASM-12 record=null 容错：result 整体 null → recordDirection=undefined（披露空串）回退链不炸", async () => {
+    mockDetail.mockResolvedValue(makeDetail());
+    ui(<RecordDetail record={makeRow()} />);
+    const review = await screen.findByTestId("vr-kline-review");
+    expect(review).toHaveAttribute("data-record-direction", "");
+    expect(screen.getByTestId("vr-kline")).toHaveAttribute("data-markers-text", "开多 100.0");
+  });
+
+  it("ASM-14 35/36 保义锁定（Q1 基线四点）：无词条滤除+动作列「—」+reason 英文原字面兜底", async () => {
+    const d = makeDetail();
+    d.executions[0].trades = [];
+    d.executions[0].trace_rows = [
+      makeTrace({ bar_time: "2026-04-02 00:00:00+00:00", price: 100 }),
+      makeTrace({ event_code: 35, seq: 1, reason: "task_cap_scaled", bar_time: "2026-04-03 00:00:00+00:00", price: 100 }),
+      makeTrace({ event_code: 36, seq: 2, reason: "halted_entry_blocked", bar_time: "2026-04-04 00:00:00+00:00", price: 100 }),
+    ];
+    mockDetail.mockResolvedValue(d);
+    ui(<RecordDetail record={makeRow()} />);
+    // ①traceMarkers 产出不含 35/36 filled 行（无词条滤除现状不变）
+    const kline = await screen.findByTestId("vr-kline");
+    expect(kline).toHaveAttribute("data-markers", "1");
+    expect(kline).toHaveAttribute("data-markers-text", "开多 100.0");
+    // ②SignalTrace 动作列 35/36 行显「—」；③reason 列英文原字面兜底
+    fireEvent.click(screen.getByRole("tab", { name: "信号回溯" }));
+    const trace = await screen.findByTestId("vr-signal-trace");
+    expect(trace).toHaveTextContent("—");
+    expect(trace).toHaveTextContent("task_cap_scaled");
+    expect(trace).toHaveTextContent("halted_entry_blocked");
   });
 });
