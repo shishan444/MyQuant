@@ -314,3 +314,36 @@ class TestGateBlindSpotFill:
                 ub_env["db"], empty_dir, hypothesis_id=hid,
                 symbol="NOSUCH", timeframe="4h")
         assert ei.value.code == "RESEARCH_SYMBOL_NOT_FOUND"
+
+
+class TestRecordWriteZeroUnionImpact:
+    """TC-5-1（add-sandbox-records-unified-flow 红线 1/V5a）：直接插入
+    沙盒记录行前后 union-balance 逐段一致——validation_records 行写入
+    对判定并集零影响（并集只读 research_log 与假设自报区间）。
+
+    隔离变量：直接调 save_sandbox_validation_record 插行（不跑沙盒——
+    排除日志写入对并集的影响；挂假设沙盒必进并集，跑沙盒形态恒假）。"""
+
+    def test_union_balance_identical_across_record_write(self, ub_env):
+        from core.analysis.validation_service import query_union_balance
+        from core.persistence.repository import research as rr_repo
+        db, data_dir = ub_env["db"], ub_env["data_dir"]
+        hid = _register(db, start="2023-02-01T00:00:00Z",
+                        end="2023-02-10T00:00:00Z")
+        kw = dict(data_dir=data_dir, symbol=SYMBOL, timeframe="4h",
+                  hypothesis_id=hid)
+        before = query_union_balance(db, **kw)
+        # 直接插入一行挂 H 区间的沙盒记录（不跑沙盒）
+        rr_repo.save_sandbox_validation_record(
+            db, record_id="rec_ub_sbx", hypothesis_id=hid,
+            strategy_id="st_ub",
+            params='{"symbol": "BTCUSDT", "timeframe": "4h",'
+                   ' "start": "2023-02-01", "end": "2023-02-10",'
+                   ' "fee": 0.001, "slippage": 0.0005,'
+                   ' "init_cash": 100000.0}',
+            result='{}', range_hash="rh_ub_sbx")
+        after = query_union_balance(db, **kw)
+        assert after == before, "记录表写入对并集账本零影响"
+        # 对照：插入的行确实在库（隔离变量自证——零差异非因行未写入）
+        rows = rr_repo.list_validation_records(db, hypothesis_id=hid)
+        assert any(r["record_id"] == "rec_ub_sbx" for r in rows)

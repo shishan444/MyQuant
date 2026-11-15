@@ -202,3 +202,109 @@ class TestVerdictCountsFourKeys:
             r = client.get("/api/research/validation-records",
                            params={"level": lv})
             assert r.status_code == 200, lv
+
+
+class TestZeroChangeFaces:
+    """组 6.2 零改动面显式用例（TC-2-6/2-7/2-8/TC-4-1/4-2——设计卡
+    零改动面以验收防回归）。"""
+
+    def test_sandbox_unsortable_in_total_return_sort(self, env):
+        """TC-2-6：total_return_desc 沙盒行落尾+unsortable 计入；
+        time_desc 语义键退化恒 0。"""
+        client, hid, out, db, _d = env
+        # 对照：插一条有 total_return 的正式行（有值行排前——沙盒
+        # （无 worst 键位路由）与 rec_formal_1（result 无值）均落尾）
+        _insert(db, "rec_v1", hid, "isolated_backtest", "pass",
+                "2026-01-05T00:00:00Z")
+        from sqlalchemy import text
+        from core.persistence.orm.engine import engine_for
+        with engine_for(db).begin() as conn:
+            conn.execute(text(
+                "UPDATE validation_records SET result="
+                " '{\"metrics\": {\"total_return\": 0.5}}'"
+                " WHERE record_id = 'rec_v1'"))
+        out1 = client.get("/api/research/validation-records",
+                          params={"sort": "total_return_desc",
+                                  "limit": 200}).json()
+        ids = [x["record_id"] for x in out1["records"]]
+        # 共享库有多条无值行（rec_formal_1/composite 等）同落 unsortable
+        # 段——「落尾」断言取段序语义：沙盒行位于确定有值对照行
+        # （rec_v1——isolated 级 SQL worst 键位路由有值）之后；沙盒行
+        # 响应 JSON 虽携带 total_return（ND2 完整 metrics），但 level
+        # 无 worst 键位路由，SQL 侧判无值必落 unsortable 段
+        assert ids.index(out["record_id"]) > ids.index("rec_v1"), \
+            "沙盒行（无 worst 键位路由）在有值对照行之后"
+        assert out1["unsortable_count"] >= 1
+        out2 = client.get("/api/research/validation-records",
+                          params={"sort": "time_desc"}).json()
+        assert out2["unsortable_count"] == 0, "非排序键语义退化恒 0"
+
+    def test_sandbox_bottom_in_verdict_quality_sort(self, env):
+        """TC-2-7：verdict_quality 品质序 pass→inconclusive→fail→沙盒
+        （else_=3 沉底——fail 与沙盒间不混排）。"""
+        client, hid, out, db, _d = env
+        _insert(db, "rec_q_fail", hid, "isolated_backtest", "fail",
+                "2026-01-06T00:00:00Z")
+        _insert(db, "rec_q_inc", hid, "isolated_backtest",
+                "inconclusive", "2026-01-07T00:00:00Z")
+        # rec_formal_1=pass（module env 既有）
+        o = client.get("/api/research/validation-records",
+                       params={"sort": "verdict_quality",
+                               "limit": 200}).json()
+        ids = [x["record_id"] for x in o["records"]]
+        # 沉底断言取段序语义（共享库 composite 空串行同落 else_ 段）：
+        # 沙盒行位于全部三态行（含 fail）之后——fail 与沙盒不混排
+        sbx_pos = ids.index(out["record_id"])
+        rank = {"pass": 0, "inconclusive": 1, "fail": 2}
+        tri = [i for i, x in enumerate(o["records"])
+               if x["verdict"] in rank]
+        assert tri and sbx_pos > max(tri), "沙盒沉底（全部三态行之后）"
+        vs = [x["verdict"] for x in o["records"] if x["verdict"] in rank]
+        assert [rank[v] for v in vs] == sorted(rank[v] for v in vs)
+
+    def test_sandbox_excluded_by_generalization_filter(self, env):
+        """TC-2-8：generalization=true 沙盒行不在结果（symbol 表达式
+        NULL 保守漏判——零改动面推论显式化）。"""
+        client, hid, out, _db, _d = env
+        o = client.get("/api/research/validation-records",
+                       params={"generalization": "true"}).json()
+        assert all(x["record_id"] != out["record_id"]
+                   for x in o["records"])
+
+    def test_sandbox_detail_empty_skeleton_with_params(self, env):
+        """TC-4-1：沙盒 detail 200 空骨架+params 顶层三键提取真值。"""
+        client, hid, out, _db, _d = env
+        r = client.get(
+            f"/api/research/validation-records/{out['record_id']}/detail")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["detail_available"] is False
+        assert body["executions"] == []
+        assert body["level"] == "sandbox_backtest"
+        assert body["verdict"] == ""
+        # 三键=params 顶层提取真值（module env 沙盒跑用缺省参数）
+        assert body["fee"] == 0.001
+        assert body["slippage"] == 0.0005
+        assert body["init_cash"] == 100000.0
+        assert body["signal_trace"] is None
+        assert body["trade_semantics"] is None
+        assert body["stop_price"] is None
+        assert body["mtf_gated_bars"] is None
+
+    def test_sandbox_rejected_as_ruler_ab_source(self, env):
+        """TC-4-2：沙盒 record_id 经公共校验件 resolve_validation_record
+        拒绝（ruler_compare 与 ab_compare 同源消费——D4 公共校验件）。
+        错误形制按现状校准：RESEARCH_PARAM_INVALID 422+结构化 detail
+        （P1 授权——底线 422+结构化已满足且更精确）。"""
+        client, hid, out, _db, _d = env
+        from core.analysis.errors import ResearchError
+        from core.analysis.templates.ruler_compare import (
+            resolve_validation_record)
+        rng = {"symbol": "BTCUSDT", "timeframe": "4h",
+               "start": "2023-03-01", "end": "2023-03-10"}
+        with pytest.raises(ResearchError) as ei:
+            resolve_validation_record(_db, out["record_id"], rng)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert ei.value.status == 422
+        assert ei.value.detail["param"] == "trade_source.record_id"
+        assert ei.value.detail["record_id"] == out["record_id"]
