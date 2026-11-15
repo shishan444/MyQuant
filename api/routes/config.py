@@ -130,7 +130,10 @@ def migrate_legacy_credentials(db_path: Path) -> None:
             existing = json.loads(cred_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             existing = {}
-    cred_has_value = bool(existing.get("binance_api_key")) and         bool(existing.get("binance_secret_key")) if isinstance(existing, dict) else False
+    cred_has_value = (
+        bool(existing.get("binance_api_key"))
+        or bool(existing.get("binance_secret_key"))
+    ) if isinstance(existing, dict) else False
 
     if cred_has_value:
         # ②凭据文件已有非空值：不覆盖（凭据文件优先）仅删键+冲突提示
