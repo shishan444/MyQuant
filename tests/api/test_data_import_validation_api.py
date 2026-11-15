@@ -192,6 +192,8 @@ class TestImportEndpointModeValidation:
         assert resp.status_code == 422
         detail = resp.json()["detail"]
         assert detail["code"] == "IMPORT_MODE_INVALID"
+        assert "bogus" in detail["message"], \
+            "message 点名实际值——与单端点三键同形制"
         assert detail["legal_values"] == ["merge", "replace", "new"]
 
 

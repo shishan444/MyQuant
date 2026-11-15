@@ -19,7 +19,8 @@ from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
 
 
-def _seed_record(db, rid: str, level: str, *, result=None, params=None) -> None:
+def _seed_record(db, rid: str, level: str, *, result=None, params=None,
+                 sid: str = "st_corrupt") -> None:
     """直插 validation_records 行（绕过 service，允许任意 result/params 形态）。"""
     import json
     from core.persistence.orm.engine import engine_for
@@ -33,7 +34,7 @@ def _seed_record(db, rid: str, level: str, *, result=None, params=None) -> None:
             "(:rid, :hid, :sid, :level, '', :verdict, :result, :params, "
             ":rhash, '2026-11-15T00:00:00Z')"
         ), {
-            "rid": rid, "hid": "hyp_corrupt", "sid": "st_corrupt",
+            "rid": rid, "hid": "hyp_corrupt", "sid": sid,
             "level": level, "verdict": "pass", "rhash": f"rh-{rid}",
             "result": result if isinstance(result, str)
                       else json.dumps(result),
@@ -97,13 +98,34 @@ class TestCorruptJsonSortResilience:
         _REC_SYMBOL_EXPR/_REC_TIMEFRAME_EXPR 的消费面是泛化过滤
         （_GENERALIZATION_EXPR and_ 条件——sort 枚举四值无 symbol/
         timeframe 形态，任务卡「symbol/timeframe 排序」系规划笔误，
-        实锚为 generalization 请求面）；corrupt params 行提取值 NULL
-        → isnot(None) 不中，被泛化条件滤除（保守漏判语义）。"""
+        实锚为 generalization 请求面）。正对照行（CARD-03 #5 断言
+        补强）：params 合法且泛化六条件全中（记录 symbol≠基座、
+        timeframe==基座）——corrupt 行被滤与正行命中两方向同时锁定；
+        仅断 len==0 时全库永不命中（种子行均无 strategy 关联，基座
+        恒 NULL），corrupt 行为不进入判定。"""
+        from pathlib import Path
+
+        from core.persistence.repository.strategy import save_strategy
+        # 基座策略（parent_ids 缺省 NULL → data_ranges 兜底
+        # Strategy.symbol/timeframe）+ 泛化命中正对照行（用例内插入，
+        # 不动共享种子——默认序用例断 len==5）
+        db_path = Path(client.app.state.db_path)
+        save_strategy(db_path, strategy_id="st_gen_base", dna_json="{}",
+                      symbol="ETHUSDT", timeframe="4h",
+                      gene_signature="sig-gen-base")
+        _seed_record(db_path, "rec_gen_hit", "random_window",
+                     sid="st_gen_base",
+                     result={"summary": {"worst_window": {
+                         "metrics": {"total_return": 0.0}}}},
+                     params={"symbol": "BTCUSDT", "timeframe": "4h"})
         r = client.get("/api/research/validation-records",
                        params={"generalization": "true"})
         assert r.status_code == 200, r.text[:150]
-        assert len(r.json()["records"]) == 0, \
-            "corrupt params 行提取 NULL——泛化条件不命中（保守漏判）"
+        ids = [row["record_id"] for row in r.json()["records"]]
+        assert ids == ["rec_gen_hit"], \
+            "正对照行（合法 params、BTCUSDT≠ETHUSDT 且 4h==4h 六条件" \
+            "全中）应唯一可见；corrupt params 行提取 NULL 被滤、" \
+            f"无基座行 LEFT JOIN NULL 被滤，实际 {ids}"
 
     def test_default_order_unchanged_with_corrupt_rows(self, client):
         """corrupt 行共存下默认序（time_desc）正常响应。"""
