@@ -49,8 +49,8 @@ class Rejection:
     Attributes:
         kind: 被拦意图类型（当前仅 "add"——第 8 段敞口上限）。
         direction: 被拦意图方向（持仓侧）。
-        reason: 拒因枚举（当前 "exposure_cap"；below_min_notional
-            生产者在 change-4，值域见 pt_signal.reject_reason 列）。
+        reason: 拒因枚举（当前 "exposure_cap"；值域为 pt_signal.
+            reject_reason 列五值枚举——五值均已投产有生产者）。
         gene_hits: 基因命中承载位（解释器层恒空，组装层填充）。
     """
 
