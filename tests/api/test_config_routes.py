@@ -223,6 +223,38 @@ class TestLegacyCredentialMigration:
                   "binance_connected"):
             assert k not in cfg, f"分支②仍物理删除 {k}"
 
+    def test_branch2_partial_credentials_file_not_overwritten(
+        self, tmp_path, monkeypatch, caplog,
+    ) -> None:
+        """分支②半迁移态（CARD-23）：凭据文件任一键非空即「已有
+        非空值」——不覆盖（修复前 and 判定落分支①被整体覆盖丢值）、
+        冲突 warning、仍物理删键；对齐 spec「凭据文件已有非空值时
+        SHALL 不覆盖」。"""
+        cred = tmp_path / "creds" / "credentials.json"
+        cred.parent.mkdir(parents=True)
+        cred.write_text(json.dumps({
+            "binance_api_key": "kept" + "k" * 60,
+            "binance_secret_key": "",
+        }), encoding="utf-8")
+        monkeypatch.setenv("MYQUANT_CREDENTIALS_FILE", str(cred))
+        db_path = tmp_path / "db" / "quant.db"
+        db_path.parent.mkdir(parents=True)
+        (db_path.parent / "config.json").write_text(json.dumps({
+            "binance_api_key": "other" + "k" * 59,
+            "binance_secret_key": "other" + "s" * 59,
+        }), encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="api.routes.config"):
+            self._run_migration(db_path)
+        assert "不覆盖" in caplog.text, "半迁移态应走分支②冲突 warning"
+        saved = json.loads(cred.read_text(encoding="utf-8"))
+        assert saved["binance_api_key"].startswith("kept"), \
+            "半迁移态已有非空值不得被覆盖（CARD-23）"
+        assert saved["binance_secret_key"] == "", "空键原样保持"
+        cfg = json.loads((db_path.parent / "config.json").read_text(
+            encoding="utf-8"))
+        for k in ("binance_api_key", "binance_secret_key"):
+            assert k not in cfg, f"半迁移态仍物理删除 {k}"
+
     def test_branch3_no_credentials_zero_action(
         self, tmp_path, monkeypatch, caplog,
     ) -> None:
