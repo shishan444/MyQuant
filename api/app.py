@@ -80,8 +80,8 @@ def create_app(
             DataFreshnessGuardian；测试注入替身。FAPI_STREAM_DISABLED
             置位时装配整体跳过且 factory 亦不调用——旁路优先）。
     """
-    # 无条件求值一次：lifespan 内 config.yaml 读取同用（两参显式传参时
-    # 分支内赋值会使 lifespan 引用未定义名——config 从未被打开）
+    # 无条件求值一次（两参显式传参时分支内赋值会使 lifespan 引用
+    # 未定义名——project_root 在 lifespan 内有消费）
     project_root = Path(__file__).resolve().parent.parent
     if db_path is None:
         db_path = _default_db_path(project_root)
