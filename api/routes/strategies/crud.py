@@ -17,11 +17,6 @@ from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 
 from core.persistence.orm.engine import engine_for
-from core.persistence.repository.backtest_result import (
-    get_backtest_result,
-    list_backtest_results,
-    save_backtest_result,
-)
 from core.persistence.repository.strategy import (
     batch_delete_by_source_task,
     count_strategies,
@@ -35,14 +30,6 @@ from core.persistence.repository.strategy import (
 )
 from api.deps import get_db_path
 from api.schemas import (
-    BacktestRequest,
-    BacktestResponse,
-    BatchBacktestRequest,
-    BatchBacktestResultItem,
-    BatchBacktestSummaryItem,
-    CompareRequest,
-    CompareResponse,
-    CompareResultItem,
     DNAModel,
     StrategyCreate,
     StrategyListResponse,

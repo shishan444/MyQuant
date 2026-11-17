@@ -26,6 +26,8 @@ class BacktestResult(Base):
     回测结果记录：run_source 区分 lab/verify 等通道，fitness/qualified 为
     021 评分制度列。
     """
+    # 【已退役，schema 声明保留（D4）——retire-legacy 任务 11：批跑/单回测通道删，
+    # 行数据只读；物理删数据另行批准】
     __tablename__ = "backtest_result"
     __table_args__ = ()
     # 列结构权威源：init_db_ext 终态库 PRAGMA（2026-09-16）
@@ -518,6 +520,7 @@ class SignalRegistryEntry(Base):
 class FeatureRequest(Base):
     """慢通道功能需求单：只保证持久化与可查，不自动实现（能力自述预期管理）。"""
 
+    # 【已退役，schema 声明保留（D4）——retire-legacy-subsystems B7】
     __tablename__ = "feature_requests"
     __table_args__ = (
         Index("ix_feature_requests_status", "status", "created_at"),

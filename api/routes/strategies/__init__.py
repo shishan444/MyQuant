@@ -1,4 +1,6 @@
-"""Strategies 路由包（B5.1 自单文件 strategies.py 拆为五模块）。
+"""Strategies 路由包（B5.1 自单文件 strategies.py 拆分；retire-legacy
+任务 11 后收缩为 CRUD 单模块——backtest/compare/batch 三通道随 Q1=B
+退役，策略库页核算走 sandbox 统一流）。
 
 对外接口不变：`from api.routes.strategies import router`（app.py 引用零改动）。
 """
@@ -6,23 +8,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import backtest, batch, compare, crud
+from . import crud
 
-# 聚合形制（FastAPI 0.137 验证通过的二层层级）：子 router 无前缀，
-# prefix/tags 在聚合 include 时统一附加——与原单文件 router 声明等价。
-# verify 子模块已随旧验证会话体系退役（retire-verify-sessions B5：
-# 五端点 404；判定链路由 validation_records 体系承载）。
 router = APIRouter()
-for _sub in (crud, backtest, compare, batch):
-    router.include_router(_sub.router, prefix="/api/strategies", tags=["strategies"])
-
-# 对外符号 re-export（拆分前的模块级引用面：路由函数/处理器/工具——零改动兼容）
-from .backtest import backtest_strategy  # noqa: E402,F401
-from .batch import (  # noqa: E402,F401
-    _BatchBacktestProcessor,
-    batch_backtest_stream,
-    get_batch_backtest_detail,
-)
-from .compare import compare_strategies  # noqa: E402,F401
+router.include_router(crud.router, prefix="/api/strategies", tags=["strategies"])
 
 __all__ = ["router"]
