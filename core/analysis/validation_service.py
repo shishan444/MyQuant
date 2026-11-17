@@ -549,3 +549,19 @@ def query_union_balance(
         if s > cursor:
             remaining.append((cursor, s))
         cursor = max(cursor, e)
+    if cursor < span_end:
+        remaining.append((cursor, span_end))
+
+    remaining_bars = sum(
+        int((e - s).total_seconds() // tf_seconds)
+        for s, e in remaining)
+    return {
+        "hypothesis_id": hypothesis_id,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "judged": judged,
+        "remaining": [
+            {"start": s.isoformat(), "end": e.isoformat()}
+            for s, e in remaining],
+        "remaining_bars": remaining_bars,
+    }
