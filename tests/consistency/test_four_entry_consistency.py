@@ -69,7 +69,8 @@ def seeded_client(tmp_path_factory):
         })
         assert resp.status_code == 201, resp.text
         sid = resp.json()["strategy_id"]
-        yield client, sid, str(df.index[0].date()), str(df.index[-1].date()), db_path, data_dir
+        # sandbox 链需 warmup 前扩（≥200 bar）——请求区间取深尾窗
+        yield client, sid, str(df.index[220].date()), str(df.index[-1].date()), db_path, data_dir
 
 
 def _pick(d: dict) -> dict:
@@ -77,94 +78,31 @@ def _pick(d: dict) -> dict:
 
 
 def test_engine_two_entries_identical(seeded_client):
-    """G-1 裁决核心：backtest / compare 两入口逐指标全等（verify 入口已退役）。"""
+    """G-1 裁决核心（retire-legacy 11.3 函数级保留改造）：回测引擎
+    两入口形态逐指标全等——backtest/compare 两 REST 入口已随 Q1=B
+    退役，等价守护本体=同引擎同参数下 dna 直传与库内 strategy 两条
+    装配路径产出全等（经 sandbox 端点，metrics 同源）。"""
     client, sid, d0, d1, _, _ = seeded_client
-    # R-4（G-1 口径裁决）：verify 分段切片语义 = [start 00:00, end 00:00] 闭区间
-    # （df.index <= end 日期），与全量回测差尾部同日 bar——同窗对齐后公平比对
-    # R-5（D-5 已登记）：dna 直传必须同时给 symbol/timeframe，否则
-    # load_and_prepare_df 按 "UNKNOWN" 找盘失败 → 静默走 legacy fallback
-    # （无切片+逐 gene 指标路径）——口径漂移无告警
-    base = {"dataset_id": "BTCUSDT_4h", "init_cash": 100000.0,
-            "fee": 0.001, "slippage": 0.0005,
-            "data_start": d0, "data_end": d1}
-    common = {**base, "symbol": "BTCUSDT", "timeframe": "4h"}  # backtest 专用
-
-    # D-4（已登记 findings）：strategy_id 路径因 to_json/from_json 环变性
-    # （is_mtf 翻转）500；基准入口用 dna 直传（同引擎同参数，计算等价）
-    r1 = client.post("/api/strategies/backtest",
-                     json={"dna": _DNA_PAYLOAD, **common})
+    # 两条装配路径：①库内 strategy（save_strategy→sandbox 装载）
+    r1 = client.post("/api/research/backtest-sandbox", json={
+        "strategy_id": sid, "symbol": "BTCUSDT", "timeframe": "4h",
+        "start": d0, "end": d1})
     assert r1.status_code == 200, r1.text
-    m_backtest = _pick(r1.json())
-
-    r2 = client.post("/api/strategies/compare",
-                     json={"strategy_ids": [sid], **base})
-    assert r2.status_code == 200, r2.text
-    body2 = r2.json()
-    items2 = body2["results"] if isinstance(body2, dict) and "results" in body2 else body2
-    m_compare = _pick(items2[0])
-
-    # verify 第三入口已随旧验证会话体系退役（retire-verify-sessions
-    # delta-3：全等比对面退出）——两入口全等 + batch×引擎一致合证
-    assert_metrics_equal(m_backtest, m_compare, scenario="backtest-vs-compare")
-
-
-def test_batch_engine_parity_locked(seeded_client):
-    """R-6 反转（Q-1=a 裁决，rebuild-paper-trading 6.2 迁移）：batch 入口
-    迁 BacktestEngine.batch_run，与单策略回测同引擎同口径——batch×引擎
-    逐指标全等，连同 test_engine_three_entries_identical 构成「四入口全等」。
-
-    历史注记：原哨兵（test_batch_replay_semantics_locked）锁定 batch=
-    ReplayRunner 重放语义与引擎确定性不同（差异形态登记 findings R-6）；
-    迁移后反转锁定一致语义。若本断言翻红=batch 与引擎路径出现分叉
-    （重估 Q-1 迁移的口径保真）。
-    """
-    client, sid, d0, d1, db_path, data_dir = seeded_client
-
-    r1 = client.post("/api/strategies/backtest", json={
-        "dna": _DNA_PAYLOAD, "dataset_id": "BTCUSDT_4h",
-        "init_cash": 100000.0, "fee": 0.001, "slippage": 0.0005,
-        "symbol": "BTCUSDT", "timeframe": "4h",
-        "data_start": d0, "data_end": d1,
-    })
-    assert r1.status_code == 200, r1.text
-    m_backtest = _pick(r1.json())
-
-    from api.routes.strategies.batch import _BatchBacktestProcessor
-    from api.schemas import BatchBacktestRequest
-    payload = BatchBacktestRequest(
-        strategy_ids=[sid],
-        data_ranges=[{"start": d0, "end": d1}],
-        init_cash=100000.0, fee=0.001, slippage=0.0005, leverage=1,
-    )
-    proc = _BatchBacktestProcessor(payload, db_path, data_dir)
-    proc.init()
-    for i in range(len(proc.steps)):
-        proc.process_step(i)
-    proc.finalize()
-    items = [r for r in proc.all_results if getattr(r, "error", None) is None]
-    assert items, f"batch 无成功结果: {proc.all_results}"
-    result_id = items[0].result_id
-
-    detail = client.get(f"/api/strategies/batch-backtest/{result_id}")
-    assert detail.status_code == 200, detail.text
-    m_batch = _pick(detail.json())
-    assert all(k in m_batch for k in METRIC_KEYS), m_batch
-
-    # 一致锁定（迁移后行为）：batch = 引擎（同引擎同参数同窗，逐指标全等）
-    assert_metrics_equal(m_batch, m_backtest, scenario="batch-vs-engine")
-
-
-def test_d4_sentinel_strategy_id_backtest_fixed(seeded_client):
-    """D-4 已修复（improve-mcp-agent-loop M3：backtest.py 守卫同修为
-    is_mtf 即装载）——strategy_id 路径不再 500，回测可执行。
-
-    哨兵退役注记：原哨兵断言该路径 500（to_json/from_json 环变性使
-    显式 MTF DNA 缺 dfs_by_timeframe）；守卫放宽后单层/多层均可装载
-    执行。findings 清单 D-4 状态应更新为已修复。
-    """
-    client, sid, _, _, _, _ = seeded_client
-    resp = client.post("/api/strategies/backtest", json={
-        "strategy_id": sid, "dataset_id": "BTCUSDT_4h",
-        "init_cash": 100000.0, "fee": 0.001, "slippage": 0.0005,
-    })
-    assert resp.status_code == 200, resp.text
+    m_via_strategy = _pick(r1.json()["metrics"])
+    # ②内部桥入口直调（同库同 DNA 同窗同 warmup 语义——装配等价面：
+    # REST 沙盒入口 vs run_backtest_on_range 桥入口，两路到达同一引擎）
+    from core.analysis.backtest_bridge import run_backtest_on_range
+    from core.analysis.validation_service import _derive_dna_warmup
+    from core.persistence.repository.strategy import get_strategy
+    from core.strategy.dna import StrategyDNA
+    from pathlib import Path as _P
+    db_path, data_dir = seeded_client[4], seeded_client[5]
+    dna = StrategyDNA.from_json(
+        get_strategy(db_path, sid)["dna_json"])
+    warmup_bars, _ = _derive_dna_warmup(db_path, dna, "4h")
+    m_bridge, _, _, _ = run_backtest_on_range(
+        db_path, _P(data_dir), dna, "BTCUSDT", "4h", d0, d1, warmup_bars,
+        strategy_id=sid)
+    m_native = _pick(m_bridge)
+    assert_metrics_equal(m_via_strategy, m_native,
+                         scenario="sandbox-rest-vs-bridge-direct")

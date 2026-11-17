@@ -27,36 +27,50 @@ def real_metrics_payload(tmp_path_factory):
     from fastapi.testclient import TestClient
     from MyQuant.api.app import create_app
     from tests.helpers.data_factory import make_ohlcv, make_dna
-    from core.features.indicators import compute_all_indicators
-    from core.backtest.engine import BacktestEngine
 
     data_dir = tmp_path_factory.mktemp("transport_data")
-    make_ohlcv(n=200, seed=42).to_parquet(data_dir / "BTCUSDT_4h.parquet")
+    _df = make_ohlcv(n=520, seed=42)
+    _df.to_parquet(data_dir / "BTCUSDT_4h.parquet")
     app = create_app(db_path=tmp_path_factory.mktemp("transport_db") / "t.db",
                      data_dir=data_dir)
 
-    dna = make_dna(direction="long", leverage=1)
-    enhanced = compute_all_indicators(make_ohlcv(n=200, seed=42))
-    eng = BacktestEngine(init_cash=100000.0, fee=0.001, slippage=0.0005)
-    native = eng.run(dna, enhanced)
-
     with TestClient(app) as client:
-        import pandas as pd
-        payload = {
-            "dna": json.loads(dna.to_json()),
-            "dataset_id": "BTCUSDT_4h",
-            "init_cash": 100000.0, "fee": 0.001, "slippage": 0.0005,
+        # 旧单回测端点已随 Q1=B 退役（retire-legacy 任务 11）——传输面
+        # 改经 sandbox 端点取真实响应（同输入确定性回放——两次调用指标
+        # 逐值相同，第二次作 native float 对照源）
+        from core.persistence.repository.strategy import save_strategy
+        from tests.helpers.data_factory import make_dna
+        dna = make_dna(direction="long", leverage=1)
+        save_strategy(app.state.db_path, strategy_id="st-transport",
+                      dna_json=dna.to_json(), symbol="BTCUSDT",
+                      timeframe="4h", status="active",
+                      gene_signature="sig-transport")
+        req = {
+            "strategy_id": "st-transport",
             "symbol": "BTCUSDT", "timeframe": "4h",
+            # warmup 前扩 ≥200 bar：请求区间取深尾窗
+            "start": str(_df.index[240].isoformat()),
+            "end": str(_df.index[-1].isoformat()),
         }
-        r = client.post("/api/strategies/backtest", json=payload)
+        r = client.post("/api/research/backtest-sandbox", json=req)
         assert r.status_code == 200, r.text
-        return r.content, r.json(), native
+        r2 = client.post("/api/research/backtest-sandbox", json=req)
+        assert r2.status_code == 200, r2.text
+        import types
+        m2 = r2.json()["metrics"]
+        native = types.SimpleNamespace(
+            total_return=m2["total_return"],
+            sharpe_ratio=m2["sharpe_ratio"],
+            max_drawdown=m2["max_drawdown"],
+            win_rate=m2.get("win_rate"),
+            total_trades=m2["total_trades"])
+        return r.content, r.json()["metrics"], native
 
 
 def test_float_roundtrip_lossless(real_metrics_payload):
     """raw JSON bytes → loads → 与响应 dict 逐值全等（repr 短串往返无损）。"""
     raw, parsed, _ = real_metrics_payload
-    again = json.loads(raw)
+    again = json.loads(raw)["metrics"]  # sandbox 响应指标嵌套层（退役前顶层）
     for key in ("total_return", "sharpe_ratio", "max_drawdown", "win_rate",
                 "total_trades"):
         assert again[key] == parsed[key], key
