@@ -41,7 +41,7 @@ def _range_hash(request_range: Dict[str, str]) -> str:
     return hashlib.sha256(json.dumps(request_range, sort_keys=True).encode()).hexdigest()
 
 
-def _dna_indicator_names(dna) -> List[str]:
+def dna_indicator_names(dna) -> List[str]:
     """提取 DNA 实际用到的指标名（signal_genes + 各 MTF layer +
     序列形条件的 target_indicator——fix-research-c6 warmup 并集：
     列名 target 指标的 lookback 不计入则 target 列前段 NaN，进场
@@ -102,7 +102,7 @@ def _load_strategy_dna(db_path: Path, strategy_id: str):
     return dna, row
 
 
-def _gene_tf_axis_refs(dna) -> Dict[str, List[tuple]]:
+def gene_tf_axis_refs(dna) -> Dict[str, List[tuple]]:
     """基因级高周期轴引用分组：带基因级 tf 的基因按轴归入
     (indicator, params) 引用清单（含序列对照类条件的 target_indicator
     并集——design 2.5 契约；收敛粒度按条件实际参数推导）。基准轴
@@ -134,7 +134,7 @@ def _derive_dna_warmup(db_path: Path, dna, base_tf: str) -> Tuple[int, List[str]
     Raises:
         KeyError: 内置指标未知（透传给调用方决定拒绝语义）。
     """
-    indicator_names = _dna_indicator_names(dna)
+    indicator_names = dna_indicator_names(dna)
     formula_refs = {s["ref"] for s in (dna.signal_sources or [])
                     if s.get("type") == "formula" and s.get("ref")}
     # series 档止损线来源 warmup 两轨并入（dynamic-stop-loss-series
@@ -150,7 +150,7 @@ def _derive_dna_warmup(db_path: Path, dna, base_tf: str) -> Tuple[int, List[str]
             formula_refs.add(str(_sl_src["column"]))
     # 基因级周期分组（unblock-research-validation 预热第三维）：
     # 分组提取单源 _gene_tf_axis_refs（B8 抽取——与短窗预检共用）
-    indicator_tfs = _gene_tf_axis_refs(dna)
+    indicator_tfs = gene_tf_axis_refs(dna)
     # R3 接线（fix-mtf-execution-consistency）：base_tf 必填消费轴——
     # 推导折算分母与回测装载消费轴显式一致（守卫在前保证
     # base_tf==execution_genes.timeframe，折算分母无歧义）；移除
