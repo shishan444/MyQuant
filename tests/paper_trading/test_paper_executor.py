@@ -2088,3 +2088,46 @@ class TestDepletedTerminal:
         ex2._evaluate_conclusion(snap)
         assert ex2._concluded_status == "stopped"
         assert ex2._concluded_reason == "stop_condition", "判定序锚"
+
+
+class TestFundingLookupInjection:
+    """L2-G 资金费率查询注入面（change add-replay-engine 任务 1.3）：
+    取值序=构造注入优先→registry feed→全 None 回退；缺省 None 行为
+    零变更（既有全量 executor 用例绿即证）。"""
+
+    def test_injection_takes_priority(self, tmp_path):
+        """①注入优先：注入固定费率 0.0005（registry 侧 feed 为
+        0.0001）→settled 行 rate 全部=注入值。"""
+        h = _Harness(tmp_path, funding_times=[
+            "2024-01-04 16:00:00.001", "2024-01-05 00:00:00.002"])
+        ex = h.make_executor(
+            funding_lookup=lambda points: {p: 0.0005 for p in points})
+        assert ex.prepare() is True
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
+        ex.process_frames(h.enhanced, 0)
+        settled = [
+            f for f in paper.list_funding_records(
+                h.db, h.task_id, limit=1000)
+            if f["status"] == "settled"]
+        assert settled, "注入不改变结算触发面"
+        for row in settled:
+            assert row["rate"] == 0.0005, "结算费率取注入值而非 feed"
+
+    def test_injected_missing_point_pends(self, tmp_path):
+        """②注入缺值挂起（Q-2 语义）：注入函数对结算点返回 None→
+        该点落 pending 不扣款（与实时态 feed 缺值同语义）。"""
+        h = _Harness(tmp_path, funding_times=[
+            "2024-01-04 16:00:00.001", "2024-01-05 00:00:00.002"])
+        ex = h.make_executor(
+            funding_lookup=lambda points: {p: None for p in points})
+        assert ex.prepare() is True
+        paper.update_task(
+            h.db, h.task_id, status="running",
+            started_at="2026-10-16T00:00:00+00:00")
+        ex.process_frames(h.enhanced, 0)
+        records = paper.list_funding_records(h.db, h.task_id, limit=1000)
+        assert records, "结算点在案"
+        assert all(r["status"] == "pending" for r in records), \
+            "注入缺值全挂起不扣款"

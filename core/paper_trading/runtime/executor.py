@@ -218,6 +218,7 @@ class PaperTaskExecutor:
         push: Optional[Callable[[str, Dict[str, Any]], None]] = None,
         on_concluded: Optional[Callable[[str, str], None]] = None,
         start_after: Optional[str] = None,
+        funding_lookup: Optional[Callable[[list], dict]] = None,
     ):
         """初始化执行器（不触碰任务行——状态写发生在 prepare/run）。
 
@@ -233,6 +234,11 @@ class PaperTaskExecutor:
             start_after: bar 起始边界（bar_time 严格小于它的历史 bar
                 不感知不计数——生产=last_bar_time 或 created_at；测试
                 注入 None 全回放）。
+            funding_lookup: 资金费率查询注入（(结算点列表→{点:费率}
+                映射），与 SymbolFeed.funding_rates 同签名同语义——
+                回放驱动注入历史归档索引用；缺省 None=实时形态走
+                registry feed 查询，行为零变更（change
+                add-replay-engine 任务 1.3）。
         """
         self.db_path = Path(db_path)
         self.task_row = dict(task_row)
@@ -246,6 +252,7 @@ class PaperTaskExecutor:
         self._on_concluded = on_concluded or (lambda task_id, status: None)
         self._data_dir = registry.data_dir
         self._lock = threading.Lock()
+        self._funding_lookup = funding_lookup
 
         dna = self._load_dna(task_row["dna_snapshot_json"])
         params = materialize(dna.risk_genes)
@@ -1245,10 +1252,15 @@ class PaperTaskExecutor:
         settle_time≥持仓开始时刻过滤自愈；对质①裁决）。
         """
         backfills: List[Dict[str, Any]] = []
+        # 取值序：构造注入优先（回放历史归档）→ registry feed（实时）
+        # → 全 None 回退（挂起语义）——change add-replay-engine 任务 1.3
         feed = self.registry.get(self.task_row["symbol"], self._timeframe)
-        rate_lookup = (
-            feed.funding_rates if feed is not None
-            else lambda points: {p: None for p in points})
+        if self._funding_lookup is not None:
+            rate_lookup = self._funding_lookup
+        elif feed is not None:
+            rate_lookup = feed.funding_rates
+        else:
+            rate_lookup = lambda points: {p: None for p in points}
 
         # 先补旧账（升序逐点——feed 已刷新则多数可达）
         still_pending: List[Dict[str, Any]] = []

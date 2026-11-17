@@ -45,6 +45,13 @@ DEFAULT_WINDOW_BARS = 180
 # stopped+stop_reason="depleted"；spec 写死同值——机制不可配置）
 DEPLETED_STREAK_N = 3
 
+# ── 减仓终止条款（change add-replay-engine）─────────────────────
+# 经济锚权重：剩余仓位继续持有的费滑损耗相对账户不再经济的权益占比
+# （终局口径：经济阈值=max(权益×本系数, 交易所最小成交名义)——两锚
+# 取大；物理条件=本次减仓量名义<最小成交名义。任一命中→该次减仓升格
+# 全额平仓 reason=reduce_terminated，平台风控层保护性出清）
+REDUCE_TERMINATE_EQUITY_FRACTION = 0.05
+
 # MIN_NOTIONAL 内置回退表（端点拉取失败时兜底；env 覆写优先——
 # 装载链见 core/paper_trading/min_notional.py）。
 # 核实记录（禁凭记忆写值——实施期真实核实留档）：

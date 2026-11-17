@@ -948,3 +948,261 @@ class TestMinNotionalIntercept:
             Intent(kind="close", direction="long"), _bar(100.0, seq=1),
             _ZERO_COST, min_notional=1e12)
         assert close.fill is not None, "出场不受最小名义值拦截"
+
+
+# ── 减仓终止条款+add 钳制（change add-replay-engine 任务 1.1/1.2）──
+# 终局口径：物理（本次减仓量名义<MIN）OR 经济（减仓后剩余名义<
+# max(权益×5%, MIN)）任一命中→升格 close 全平（reason=
+# reduce_terminated，走出场族路径豁免钳制）；open（既有）+add
+# （新增）拒绝留痕；出场族豁免。数字锚均含人工推算依据。
+
+
+def _eq_of(ledger: Ledger, price: float) -> float:
+    """成交前时点权益（与 reduce 分支 equity_before 同源同式）。"""
+    return ledger.equity(price)
+
+
+class TestReduceTerminatePhysical:
+    """L1-A 物理条件（本次减仓量名义<MIN_NOTIONAL→升格全平）。"""
+
+    def test_physical_hit_upgrades_to_close(self):
+        """①物理单触发：剩余名义 8_000（qty=80 价 100）、f=0.001、
+        MIN=50→减量名义 80×0.001×100=8<50 触发；经济不触发（减后
+        剩余 7_992≥max(10_000×5%, 50)=500）→升格 close 全量 80。"""
+        params = make_params(position_size=0.08, leverage=10,
+                             exit_fraction=0.001)
+        ledger = Ledger(10_000.0, params)
+        assert _open(ledger, 100.0) is not None  # qty=80
+        outcome = ledger.execute(
+            Intent(kind="reduce", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST, min_notional=50.0)
+        assert outcome.fill is not None
+        assert outcome.fill.intent.kind == "close"
+        assert outcome.fill.intent.reason == "reduce_terminated"
+        assert outcome.fill.quantity == pytest.approx(80.0), "全量平仓"
+        assert ledger.position is None, "仓位归零"
+        assert ledger.closed_trades == 1
+
+    def test_physical_equal_not_triggered(self):
+        """②物理等值不触发：减量名义恰==MIN（qty=100、f=0.005、
+        价 100→减量 0.5×100=50==50）→正常按比例减仓（严格小于）。"""
+        params = make_params(position_size=0.1, leverage=10,
+                             exit_fraction=0.005)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0)  # qty=100
+        outcome = ledger.execute(
+            Intent(kind="reduce", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST, min_notional=50.0)
+        assert outcome.fill.intent.kind == "reduce"
+        assert outcome.fill.quantity == pytest.approx(0.5)
+        assert ledger.position.quantity == pytest.approx(99.5)
+
+    def test_qty_reduce_nonpositive_natural_cover(self):
+        """③qty_reduce≤0 自然覆盖：f=0.0→减量 0×100=0<50 恒真→
+        物理命中全平（无专门守卫的自然覆盖）。"""
+        params = make_params(position_size=0.1, leverage=10,
+                             exit_fraction=0.0)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0)
+        outcome = ledger.execute(
+            Intent(kind="reduce", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST, min_notional=50.0)
+        assert outcome.fill.intent.kind == "close"
+        assert outcome.fill.intent.reason == "reduce_terminated"
+        assert ledger.position is None
+
+    def test_physical_hit_short_symmetry(self):
+        """④方向对称：short 仓同构造同升格、留痕同形。"""
+        params = make_params(position_size=0.08, leverage=10,
+                             exit_fraction=0.001, direction="short")
+        ledger = Ledger(10_000.0, params)
+        assert _open(ledger, 100.0, side="short") is not None  # qty=80
+        outcome = ledger.execute(
+            Intent(kind="reduce", direction="short"), _bar(100.0, seq=1),
+            _ZERO_COST, min_notional=50.0)
+        assert outcome.fill.intent.kind == "close"
+        assert outcome.fill.intent.reason == "reduce_terminated"
+        assert ledger.position is None
+
+
+class TestReduceTerminateEconomic:
+    """L1-B 经济条件（减仓后剩余名义<max(权益×5%, MIN)→升格全平）。
+
+    判定对象=减仓后剩余名义（假想该次减仓按比例执行后的剩余，需求书
+    2.1.5① 原文口径；fill 前单点判定×减仓后对象推算值两维正交）。"""
+
+    def test_economic_hit_upgrades_immediately(self):
+        """①经济单触发当根全平：eq=100_000（balance 91_000+margin
+        9_000）、阈值 max(5_000, 50)=5_000（相对锚主导=L1-B4）；qty=90
+        价 100 名义 9_000、f=0.5→减后 4_500<5_000 触发（减量 4_500
+        ≥50 物理不触发）→当根直接升格全平、无中间部分减仓。"""
+        params = make_params(position_size=0.09, exit_fraction=0.5)
+        ledger = Ledger(100_000.0, params)
+        _open(ledger, 100.0)  # qty=90、margin=9_000
+        outcome = ledger.execute(
+            Intent(kind="reduce", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST, min_notional=50.0)
+        assert outcome.fill.intent.kind == "close"
+        assert outcome.fill.intent.reason == "reduce_terminated"
+        assert outcome.fill.quantity == pytest.approx(90.0),             "当根全量平仓（无部分减仓中间态）"
+        assert ledger.position is None, "无残余仓位"
+        assert ledger.closed_trades == 1
+
+    def test_economic_equal_not_triggered(self):
+        """②经济等值不触发：qty=100 价 100 名义 10_000、f=0.5→
+        减后剩余名义 50×100=5_000==阈值 5_000（严格小于不触发）→
+        正常减仓、减后仓位名义精确落点 5_000。"""
+        params = make_params(position_size=0.1, exit_fraction=0.5)
+        ledger = Ledger(100_000.0, params)
+        _open(ledger, 100.0)  # qty=100、margin=10_000
+        outcome = ledger.execute(
+            Intent(kind="reduce", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST, min_notional=50.0)
+        assert outcome.fill.intent.kind == "reduce"
+        assert outcome.fill.quantity == pytest.approx(50.0)
+        assert ledger.position.quantity * 100.0 == pytest.approx(5_000.0)
+
+    def test_absolute_anchor_dominates(self):
+        """③max 切换·绝对锚主导：eq=800×5%=40<MIN=50→阈值=50
+        （绝对锚）；f=0.6、qty=1 价 100 名义 100→减量 60≥50 物理不
+        触发、减后 40<50 经济（绝对锚）触发→升格。"""
+        params = make_params(position_size=0.125, exit_fraction=0.6)
+        ledger = Ledger(800.0, params)
+        _open(ledger, 100.0)  # margin=100、qty=1
+        outcome = ledger.execute(
+            Intent(kind="reduce", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST, min_notional=50.0)
+        assert outcome.fill.intent.kind == "close",             "绝对锚 50 主导（相对锚 40 被取大）"
+        assert ledger.position is None
+
+    def test_fraction_sensitivity(self):
+        """④fraction 敏感格：同剩余（qty=90 名义 9_000）同阈值
+        5_000 不同 f 分叉——f=0.5 减后 4_500<5_000 触发（上格①）；
+        f=0.3 减后 90×0.7×100=6_300≥5_000 不触发→正常减仓 27。"""
+        params = make_params(position_size=0.09, exit_fraction=0.3)
+        ledger = Ledger(100_000.0, params)
+        _open(ledger, 100.0)  # qty=90
+        outcome = ledger.execute(
+            Intent(kind="reduce", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST, min_notional=50.0)
+        assert outcome.fill.intent.kind == "reduce"
+        assert outcome.fill.quantity == pytest.approx(27.0)
+        assert ledger.position.quantity == pytest.approx(63.0)
+
+
+class TestReduceTerminateDegenerate:
+    """L1-C 缺键与病态值退化（None=表不可用非规则消失）。"""
+
+    def test_none_skips_physical_degenerate_economic_passes(self):
+        """①min_notional=None：物理条件跳过（减量 80×0.001×100=8
+        虽<50 但 None 不判定）；经济退化阈值=eq×5%=500、减后剩余
+        7_992≥500 不触发→正常减仓（f=0.001 小步长照常执行）。"""
+        params = make_params(position_size=0.08, leverage=10,
+                             exit_fraction=0.001)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0)  # qty=80
+        outcome = ledger.execute(
+            Intent(kind="reduce", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST)  # 不传 min_notional
+        assert outcome.fill.intent.kind == "reduce"
+        assert outcome.fill.quantity == pytest.approx(0.08)
+
+    def test_none_degenerate_economic_triggers(self):
+        """②None+经济退化触发：qty=4 价 100 名义 400<退化阈值
+        100_000×5%=5_000→升格（经济条件永远在，无关闭开关）。"""
+        params = make_params(position_size=0.004, exit_fraction=0.5)
+        ledger = Ledger(100_000.0, params)
+        _open(ledger, 100.0)  # qty=4、margin=400
+        outcome = ledger.execute(
+            Intent(kind="reduce", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST)
+        assert outcome.fill.intent.kind == "close"
+        assert outcome.fill.intent.reason == "reduce_terminated"
+        assert ledger.position is None
+
+    def test_zero_value_pathological(self):
+        """③min_notional=0.0 病态表值：is not None 判定——物理
+        qty×open<0.0 恒假不触发；经济 max(eq×5%, 0.0)=eq×5% 同退化
+        值——0.0 与 None 语义可辨（两条件对 0.0 形制一致：有效值参
+        与判定而非 falsy 短路跳过）。"""
+        params = make_params(position_size=0.004, exit_fraction=0.5)
+        ledger = Ledger(100_000.0, params)
+        _open(ledger, 100.0)  # 名义 400<5_000 退化阈值→经济触发
+        outcome = ledger.execute(
+            Intent(kind="reduce", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST, min_notional=0.0)
+        assert outcome.fill.intent.kind == "close",             "0.0 参与判定（max(500,0)=500）非 falsy 跳过"
+
+
+class TestAddMinNotionalClamp:
+    """L1-D 条款②：add 分支最小名义钳制（对齐 open 形制）。
+
+    人工锚：_ledger_with_position 形制（ps=0.1、lev=10、10_000、价
+    100）→qty=100、margin=1_000、balance=9_000、eq at 100=10_000；
+    add：qty_add=eq×add_fraction×lev/price=10_000×f×10/100=1_000×f、
+    名义=100_000×f。"""
+
+    def _with_position(self, **overrides):
+        params = make_params(position_size=0.1, leverage=10, **overrides)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0)
+        return ledger
+
+    def test_small_add_rejected(self):
+        """①小额 add 拒绝：f=0.0004→名义 40<50→FillOutcome(None,
+        below_min_notional) 不落账（仓位与余额不变）。"""
+        ledger = self._with_position(add_fraction=0.0004)
+        qty_before = ledger.position.quantity
+        outcome = ledger.execute(
+            Intent(kind="add", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST, min_notional=50.0)
+        assert outcome.fill is None
+        assert outcome.reject_reason == "below_min_notional"
+        assert ledger.position.quantity == pytest.approx(qty_before),             "拒绝不落账"
+        assert ledger.balance == pytest.approx(9_000.0)
+
+    def test_qualified_add_passes(self):
+        """②达标 add 正常成交不误杀：f=0.001→名义 100≥50。"""
+        ledger = self._with_position(add_fraction=0.001)
+        outcome = ledger.execute(
+            Intent(kind="add", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST, min_notional=50.0)
+        assert outcome.fill is not None
+        assert outcome.fill.intent.kind == "add"
+
+    def test_add_none_not_judged(self):
+        """③min_notional=None 不判定：同小额构造照常成交（L1-C3
+        add 侧——None=表不可用非规则消失）。"""
+        ledger = self._with_position(add_fraction=0.0004)
+        outcome = ledger.execute(
+            Intent(kind="add", direction="long"), _bar(100.0, seq=1),
+            _ZERO_COST)
+        assert outcome.fill is not None, "None 形态 add 不钳制"
+
+
+class TestExitFamilyExemption:
+    """L1-E 出场族豁免（低名义仓位全平照常——仓位归零唯一出口不被
+    钳制）。人工锚：ps=0.004、lev=1、10_000、价 100→qty=0.4、名义
+    40<50。"""
+
+    def _tiny_position(self):
+        params = make_params(position_size=0.004)
+        ledger = Ledger(10_000.0, params)
+        _open(ledger, 100.0)  # qty=0.4、margin=40
+        return ledger
+
+    @pytest.mark.parametrize("kind,trigger", [
+        ("close", None),
+        ("exit_sl", 90.0),
+        ("exit_tp", 120.0),
+        ("exit_liquidation", 95.0),
+    ])
+    def test_low_notional_exit_fills(self, kind, trigger):
+        """极小仓位（名义 40<MIN=50）出场族四 kind 全部照常成交。"""
+        ledger = self._tiny_position()
+        intent = Intent(kind=kind, direction="long",
+                        trigger_price=trigger)
+        outcome = ledger.execute(intent, _bar(100.0, seq=1),
+                                 _ZERO_COST, min_notional=50.0)
+        assert outcome.fill is not None, f"{kind} 豁免钳制照常成交"
+        assert ledger.position is None, "仓位归零出口不被钳制"
