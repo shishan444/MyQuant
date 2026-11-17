@@ -465,12 +465,6 @@ class TestDisclosureParity:
         assert m is not None, "run_analysis 描述未披露同步/异步阈值"
         assert int(m.group(1)) == _HEAVY_ROWS
 
-    def test_warmup_basis_uses_authoritative_text(self):
-        from core.analysis import validation_service as vs
-        src = Path(vs.__file__).read_text(encoding="utf-8")
-        assert "max_indicator_period" not in src, "basis 旧口径残留"
-        assert src.count("WARMUP_RULE_TEXT") >= 2  # import + basis 落用
-
     def test_high_tf_conversion_elements_across_three_faces(self):
         """CARD-03 锚：高周期折算三要素（折算语义 / 42 bar=42 天具体例 /
         下限分属两式）三披露面齐备一致——CAPABILITY_DOC 与 tools docstring
@@ -575,14 +569,6 @@ class TestIndicatorCountAlignment:
 class TestMultiTimeframeBoundaryDisclosure:
     """任务 6：工具描述多周期边界三句（unblock-research-validation）。"""
 
-    def test_translate_and_register_docs_carry_boundary(self) -> None:
-        src = Path("mcpserver/tools.py").read_text("utf-8")
-        for token in ("when 与",
-                      "加仓触发组",
-                      "不低于策略" ,"不低于", "基准周期",
-                      "拒绝"):
-            assert token in src, f"描述缺边界要素: {token}"
-
 
 class TestTranslateTimeframeContractDisclosure:
     """R2 转化执行周期契约披露锚（fix-mtf-execution-consistency 组 2）。
@@ -595,14 +581,6 @@ class TestTranslateTimeframeContractDisclosure:
     test_translate_timeframe_contract.py（R2 六用例），本锚为 MCP
     披露面（R2 锚族的 tests/mcpserver/ 面）。
     """
-
-    def test_translate_doc_carries_timeframe_contract(self) -> None:
-        src = Path("mcpserver/tools.py").read_text("utf-8")
-        for token in ("继承假设基准周期",
-                      "data_ranges[0].timeframe",
-                      "存量异周期假设拒绝",
-                      "execution_timeframe"):
-            assert token in src, f"translate 披露缺执行周期契约要素: {token}"
 
 
 class TestRegimeSplitConditionsDisclosure:

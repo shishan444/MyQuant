@@ -139,7 +139,7 @@ class TestTierMarkupParity:
         mcp, _ = build_server(profile="research")
         res = run_async(mcp.read_resource("quant://capabilities"))
         text = res[0].content if isinstance(res, list) else str(res)
-        for n in ("inspect_cases", "query_indicator", "run_staged_validation"):
+        for n in ("inspect_cases", "query_indicator", "run_backtest"):
             assert f"- {n}" in text, f"能力自述缺工具 {n}"
 
 
@@ -291,7 +291,6 @@ class TestToolBodyInvocation:
                            "cursor": "2026-01-01T00:00:00|l1"},
          "GET", "/api/research/log"),
         ("get_analysis_task", {"task_id": "ant_1"}, "GET", "/api/research/analysis/tasks/{param}"),
-        ("get_validation_report", {"strategy_id": "st_1"}, "GET", "/api/research/validation/{param}/report"),
         ("list_feature_requests", {"page": 1, "status": "open"},
          "GET", "/api/research/feature-requests"),
         ("run_analysis", {"template": "condition_stats", "params": {},
@@ -321,22 +320,6 @@ class TestToolBodyInvocation:
         ("transition_hypothesis", {"hypothesis_id": "hyp_1", "target_status": "refuted",
                                    "evidence_ref": "rec_1"},
          "POST", "/api/research/hypotheses/{param}/transition"),
-        ("run_isolated_validation", {"hypothesis_id": "hyp_1", "strategy_id": "st_1",
-                                     "symbol": "BTCUSDT", "timeframe": "4h",
-                                     "start": "2024-01-01", "end": "2024-02-01"},
-         "POST", "/api/research/validate-backtest"),
-        ("run_random_window_test", {"strategy_id": "st_1", "symbol": "BTCUSDT",
-                                    "timeframe": "4h", "data_start": "2024-01-01",
-                                    "data_end": "2024-03-01",
-                                    "hypothesis_id": "h1"},
-         "POST", "/api/research/random-window-test"),
-        ("run_staged_validation", {"strategy_id": "st_1", "symbol": "BTCUSDT",
-                                   "timeframe": "4h", "start": "2024-01-01",
-                                   "end": "2024-02-01",
-                                   "segments": [{"label": "a", "start": "2024-01-01",
-                                                 "end": "2024-02-01"}],
-                                   "hypothesis_id": "h1"},
-         "POST", "/api/research/staged-validation"),
         ("run_backtest", {"strategy_id": "st_1", "symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2024-01-01", "end": "2024-02-01",
                           "hypothesis_id": "h1"},
@@ -346,10 +329,6 @@ class TestToolBodyInvocation:
         ("register_model_plugin", {"name": "m", "features": ["close"],
                                    "data_start": "2024-01-01", "data_end": "2024-02-01"},
          "POST", "/api/research/plugins/model"),
-        ("translate_hypothesis_to_strategy", {"hypothesis_id": "hyp_1",
-                                              "strategy_symbol": "BTCUSDT",
-                                              "strategy_timeframe": "4h"},
-         "POST", "/api/research/translate/{param}"),
         ("submit_feature_request", {"title": "t", "payload": {}},
          "POST", "/api/research/feature-requests"),
         ("trigger_evolution", {"config": {}}, "POST", "/api/evolution/tasks"),
@@ -405,12 +384,6 @@ class TestToolBodyInvocation:
             "template": "condition_stats", "params": {},
             "symbol": "BTCUSDT", "timeframe": "4h",
             "start": "2024-01-01", "end": "2024-02-01"}))
-        run_async(mcp.call_tool("run_random_window_test", {
-            "strategy_id": "st_1", "symbol": "BTCUSDT", "timeframe": "4h",
-            "data_start": "2024-01-01", "data_end": "2024-03-01"}))
-        run_async(mcp.call_tool("run_staged_validation", {
-            "strategy_id": "st_1", "symbol": "BTCUSDT", "timeframe": "4h",
-            "start": "2024-01-01", "end": "2024-02-01"}))
         run_async(mcp.call_tool("inspect_cases", {
             "symbol": "BTCUSDT", "timeframe": "4h",
             "selector": {"condition": {"subject": "close", "action": "gt",
@@ -418,7 +391,7 @@ class TestToolBodyInvocation:
         run_async(mcp.call_tool("query_indicator", {
             "symbol": "BTCUSDT", "timeframe": "4h", "indicator": "RSI"}))
         run_async(mcp.call_tool("get_research_log", {"page": 1}))
-        assert len(posts) == 6, "六个 POST 可选场合缺省调用均到达"
+        assert len(posts) == 4, "四个 POST 可选场合缺省调用均到达"
 
     def test_query_indicator_body_passthrough_card06(self) -> None:
         """CARD-06：query_indicator body 组装——单组字段无条件透传。

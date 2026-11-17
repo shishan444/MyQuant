@@ -610,7 +610,7 @@ GROUP4_ANCHORS: tuple = (
 
 # Keltner 终局句段域（tools=query_indicator docstring 指标参数修复段
 # 至 body 构造；capability=指标参数修复条目至比较动作全集条目）
-_SEG_KELTNER = ("指标参数修复（2026-10-13）", "body={")
+_SEG_KELTNER = ("指标参数修复（2026-10-13）", "body:Dict[str,Any]={")
 _CSEG_KELTNER = ("指标参数修复（2026-10-13）", "比较动作全集")
 
 GROUP5_ANCHORS: tuple = (

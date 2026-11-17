@@ -70,19 +70,3 @@ class TestSchemaParity:
             f"工具缺参数: {model_fields - params}")
 
 
-class TestGateToolDisclosure:
-    def test_three_gate_descriptions_carry_short_convention(self):
-        """A3-5：三关工具 description 含空头口径披露句。"""
-        from mcpserver import tools as tools_mod
-
-        mcp, api = _FakeMcp(), _FakeApi()
-        tools_mod.register_research_tools(mcp, api)
-        for name in ("run_isolated_validation",
-                     "run_random_window_test",
-                     "run_staged_validation"):
-            doc = inspect.getdoc(mcp.registered[name])
-            assert doc is not None
-            assert "direction=short" in doc, f"{name} 缺方向披露句"
-            assert "空头口径" in doc, f"{name} 缺口径说明"
-            assert "benchmark_return 恒为同期多头买入持有" in doc, \
-                f"{name} 缺基准口径句"

@@ -29,26 +29,6 @@ def _register_and_call(**kw):
     return out, api.posts[0]
 
 
-class TestUnionBalanceReadonlyPassthrough:
-    """阶段四盲区消解（fix-mtf-review-consistency ②）：union_balance
-    只读工具 GET 透传行为锚——三必填参数进查询串、路由路径正确
-    （:142 未覆盖行——tests/mcpserver 透传域）。"""
-
-    def test_get_passthrough_three_required_params(self):
-        from conftest import RecordingFakeApi
-        from mcpserver import tools as tools_mod
-
-        mcp, api = _FakeMcp(), RecordingFakeApi()
-        tools_mod.register_readonly_tools(mcp, api)
-        fn = mcp.registered["union_balance"]
-        fn(symbol="BTCUSDT", timeframe="4h", hypothesis_id="hyp_x")
-        method, url, params = api.calls[0]
-        assert method == "GET"
-        assert url == "/api/research/union-balance"
-        assert params == {"symbol": "BTCUSDT", "timeframe": "4h",
-                          "hypothesis_id": "hyp_x"}
-
-
 class TestRegisterHypothesisTriggerPolicyPassthrough:
     def test_with_policy_in_body(self):
         out, (url, body) = _register_and_call(
@@ -86,56 +66,6 @@ class TestRegisterHypothesisParamsScalingPassthrough:
     def test_none_omitted(self, param):
         _, (url, body) = _register_and_call()
         assert param not in body, f"{param} 未传时须省略（不进 body 顶层）"
-
-
-class TestValidationToolsPostThrough:
-    """add-validation-detail B4-12 MCP 壳面：三验证工具 api.post 透传
-    URL 与请求体形制（真实落盘链路的中枢段由
-    tests/api/test_validation_detail_endpoint.py 的 HTTP 入口用例承载
-    ——MCP 工具即该端点的透传壳）。"""
-
-    def _call(self, name, **kw):
-        from mcpserver import tools as tools_mod
-
-        mcp, api = _FakeMcp(), _FakeApi()
-        tools_mod.register_research_tools(mcp, api)
-        mcp.registered[name](**kw)
-        return api.posts[0]
-
-    def test_isolated_posts_validate_backtest(self):
-        url, body = self._call(
-            "run_isolated_validation",
-            hypothesis_id="hyp1", strategy_id="st1", symbol="BTCUSDT",
-            timeframe="4h", start="2023-03-01T00:00:00Z",
-            end="2023-04-01T00:00:00Z")
-        assert url == "/api/research/validate-backtest"
-        assert body == {
-            "hypothesis_id": "hyp1", "strategy_id": "st1",
-            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                              "start": "2023-03-01T00:00:00Z",
-                              "end": "2023-04-01T00:00:00Z"}}
-
-    def test_random_window_posts_endpoint(self):
-        url, body = self._call(
-            "run_random_window_test",
-            strategy_id="st1", symbol="BTCUSDT", timeframe="4h",
-            data_start="2023-01-01T00:00:00Z",
-            data_end="2023-06-01T00:00:00Z",
-            window_bars=100, n_windows=2, seed=11, hypothesis_id="hyp1")
-        assert url == "/api/research/random-window-test"
-        assert body["window_bars"] == 100 and body["seed"] == 11
-        assert body["hypothesis_id"] == "hyp1"
-
-    def test_staged_posts_endpoint(self):
-        url, body = self._call(
-            "run_staged_validation",
-            strategy_id="st1", symbol="BTCUSDT", timeframe="4h",
-            start="2023-02-01T00:00:00Z", end="2023-05-01T00:00:00Z",
-            segmentation="explicit", segments=[{"label": "segA"}],
-            hypothesis_id="hyp1")
-        assert url == "/api/research/staged-validation"
-        assert body["segmentation"] == "explicit"
-        assert body["segments"] == [{"label": "segA"}]
 
 
 class TestQueryIndicatorBareBody:

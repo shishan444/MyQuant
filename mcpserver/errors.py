@@ -32,10 +32,10 @@ HINTS: Dict[str, str] = {
         "迁移非法：检查目标状态与证据——supported 须引用 verdict=pass、"
         "refuted 须引用 verdict=fail 的验证记录（evidence_ref 填 record_id）",
     "RESEARCH_EVIDENCE_NOT_FOUND":
-        "证据记录不存在：evidence_ref 用 run_isolated_validation 返回的 "
+        "证据记录不存在：evidence_ref 用 sandbox 回测（run_backtest）返回的 "
         "record_id（接替迁移填新假设 id）",
     "RESEARCH_HYPOTHESIS_UNVALIDATED":
-        "假设尚无 pass 验证记录：先对草稿策略跑 run_isolated_validation",
+        "假设尚无 pass 验证记录：先对草稿策略跑 sandbox 回测（run_backtest）",
     # ---- 验证执行
     "RESEARCH_RANGE_OVERLAP":
         "验证区间与判定并集重叠：查看 detail 的 judged_ranges/overlaps 明细，"
@@ -154,7 +154,7 @@ HINTS: Dict[str, str] = {
         "组合形制非法：检查 WHEN/THEN 组合结构（detail 含位置）",
     # ---- 沙盒回测
     "RESEARCH_SANDBOX_LIMIT":
-        "沙盒区间超 bar 上限：走隔离验证协议（run_isolated_validation "
+        "沙盒区间超 bar 上限：分区间验证（多次 run_backtest "
         "支持大区间分区间验证）",
     "FEATURE_REQUEST_NOT_FOUND":
         "需求单不存在：核对 request_id 或用 list_feature_requests 查询",

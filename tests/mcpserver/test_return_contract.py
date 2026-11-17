@@ -35,21 +35,22 @@ class TestToolInventory:
     """全集在场锚：readonly 13 + research 工具全部注册。"""
 
     def test_full_inventory_registered(self):
+        """全集在场锚（retire-legacy 渐进收缩后——旧验证 4+union_balance+
+        translate 已退役；进化/假设/需求单族待任务 7/9/12 收缩）。"""
         tools = _all_tools()
         readonly_expected = {
             "list_data_sources", "list_strategies", "get_strategy",
             "list_evolution_tasks", "list_indicators", "list_signal_columns",
-            "union_balance", "get_market_snapshot", "list_hypotheses",
+            "get_market_snapshot", "list_hypotheses",
             "get_hypothesis", "get_research_log", "get_analysis_task",
-            "get_validation_report", "list_feature_requests",
+            "list_feature_requests",
         }
         research_expected = {
             "run_analysis", "inspect_cases", "query_indicator",
             "register_hypothesis", "transition_hypothesis",
-            "run_isolated_validation", "run_random_window_test",
-            "run_staged_validation", "run_backtest",
+            "run_backtest",
             "register_formula_plugin", "register_model_plugin",
-            "translate_hypothesis_to_strategy", "submit_feature_request",
+            "submit_feature_request",
             "trigger_evolution", "poll_evolution_task",
         }
         for name in readonly_expected | research_expected:

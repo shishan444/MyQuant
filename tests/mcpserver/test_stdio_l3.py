@@ -92,7 +92,7 @@ def test_stdio_full_chain(live_api):
                     f"{sorted(EXPECTED_RESEARCH_TOOLS - names)} / "
                     f"多 {sorted(names - EXPECTED_RESEARCH_TOOLS)}")
                 assert "register_hypothesis" in names
-                assert "translate_hypothesis_to_strategy" in names
+                assert "run_backtest" in names  # 沙盒统一流（旧验证/translate 系已退役）
 
                 # 2) 工具调用（真调用真服务）：指标元数据 45 项
                 #    （Q3 摘牌 VWAP/MultifactorOsc 后 47→45，2026-10-14）

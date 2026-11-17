@@ -72,7 +72,9 @@ class TestApiErrorParsing:
                        "detail": {"judged_ranges": [], "overlaps": ["R"]}}})
         api = _client_with(monkeypatch, resp)
         with pytest.raises(ApiError) as ei:
-            api.post("/api/research/validate-backtest", {})
+            # 端点形制：任意 research 档 POST（旧 validate-backtest 已退役，
+            # 409 结构化透传契约与具体端点无关——换 hypotheses 迁移端点）
+            api.post("/api/research/hypotheses/h1/transition", {})
         assert ei.value.status == 409
         assert ei.value.code == "RESEARCH_RANGE_OVERLAP"
         assert ei.value.message == "区间重叠"

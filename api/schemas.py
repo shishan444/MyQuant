@@ -911,38 +911,6 @@ class HypothesisListResponse(BaseModel):
     next_cursor: Optional[str] = None  # keyset 续页游标（末条 created_at|id）
 
 
-class IsolatedBacktestRequest(BaseModel):
-    hypothesis_id: str
-    strategy_id: str
-    request_range: DataRangeItem
-    threshold_profile: Optional[Dict[str, Any]] = None
-    # 任务级封顶两参（sandbox-and-report-supplement A3——隔离验证路
-    # 与沙盒路覆写语义一致；值域校验在路由层 require_task_cap_params）
-    leverage: Optional[float] = None
-    margin_cap: Optional[float] = None
-
-
-class StagedValidationRequest(BaseModel):
-    """分段验证（add-staged-validation；检查⑤的分题型成绩单）。
-
-    平铺形制（B1——SandboxBacktestRequest 先例）；hypothesis_id 可缺省
-    （adhoc 纯日志留痕，verdict 照报 record_id=None）；segmentation 与
-    segments 双模互斥（auto 缺省）。
-    """
-
-    strategy_id: str
-    hypothesis_id: Optional[str] = None
-    symbol: str = "BTCUSDT"
-    timeframe: str = "4h"
-    start: str
-    end: str
-    segmentation: str = "auto"
-    segments: Optional[List[Dict[str, Any]]] = None
-    # 任务级封顶两参（sandbox-and-report-supplement A3——各段统一覆写）
-    leverage: Optional[float] = None
-    margin_cap: Optional[float] = None
-
-
 class SandboxBacktestRequest(BaseModel):
     """沙盒回测（improve-mcp-agent-loop M6）：快速试错、可调成本、
     不判门槛不构成验证证据；每次执行入验证记录统一流（level=
@@ -969,21 +937,6 @@ class SandboxBacktestRequest(BaseModel):
     # 账户级硬熔断（D3①——沙盒路）：权益自峰值回撤比率阈值 (0,1)，
     # None=不启用；值域校验在路由层（422 附 legal_range）
     halt_drawdown_pct: Optional[float] = None
-
-
-class RandomWindowRequest(BaseModel):
-    strategy_id: str
-    symbol: str
-    timeframe: str
-    data_start: str
-    data_end: str
-    window_bars: int = 200
-    n_windows: int = 8
-    seed: int = 42
-    hypothesis_id: Optional[str] = None
-    # 任务级封顶两参（sandbox-and-report-supplement A3——各窗统一覆写）
-    leverage: Optional[float] = None
-    margin_cap: Optional[float] = None
 
 
 class AnalysisRunRequest(BaseModel):

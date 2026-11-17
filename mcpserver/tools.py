@@ -129,23 +129,6 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
-    def union_balance(symbol: str, timeframe: str,
-                      hypothesis_id: str) -> Dict[str, Any]:
-        """判定并集余量查询（0.4.1 R4——本变更唯一新工具）：该假设的
-        已判区间清单、剩余可用区间与剩余可用时长。三参数必填（判定
-        并集是假设级账本）；假设不存在 404（前置存在性判定）；输出
-        {hypothesis_id, symbol, timeframe, judged[], remaining[],
-        remaining_bars}——remaining=数据目录实查范围（parquet 首尾 bar
-        完整时间戳直读，半开）−判定并集（先合并重叠/相邻再逐段差）；
-        remaining_bars=Σ floor(段时长/周期)（不足整 bar 残余丢弃——保守
-        计数）。零副作用只读；与隔离验证 RESEARCH_RANGE_OVERLAP 同一
-        账本两个出口——查询 remaining 段发起隔离验证不被重叠拒。"""
-        return api.get("/api/research/union-balance", params={
-            "symbol": symbol, "timeframe": timeframe,
-            "hypothesis_id": hypothesis_id})
-
-    @mcp.tool()
-    @tool_safe
     def get_market_snapshot(symbol: str, timeframes: Optional[str] = None,
                             as_of: Optional[str] = None) -> Dict[str, Any]:
         """时点行情快照（六步研究第①步固定入口）：多周期五维行情卡——
@@ -223,13 +206,6 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
         """分析长任务轮询（status: pending|running|succeeded|failed）。"""
         return api.get(
             f"/api/research/analysis/tasks/{quote(task_id, safe='')}")
-
-    @mcp.tool()
-    @tool_safe
-    def get_validation_report(strategy_id: str) -> Dict[str, Any]:
-        """验证证据档案（人话关键数字：最差情况与样本量）。"""
-        return api.get(
-            f"/api/research/validation/{quote(strategy_id, safe='')}/report")
 
     @mcp.tool()
     @tool_safe
@@ -359,9 +335,9 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
 
     for fn in (list_data_sources, list_strategies, get_strategy,
                list_evolution_tasks, list_indicators, list_signal_columns,
-               get_market_snapshot, union_balance,
+               get_market_snapshot,
                list_hypotheses, get_hypothesis, get_research_log,
-               get_analysis_task, get_validation_report,
+               get_analysis_task,
                list_feature_requests,
                list_paper_tasks, get_paper_task, get_paper_report,
                get_paper_history, query_paper_signals):
@@ -941,78 +917,6 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
-    def run_isolated_validation(hypothesis_id: str, strategy_id: str,
-                                symbol: str, timeframe: str,
-                                start: str, end: str) -> Dict[str, Any]:
-        """隔离回测（与判定并集重叠会被拒并列明细；结果含 warmup 声明
-        与门槛判定明细；同键重复幂等返回既有）。verdict 三态：
-        pass/fail/inconclusive——inconclusive=证据不足非证伪（样本不足
-        或每笔收益均值 95% 置信区间跨零——方向不可区分于噪声），假设
-        保持 active 可换区间再验证、不可作迁移证据。返回体 direction=short
-        时，total_return/win_rate 等指标为空头口径（价格下跌产生正收益）；
-        benchmark_return 恒为同期多头买入持有，excess_return=空头收益−多头基准。"""
-        return api.post("/api/research/validate-backtest", {
-            "hypothesis_id": hypothesis_id, "strategy_id": strategy_id,
-            "request_range": {"symbol": symbol, "timeframe": timeframe,
-                              "start": start, "end": end}})
-
-    @mcp.tool()
-    @tool_safe
-    def run_random_window_test(strategy_id: str, symbol: str, timeframe: str,
-                               data_start: str, data_end: str,
-                               window_bars: int = 200, n_windows: int = 8,
-                               seed: int = 42,
-                               hypothesis_id: Optional[str] = None) -> Dict[str, Any]:
-        """随机窗口抽查（同种子同参数结果一致；返回最差窗口与分位摘要）。
-        每窗按三段闸门判定，总判定最差聚合三态：任一窗 fail→fail；
-        无 fail 有 inconclusive 窗→inconclusive；全 pass→pass。返回体
-        direction=short 时，total_return/win_rate 等指标为空头口径（价格
-        下跌产生正收益）；benchmark_return 恒为同期多头买入持有，
-        excess_return=空头收益−多头基准。"""
-        body = {"strategy_id": strategy_id, "symbol": symbol,
-                "timeframe": timeframe, "data_start": data_start,
-                "data_end": data_end, "window_bars": window_bars,
-                "n_windows": n_windows, "seed": seed}
-        if hypothesis_id:
-            body["hypothesis_id"] = hypothesis_id
-        return api.post("/api/research/random-window-test", body)
-
-    @mcp.tool()
-    @tool_safe
-    def run_staged_validation(strategy_id: str, symbol: str, timeframe: str,
-                              start: str, end: str,
-                              segmentation: str = "auto",
-                              segments: Optional[list[dict[str, Any]]] = None,
-                              hypothesis_id: Optional[str] = None,
-                              ) -> Dict[str, Any]:
-        """分段验证（第⑤步考试的分题型成绩单——策略在什么行情下失效的
-        正式度量）：按市场状态切段（趋势/过渡/震荡/高波动）逐段独立
-        回测，段级门槛三态（pass/fail/inconclusive——短段样本不足/
-        方向不可区分判 inconclusive，证据不足非证伪）+ 汇总三键（最差
-        段/段间差异/是否全段达标）。双模互斥：segmentation="auto"（机械
-        判读，gates 内建）或缺省；explicit 传 segments=[{label,start,end}]
-        （恰好覆盖请求区间、相接不重叠、升序）。总判定最差聚合三态
-        （任一段 fail→fail；无 fail 有 inconclusive 段→inconclusive；
-        全段 pass→pass）。挂假设且全段 pass 产生可被 transition引用
-        的 pass 记录（与隔离验证叠加不替代）；inconclusive/fail 同样
-        落对应 verdict 记录（inconclusive 不可引用——证据不足不可定论，
-        假设保持 active）；不挂假设 adhoc 纯日志（verdict 照报、
-        record_id=None）。验证区间不入判定并集（防同区间重复靠幂等
-        ——与隔离回测同语义）。与随机窗口抽查互补：抽查答「任意时段
-        都行吗」，分段答「哪类行情不行」。返回体 direction=short 时，
-        total_return/win_rate 等指标为空头口径（价格下跌产生正收益）；
-        benchmark_return 恒为同期多头买入持有，excess_return=空头收益−多头基准。"""
-        body = {"strategy_id": strategy_id, "symbol": symbol,
-                "timeframe": timeframe, "start": start, "end": end,
-                "segmentation": segmentation}
-        if segments is not None:
-            body["segments"] = segments
-        if hypothesis_id:
-            body["hypothesis_id"] = hypothesis_id
-        return api.post("/api/research/staged-validation", body)
-
-    @mcp.tool()
-    @tool_safe
     def run_backtest(strategy_id: str, symbol: str, timeframe: str,
                      start: str, end: str, fee: float = 0.001,
                      slippage: float = 0.0005, init_cash: float = 100000.0,
@@ -1091,39 +995,6 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             "target": {"type": "return_sign", "horizon": target_horizon},
             "symbol": symbol, "timeframe": timeframe,
             "data_start": data_start, "data_end": data_end})
-
-    @mcp.tool()
-    @tool_safe
-    def translate_hypothesis_to_strategy(
-            hypothesis_id: str, strategy_symbol: str | None = None,
-            strategy_timeframe: str | None = None) -> Dict[str, Any]:
-        """把 active 假设转化为草稿策略（draft——验证对象，不要求先有
-        pass 记录；终态假设拒绝转化）。WHEN→入场信号、THEN→出场信号
-        （预期兑现即离场）；不可表达显式拒绝；同基因签名显式分流标注。
-        品种契约：strategy_symbol 缺省 None=继承区间源
-        data_ranges[0].symbol（登记面强制全条目同 symbol；存量无可用
-        symbol 假设拒绝并指引显式传参；显式传参优先零变化）。
-        执行周期契约：strategy_timeframe 缺省 None=继承假设基准周期
-（data_ranges[0].timeframe；存量异周期假设拒绝并指引显式传参）；
-回执 execution_timeframe 键披露产物执行周期。
-回执身份六键：direction（产物方向 long|short）、max_hold（声明
-        的最长持仓 bar 数|int|null）、time_exit_utc（声明的固定时刻
-        出场 UTC 分钟|int|null）、position_mode（声明的仓位模式
-        fixed|risk_budget，缺省 fixed）、risk_fraction（声明的风险
-        预算比例|float|null）、reuse_note（same_dna_existing=true
-        时附同基因策略复用三要素说明，其余 null）。回执另附
-        risk_genes_disclosure（执行配置全量披露）：values=落库
-        risk_genes 逐键回显、default_filled=值取平台默认的键名清单
-        （声明块差集——研究者可判显式声明与静默默认）。多周期边界：when 与
-        加仓触发组条件支持顶层 timeframe 键（值须合法周期且不低于策略
-        基准周期——低于基准拒，等于基准与缺省同语义归一）；then/减仓/
-        抑制组携带 timeframe 拒绝（跨周期前向/归属语义未定义）；插件列
-        条件不支持 timeframe（插件源无周期槽位）。
-        转正走 transition(supported) 原子路径（draft 自身 pass 时自动转正）。"""
-        return api.post(
-            f"/api/research/translate/{quote(hypothesis_id, safe='')}",
-            {"strategy_symbol": strategy_symbol,
-             "strategy_timeframe": strategy_timeframe})
 
     @mcp.tool()
     @tool_safe
@@ -1315,10 +1186,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
 
     for fn in (run_analysis, inspect_cases, query_indicator,
                register_hypothesis, transition_hypothesis,
-               run_isolated_validation, run_random_window_test,
-               run_staged_validation, run_backtest,
+               run_backtest,
                register_formula_plugin, register_model_plugin,
-               translate_hypothesis_to_strategy,
                submit_feature_request, trigger_evolution,
                poll_evolution_task,
                stop_evolution_task, pause_evolution_task,
