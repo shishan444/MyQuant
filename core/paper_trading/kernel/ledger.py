@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from core.paper_trading.constants import REDUCE_TERMINATE_EQUITY_FRACTION
+
 
 # 成交层拒因枚举（change paper-signal-log 任务 3——与 pt_signal.
 # reject_reason 列值域同源）：insufficient_funds=定仓结果无效（qty
@@ -363,6 +365,13 @@ class Ledger:
             qty_add = add_margin * self.params.leverage / exec_bar.open
             if not (qty_add > 0.0):
                 return FillOutcome(None, REJECT_INSUFFICIENT_FUNDS)
+            # 最小名义钳制（add 分支，change add-replay-engine 任务 1.2：
+            # 对齐 open 分支形制——定仓产出后、fill 前；add 拒绝不计入
+            # 枯竭计数（枯竭=空仓+发不起开仓的证据连续模型，executor
+            # 计数条件已限 open，零改动达成）；min_notional=None 不判定）
+            if min_notional is not None \
+                    and qty_add * exec_bar.open < min_notional:
+                return FillOutcome(None, REJECT_BELOW_MIN_NOTIONAL)
             fill = fill_model.fill(intent, exec_bar, qty_add)
             margin_used = self._apply_add(fill)
             return FillOutcome(
@@ -375,6 +384,36 @@ class Ledger:
             equity_before = self.equity(exec_bar.open)
             available_before = self.balance
             qty = self.position.quantity * self.params.exit_fraction
+            # 减仓终止条款（change add-replay-engine 任务 1.1，共享层
+            # 两域同效）：物理条件=本次减仓量名义<最小成交名义（这笔单
+            # 物理下不出去）；经济条件=减仓后剩余名义（假想按比例执行
+            # 后所剩，需求书 2.1.5① 原文口径）<max(权益×5%, 最小成交
+            # 名义)（留下的不值得留）——任一命中升格全额平仓（kind=
+            # close 走出场族路径豁免钳制；平台风控层保护性出清）。
+            # 阈值形制 is not None 判定不走 falsy 短路（0.0 病态表值
+            # 按有效值参与 max，两条件对 0.0 形制一致）；严格小于触发。
+            threshold = equity_before * REDUCE_TERMINATE_EQUITY_FRACTION
+            if min_notional is not None:
+                threshold = max(threshold, min_notional)
+            physical_hit = (
+                min_notional is not None
+                and qty * exec_bar.open < min_notional)
+            remaining_after = (
+                self.position.quantity
+                * (1.0 - self.params.exit_fraction) * exec_bar.open)
+            if physical_hit or remaining_after < threshold:
+                close_intent = Intent(
+                    kind="close",
+                    size_fraction=1.0,
+                    reason="reduce_terminated",
+                )
+                fill = fill_model.fill(
+                    close_intent, exec_bar, self.position.quantity)
+                released = self._apply_close(fill)
+                return FillOutcome(
+                    fill, equity_before=equity_before,
+                    available_before=available_before,
+                    margin_used=released)
             fill = fill_model.fill(intent, exec_bar, qty)
             released = self._apply_partial_exit(fill)
             return FillOutcome(
