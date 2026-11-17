@@ -17,7 +17,7 @@ pytestmark = [pytest.mark.integration]
 from fastapi.testclient import TestClient
 
 from core.analysis.executor import ensure_research_tables
-from core.analysis.hypothesis_service import register_hypothesis
+from tests.helpers.vr_factory import insert_hypothesis
 from core.analysis.validation_service import run_sandbox_backtest
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository.strategy import save_strategy
@@ -61,12 +61,12 @@ def env(tmp_path_factory):
         risk_genes=RiskGenes())
     save_strategy(db, strategy_id="st_api", dna_json=dna.to_json(),
                   symbol="BTCUSDT", timeframe="4h")
-    hid = register_hypothesis(
+    hid = insert_hypothesis(
         db, conditions=_CONDS, statement="API 统一流测试",
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2023-01-01T00:00:00Z",
                       "end": "2023-02-01T00:00:00Z"}],
-        strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+        strategy_params={"stop_loss": 0.05})
     out = run_sandbox_backtest(
         db, d, strategy_id="st_api", symbol="BTCUSDT", timeframe="4h",
         start="2023-03-01", end="2023-03-10", hypothesis_id=hid)
@@ -272,13 +272,15 @@ class TestZeroChangeFaces:
         assert all(x["record_id"] != out["record_id"]
                    for x in o["records"])
 
-    def test_sandbox_detail_empty_skeleton_with_params(self, env):
-        """TC-4-1：沙盒 detail 200 空骨架+params 顶层三键提取真值。
+    def test_sandbox_detail_rows_with_params(self, env):
+        """TC-4-1（K1 新契约）：沙盒 detail 200 携带明细行+params
+        顶层三键提取真值。
 
         非默认参数前置（tests-plan 权威定义：fee=0.002/init_cash=50000）
         ——三键值与 run_sandbox_backtest 缺省值全异，「params 顶层提取
         真值」与「端点硬编码默认值」可判别（P2 修复：原默认参前置
-        两形态不可判别）。
+        两形态不可判别）。retire-legacy K1 后沙盒新记录必须保留明细
+        （三明细有行+三布尔=1）。
         """
         client, hid, out, db, d = env
         o = run_sandbox_backtest(
@@ -289,18 +291,17 @@ class TestZeroChangeFaces:
             f"/api/research/validation-records/{o['record_id']}/detail")
         assert r.status_code == 200
         body = r.json()
-        assert body["detail_available"] is False
-        assert body["executions"] == []
+        assert body["detail_available"] is True, "K1：明细行在场"
+        assert body["executions"], "K1：执行份非空"
         assert body["level"] == "sandbox_backtest"
         assert body["verdict"] == ""
         # 三键=params 顶层提取真值（与缺省 0.001/0.0005/100000 全异）
         assert body["fee"] == 0.002
         assert body["slippage"] == 0.001
         assert body["init_cash"] == 50000.0
-        assert body["signal_trace"] is None
-        assert body["trade_semantics"] is None
-        assert body["stop_price"] is None
-        assert body["mtf_gated_bars"] is None
+        assert body["signal_trace"] is True, "K1：留痕三布尔=1"
+        assert body["trade_semantics"] is True
+        assert body["stop_price"] is True
 
     def test_sandbox_rejected_as_ruler_ab_source(self, env):
         """TC-4-2：沙盒 record_id 经公共校验件 resolve_validation_record
@@ -345,3 +346,33 @@ class TestZeroChangeFaces:
         hit_adhoc = [x for x in hit["records"]
                      if x["hypothesis_id"] == "adhoc"]
         assert not hit_adhoc, "adhoc 沙盒行（statement NULL）不命中 q"
+
+
+class TestDataRangeItemTimestampValidation:
+    """DataRangeItem 时间串可解析校验（阶段四②盲区消解——
+    _require_parseable_timestamp 坏串分支零覆盖补强）。"""
+
+    def test_unparseable_start_rejected(self):
+        """坏时间串 422 形：pydantic 包装 ValueError（错误码+合法形
+        hint 文案在场）。"""
+        from pydantic import ValidationError
+        from api.schemas import DataRangeItem
+        with pytest.raises(ValidationError) as ei:
+            DataRangeItem(symbol="BTCUSDT", timeframe="4h",
+                          start="not-a-date", end="2024-02-01")
+        msg = str(ei.value)
+        assert "RESEARCH_PARAM_INVALID" in msg
+        assert "UTC ISO8601" in msg
+
+    def test_unparseable_end_rejected(self):
+        from pydantic import ValidationError
+        from api.schemas import DataRangeItem
+        with pytest.raises(ValidationError):
+            DataRangeItem(symbol="BTCUSDT", timeframe="4h",
+                          start="2024-01-01", end="@@@")
+
+    def test_parseable_forms_accepted(self):
+        from api.schemas import DataRangeItem
+        it = DataRangeItem(symbol="BTCUSDT", timeframe="4h",
+                           start="2024-01-01", end="2024-01-02T00:00:00Z")
+        assert it.start == "2024-01-01"

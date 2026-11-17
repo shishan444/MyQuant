@@ -5,7 +5,8 @@
   查询面=PaperTaskResponse.qualification_progress。
 - 子件二 停止时三维终判：终态化路径挂点，report_json 第四键。
 - 子件三 对照重放器：求值重放+对齐谓词 v2（见本文件 replay 段）。
-- 子件四 凭证签发接线：qualified=true → lifecycle.transit。
+- 子件四 凭证签发接线已拆除（retire-legacy Q2=A）：qualified=true 不再
+  驱动迁移，报告第四键纯披露。
 
 QUALIFICATION_PROFILE 与研究域 DEFAULT_PROFILE（thresholds.py）语义分立：
 数值巧合相同（0 与 5），但 REQ-4-01 判据为纸盘达标域判据、
@@ -233,56 +234,11 @@ def build_qualification_section(db_path: Path, data_dir: Path,
         final_equity, float(task["initial_cash"]), int(task["total_trades"]),
         consistency)
     section["judged_at"] = judged_at
-    section["transition"] = _maybe_transit_candidate(db_path, task, section)
+    # 凭证签发接线已拆除（retire-legacy-subsystems 任务 4.3，Q2=A）：
+    # qualified=true 不再驱动状态迁移——报告第四键 qualification
+    # 纯披露（三维终判+qualification_progress 照常），晋级边已随状态机
+    # 瘦身退役
     return section
-
-
-def _maybe_transit_candidate(db_path: Path, task: Dict[str, Any],
-                             section: Dict[str, Any]) -> Dict[str, Any]:
-    """子件四凭证签发接线（仅终态+qualified=true 触发；解耦语义）。
-
-    迁移失败不回滚终判、终判失败不阻塞迁移互不连带；多任务竞态=
-    状态机单源裁决（先到迁移，后到 already_in_status 如实记录）；
-    重复终判幂等（qualify 边 already_in_status 承载）。非终态
-    （rolling 报告）attempted=false 零触碰。
-    """
-    out: Dict[str, Any] = {"attempted": False, "migrated": False,
-                           "not_migrated_reason": None}
-    # 终态集单源（executor.TERMINAL_STATUSES——与终判守卫同源，不立第三份字面量）
-    from core.paper_trading.runtime.executor import TERMINAL_STATUSES
-    if task.get("status") not in TERMINAL_STATUSES or not section.get("qualified"):
-        return out
-    out["attempted"] = True
-    try:
-        from core.strategy.lifecycle.service import transit
-        from core.strategy.dna import StrategyDNA
-        dna = StrategyDNA.from_json(task["dna_snapshot_json"])
-        result = transit(
-            db_path, task["strategy_id"],
-            target="candidate", trigger="qualify",
-            evidence={
-                "task_id": task["task_id"],
-                "strategy_id": task["strategy_id"],
-                "version_ref": getattr(dna, "gene_signature", None) or task["task_id"],
-                "judged_at": section.get("judged_at"),
-                "criteria": {
-                    "pnl_positive": section["pnl_positive"],
-                    "trades_enough": section["trades_enough"],
-                    "trigger_consistency": section.get("trigger_consistency", {}).get("passed"),
-                },
-                "profile_note": section.get("profile_note"),
-            })
-        out["migrated"] = bool(result.get("migrated"))
-        if not out["migrated"]:
-            # transit 的 not_migrated 返回键=not_migrated_reason（service._not_migrated）
-            out["not_migrated_reason"] = str(
-                result.get("not_migrated_reason") or result)
-    except Exception as exc:  # noqa: BLE001——迁移失败不回滚终判（解耦）
-        logger.exception("凭证迁移失败（task=%s strategy=%s）",
-                         task.get("task_id"), task.get("strategy_id"))
-        # reason 只带异常类名（完整 exc 落日志，不入 REST 披露面）
-        out["not_migrated_reason"] = f"transit_failed: {type(exc).__name__}"
-    return out
 
 
 def qualification_progress_payload(equity: Optional[float], initial_cash: float,

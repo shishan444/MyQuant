@@ -24,12 +24,9 @@ from sqlalchemy.exc import IntegrityError
 from core.analysis.backtest_bridge import run_backtest_on_range
 from core.analysis.validation_service import (
     _build_detail_payload,
-    random_window_test,
-    run_isolated_backtest,
     run_sandbox_backtest,
-    run_staged_validation,
 )
-from core.analysis.hypothesis_service import register_hypothesis
+from tests.helpers.vr_factory import insert_hypothesis
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
 from core.persistence.repository.strategy import save_strategy
@@ -83,7 +80,7 @@ def data_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def hypothesis_id(db) -> str:
-    return register_hypothesis(
+    return insert_hypothesis(
         db,
         conditions={
             "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
@@ -93,7 +90,7 @@ def hypothesis_id(db) -> str:
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2023-01-01T00:00:00Z",
                       "end": "2023-02-01T00:00:00Z"}],
-        strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+        strategy_params={"stop_loss": 0.05})
 
 
 @pytest.fixture()
@@ -305,156 +302,6 @@ class TestBuildDetailPayload:
         assert out["equity"]["length"] == 20
 
 
-class TestIsolatedDetailWrite:
-    """任务 4：isolated 入口真实落盘链路（B4-1/B4-2/B4-4 入口面）。"""
-
-    def test_single_execution_main_with_detail_rows(
-            self, db, data_dir, hypothesis_id, strategy_saved):
-        out = run_isolated_backtest(
-            db, data_dir, hypothesis_id=hypothesis_id,
-            strategy_id=strategy_saved,
-            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": "2023-03-01T00:00:00Z",
-                           "end": "2023-04-01T00:00:00Z"})
-        assert out["duplicated"] is False
-        execs = rr.get_validation_executions(db, out["record_id"])
-        assert len(execs) == 1, "isolated 单份（B4-1）"
-        ex = execs[0]
-        assert ex["exec_ref"] == "main" and ex["exec_index"] == 0
-        assert ex["range_start"] == "2023-03-01T00:00:00Z"
-        assert ex["range_end"] == "2023-04-01T00:00:00Z"
-        # B2-9 对账（isolated 面）：逐笔笔数==metrics.total_trades
-        assert len(ex["trades"]) == out["metrics"]["total_trades"]
-        # equity 紧凑形制（fixture 数据连续无洞）
-        assert ex["equity"]["grid_aligned"] is True
-        assert ex["equity"]["length"] == len(ex["equity"]["values"])
-        # params 三键=默认生效值（入口未显式传参形态）
-        row = rr.get_validation_record_by_id(db, out["record_id"])
-        params = json.loads(row["params"])
-        assert params["init_cash"] == 100000.0
-        assert params["fee"] == 0.001
-        assert params["slippage"] == 0.0005
-
-    def test_idempotent_replay_zero_rewrite(
-            self, db, data_dir, hypothesis_id, strategy_saved):
-        """B4-2：同五元重发→duplicated=true、明细行数不变、返回体
-        同构（顶层键集合一致）。"""
-        rng = {"symbol": "BTCUSDT", "timeframe": "4h",
-               "start": "2023-03-01T00:00:00Z",
-               "end": "2023-04-01T00:00:00Z"}
-        first = run_isolated_backtest(
-            db, data_dir, hypothesis_id=hypothesis_id,
-            strategy_id=strategy_saved, request_range=rng)
-        before = _vr_counts(db)
-        second = run_isolated_backtest(
-            db, data_dir, hypothesis_id=hypothesis_id,
-            strategy_id=strategy_saved, request_range=rng)
-        assert second["duplicated"] is True
-        assert second["record_id"] == first["record_id"]
-        assert _vr_counts(db) == before, "幂等重放明细零重写"
-        assert set(second.keys()) == set(first.keys()), "返回体同构"
-
-
-class TestRandomDetailWrite:
-    """任务 4：random 逐窗真实落盘（份数/窗口对齐）。"""
-
-    def test_window_executions_aligned(self, db, data_dir, hypothesis_id,
-                                       strategy_saved):
-        out = random_window_test(
-            db, data_dir, strategy_id=strategy_saved,
-            hypothesis_id=hypothesis_id,
-            symbol="BTCUSDT", timeframe="4h",
-            data_start="2023-01-01T00:00:00Z",
-            data_end="2023-06-01T00:00:00Z",
-            window_bars=100, n_windows=2, seed=11)
-        execs = rr.get_validation_executions(db, out["record_id"])
-        assert len(execs) == 2 == out["summary"]["n_windows"], "窗数=份数"
-        for k, ex in enumerate(execs):
-            assert ex["exec_ref"] == f"win_{k}"
-            assert ex["exec_index"] == k
-            w = out["windows"][k]
-            assert ex["range_start"] == w["start"], "份区间与窗口对齐"
-            assert ex["range_end"] == w["end"]
-            # B2-9：逐窗对账——逐笔笔数==该窗 metrics.total_trades、
-            # equity 长度==length
-            assert len(ex["trades"]) == w["metrics"]["total_trades"]
-            assert ex["equity"]["length"] == len(ex["equity"]["values"])
-        row = rr.get_validation_record_by_id(db, out["record_id"])
-        params = json.loads(row["params"])
-        assert {"init_cash", "fee", "slippage"} <= set(params)
-
-    def test_idempotent_replay_zero_rewrite(self, db, data_dir, hypothesis_id,
-                                            strategy_saved):
-        """specs「幂等重放零重写」random 面：同五元重发→duplicated=true、
-        明细行数不变、重放体不因明细落盘引入新键（键集合全等条款
-        主 spec :587 限定隔离回测/分段验证两入口——random 重放 payload
-        的 duplicated/result 增键为存量形制，不在全等面；isolated 面
-        见 TestIsolatedDetailWrite）。"""
-        kw = dict(strategy_id=strategy_saved, hypothesis_id=hypothesis_id,
-                  symbol="BTCUSDT", timeframe="4h",
-                  data_start="2023-01-01T00:00:00Z",
-                  data_end="2023-06-01T00:00:00Z",
-                  window_bars=100, n_windows=2, seed=11)
-        first = random_window_test(db, data_dir, **kw)
-        before = _vr_counts(db)
-        second = random_window_test(db, data_dir, **kw)
-        assert second["duplicated"] is True
-        assert second["record_id"] == first["record_id"]
-        assert _vr_counts(db) == before, "幂等重放明细零重写"
-        # 明细不进返回体（design 3.3）：重放体不得因明细落盘引入
-        # executions/detail 类新键——键差异面限于 random 存量形制
-        assert not ({"executions", "detail", "detail_available"}
-                    & set(second)), "重放体不得引入明细新键"
-
-
-class TestStagedDetailWrite:
-    """任务 4：staged 逐段真实落盘（exec_ref=段 label）。"""
-
-    def test_segment_executions_labelled(self, db, data_dir, hypothesis_id,
-                                         strategy_saved):
-        out = run_staged_validation(
-            db, data_dir, strategy_id=strategy_saved,
-            hypothesis_id=hypothesis_id, symbol="BTCUSDT", timeframe="4h",
-            start="2023-02-01T00:00:00Z", end="2023-05-01T00:00:00Z",
-            segmentation="explicit", segments=[
-                {"label": "segA", "start": "2023-02-01T00:00:00Z",
-                 "end": "2023-03-15T00:00:00Z"},
-                {"label": "segB", "start": "2023-03-15T00:00:00Z",
-                 "end": "2023-05-01T00:00:00Z"}])
-        assert out["record_id"] is not None
-        execs = rr.get_validation_executions(db, out["record_id"])
-        assert len(execs) == 2, "段数=份数"
-        assert [e["exec_ref"] for e in execs] == ["segA", "segB"]
-        assert [e["exec_index"] for e in execs] == [0, 1]
-        for k, ex in enumerate(execs):
-            seg = out["segments"][k]
-            assert ex["range_start"] == seg["start"]
-            assert ex["range_end"] == seg["end"]
-            assert len(ex["trades"]) == seg["metrics"]["total_trades"]
-
-    def test_idempotent_replay_zero_rewrite_and_isomorphic(
-            self, db, data_dir, hypothesis_id, strategy_saved):
-        """B4-2 staged 面（主 spec :587 明文枚举分段验证）：同五元重发
-        →duplicated=true、明细行数不变、顶层键集合与首次相等。"""
-        kw = dict(strategy_id=strategy_saved, hypothesis_id=hypothesis_id,
-                  symbol="BTCUSDT", timeframe="4h",
-                  start="2023-02-01T00:00:00Z", end="2023-05-01T00:00:00Z",
-                  segmentation="explicit", segments=[
-                      {"label": "segA",
-                       "start": "2023-02-01T00:00:00Z",
-                       "end": "2023-03-15T00:00:00Z"},
-                      {"label": "segB",
-                       "start": "2023-03-15T00:00:00Z",
-                       "end": "2023-05-01T00:00:00Z"}])
-        first = run_staged_validation(db, data_dir, **kw)
-        before = _vr_counts(db)
-        second = run_staged_validation(db, data_dir, **kw)
-        assert second["duplicated"] is True
-        assert second["record_id"] == first["record_id"]
-        assert _vr_counts(db) == before, "幂等重放明细零重写"
-        assert set(second.keys()) == set(first.keys()), "返回体同构（:587）"
-
-
 class TestAtomicityAndEdges:
     """B4-3/B4-5/B4-8：原子性/历史容缺/沙盒不落。"""
 
@@ -474,11 +321,10 @@ class TestAtomicityAndEdges:
                        "length": 1, "timestamps": None, "values": "[1.0]"},
         }]
         with pytest.raises(IntegrityError):
-            rr.save_validation_with_log(
+            rr.save_sandbox_validation_record(
                 db, record_id="rec_atomic1", hypothesis_id=hypothesis_id,
-                strategy_id="st_x", level="isolated_backtest",
-                params="{}", result="{}", verdict="pass", range_hash="rh_a1",
-                detail=bad_detail)
+                strategy_id="st_x", params="{}", result="{}",
+                range_hash="rh_a1", detail=bad_detail)
         assert rr.get_validation_record_by_id(db, "rec_atomic1") is None, \
             "四写原子性：明细失败则记录整体回滚"
         assert _vr_counts(db) == (0, 0)
@@ -486,22 +332,25 @@ class TestAtomicityAndEdges:
     def test_no_detail_writes_no_rows(self, db, hypothesis_id):
         """缺省 detail=None 不写明细（签名向后兼容）+ B4-5：无明细
         记录 get_validation_executions 返回 []（历史容缺面）。"""
-        rr.save_validation_with_log(
+        rr.save_sandbox_validation_record(
             db, record_id="rec_hist2", hypothesis_id=hypothesis_id,
-            strategy_id="st_x", level="isolated_backtest", params="{}",
-            result="{}", verdict="fail", range_hash="rh_h2")
+            strategy_id="st_x", params="{}", result="{}",
+            range_hash="rh_h2")
         assert _vr_counts(db) == (0, 0)
         assert rr.get_validation_executions(db, "rec_hist2") == []
 
-    def test_sandbox_writes_zero_detail_rows(
+    def test_sandbox_writes_detail_rows_k1(
             self, db, data_dir, hypothesis_id, strategy_saved):
-        """B4-8：沙盒只写日志不落表——零明细行+零 params 三键。"""
+        """K1（retire-legacy D-3.7）：沙盒新记录落明细行——equity 曲线
+        必在（每执行份一行起）+ result 携带 mtf_gated_bars 键。"""
         out = run_sandbox_backtest(
             db, data_dir, strategy_id=strategy_saved,
             hypothesis_id=hypothesis_id, symbol="BTCUSDT", timeframe="4h",
             start="2023-03-01T00:00:00Z", end="2023-03-15T00:00:00Z")
         assert out["sandbox"] is True
-        assert _vr_counts(db) == (0, 0), "沙盒路径零明细行"
+        assert _vr_counts(db)[1] >= 1, "K1：沙盒新记录明细行在场"
+        row = rr.get_validation_record_by_id(db, out["record_id"])
+        assert "mtf_gated_bars" in json.loads(row["result"])
 
 
 class TestHoleDataDegradedWrite:
@@ -529,12 +378,10 @@ class TestHoleDataDegradedWrite:
         assert len(drop_ts) == 6, "4h 周期一日应 6 根（抽取前提自检）"
         df.drop(index=drop_ts).to_parquet(d / "BTCUSDT_4h.parquet")
 
-        out = run_isolated_backtest(
-            db, d, hypothesis_id=hypothesis_id, strategy_id=strategy_saved,
-            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": "2023-03-01T00:00:00Z",
-                           "end": "2023-04-01T00:00:00Z"})
-        assert out["duplicated"] is False
+        out = run_sandbox_backtest(
+            db, d, strategy_id=strategy_saved,
+            hypothesis_id=hypothesis_id, symbol="BTCUSDT", timeframe="4h",
+            start="2023-03-01T00:00:00Z", end="2023-04-01T00:00:00Z")
         ex = rr.get_validation_executions(db, out["record_id"])[0]
         eq = ex["equity"]
         assert eq["grid_aligned"] is False, "洞数据集必须显式降级"

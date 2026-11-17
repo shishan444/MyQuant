@@ -31,7 +31,7 @@ from typing import Any, Dict
 import numpy as np
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.param_guard import _require_int_range
 from core.analysis.result import AnalysisResult, build_result
 from core.analysis.warmup_loader import to_utc
@@ -111,7 +111,7 @@ def condition_stats(
     """
     from core.features.indicators import _compute_indicator
     from core.features.registry import INDICATOR_REGISTRY
-    from core.validation.engine import _evaluate_single_condition
+    from core.analysis.condition_eval import _evaluate_single_condition
 
     if (condition is None) == (conditions is None):
         raise ResearchError(

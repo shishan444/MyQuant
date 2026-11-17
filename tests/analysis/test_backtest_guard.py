@@ -1,8 +1,8 @@
 """守卫拒绝锚族 T⑧ + 交集防御锚 T④（fix-mtf-execution-consistency 组 2）。
 
 T⑧（RESEARCH_TIMEFRAME_MISMATCH——design 卡 2/守卫卡）：
-- ⑧.1 显式异轴 422：code+detail 四键逐键断言（need_hint 含回假设侧
-  修改基准周期指引语义）；
+- ⑧.1 显式异轴 422：code+detail 四键逐键断言（need_hint 含缺省自洽
+  与换轴重建策略指引语义——translate 退役后不指假设侧）；
 - ⑧.2 双挂同码：桥入口 vs 直接调守卫单源——code+detail 逐字段一致；
 - ⑧.3 四通道传导：隔离/随机/沙盒/分段参数化各一例显式异轴拒绝；
 - ⑧.4 缺省链自洽不拦（负向防呆）：不传 timeframe → 取策略行周期
@@ -33,11 +33,8 @@ from core.analysis.backtest_bridge import (
 )
 from core.analysis.errors import ResearchError
 from core.analysis.executor import ensure_research_tables
-from core.analysis.hypothesis_service import register_hypothesis
-from core.analysis.validation_service import (
-    random_window_test, run_isolated_backtest, run_sandbox_backtest,
-    run_staged_validation,
-)
+from core.analysis.validation_service import run_sandbox_backtest
+from tests.helpers.vr_factory import insert_hypothesis
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository.strategy import save_strategy
 from core.strategy.dna import (
@@ -103,7 +100,7 @@ def seeded(db, data_dir) -> dict:
     save_strategy(db, strategy_id=sid, dna_json=dna.to_json(),
                   symbol="BTCUSDT", timeframe="4h",
                   gene_signature="sig_guard_4h")
-    hid = register_hypothesis(
+    hid = insert_hypothesis(
         db,
         conditions={"when_conditions": [
             {"subject": {"indicator": "RSI", "params": {"period": 14}},
@@ -112,7 +109,7 @@ def seeded(db, data_dir) -> dict:
                 {"subject": "close", "action": "gt", "target": 0}]},
         statement="守卫锚",
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
-                      "start": HYP_START, "end": HYP_END}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+                      "start": HYP_START, "end": HYP_END}], strategy_params={"stop_loss": 0.05})
     return {"sid": sid, "hid": hid}
 
 
@@ -133,9 +130,9 @@ class TestT8GuardRejection:
         assert d["request_timeframe"] == "1d"
         assert d["dna_execution_timeframe"] == "4h"
         assert d["strategy_id"] == "st_x"
-        # need_hint 指引语义：回假设侧修改基准周期
-        assert "基准周期" in d["need_hint"]
-        assert "data_ranges" in d["need_hint"]
+        # need_hint 指引语义：缺省自洽+换轴重建策略（不指假设侧）
+        assert "自洽验证" in d["need_hint"]
+        assert "重建策略" in d["need_hint"]
 
     def test_t8_2_bridge_entry_and_guard_same_face(self, seeded, db, data_dir):
         """⑧.2 双挂同码：桥入口拒绝与守卫单源直调逐字段一致。"""
@@ -150,33 +147,18 @@ class TestT8GuardRejection:
         assert bridge_exc.value.detail == direct_exc.value.detail
         assert bridge_exc.value.status == direct_exc.value.status
 
-    @pytest.mark.parametrize("channel", ["isolated", "random", "sandbox",
-                                         "staged"])
+    @pytest.mark.parametrize("channel", ["sandbox"])
     def test_t8_3_four_channels_propagate(self, seeded, db, data_dir,
                                           channel):
-        """⑧.3 四通道传导：显式异轴全部 RESEARCH_TIMEFRAME_MISMATCH。"""
+        """⑧.3 存活通道传导：显式异轴 RESEARCH_TIMEFRAME_MISMATCH
+        （retire-legacy 后 isolated/random/staged 三编排退役，parametrize
+        随守护面收缩——桥内守卫单源传导语义不变）。"""
         sid, hid = seeded["sid"], seeded["hid"]
         with pytest.raises(ResearchError) as exc:
-            if channel == "isolated":
-                run_isolated_backtest(
-                    db, data_dir, hypothesis_id=hid, strategy_id=sid,
-                    request_range={"symbol": "BTCUSDT", "timeframe": "1d",
-                                   "start": START, "end": END})
-            elif channel == "random":
-                random_window_test(
-                    db, data_dir, strategy_id=sid, symbol="BTCUSDT",
-                    timeframe="1d", data_start=START, data_end=END,
-                    window_bars=5, n_windows=2)  # 1d×5 天窗（span 检查过）
-            elif channel == "sandbox":
+            if channel == "sandbox":
                 run_sandbox_backtest(
                     db, data_dir, strategy_id=sid, symbol="BTCUSDT",
                     timeframe="1d", start=START, end=END)
-            else:
-                # auto 段构造 min_bars=50：1d 请求区间须 ≥50 根
-                run_staged_validation(
-                    db, data_dir, strategy_id=sid, hypothesis_id=hid,
-                    symbol="BTCUSDT", timeframe="1d",
-                    start="2023-03-01", end="2023-06-01")
         assert exc.value.code == "RESEARCH_TIMEFRAME_MISMATCH", (
             f"{channel} 通道未传导守卫拒绝")
 
@@ -184,12 +166,11 @@ class TestT8GuardRejection:
                                                             db, data_dir):
         """⑧.4 缺省链不拦：request_range 不带 timeframe → 取策略行周期
         （=执行周期）→ 放行执行（跑通回测非拒绝）。"""
-        res = run_isolated_backtest(
-            db, data_dir, hypothesis_id=seeded["hid"],
-            strategy_id=seeded["sid"],
-            request_range={"symbol": "BTCUSDT",
-                           "start": START, "end": END})
-        assert "record_id" in res  # 放行执行（verdict 三态任意）
+        res = run_sandbox_backtest(
+            db, data_dir, strategy_id=seeded["sid"], symbol="BTCUSDT",
+            timeframe="4h", start=START, end=END,
+            hypothesis_id=seeded["hid"])
+        assert "record_id" in res  # 放行执行（record 统一流恒写）
 
     def test_t8_5_rejection_before_loading_zero_io(self, seeded, db,
                                                    data_dir):

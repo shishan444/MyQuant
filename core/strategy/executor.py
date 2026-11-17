@@ -50,9 +50,8 @@ def _apply_entry_exit_mutex(entries: pd.Series, exits: pd.Series) -> pd.Series:
         if killed / total >= _CONFLICT_KILL_WARN_RATIO:
             logger.warning(
                 "同 bar 进出场冲突抹杀进场信号 %d/%d（%.0f%%）——出场"
-                "信号疑似常驻形态，建议核对出场条件（登记面防线见 "
-                "exit_coverage_warnings / RESEARCH_EXIT_ALWAYS_TRUE）；"
-                "本告警为执行链纵深披露，不改变信号语义",
+                "信号疑似常驻形态，建议核对出场条件语义；本告警为执行"
+                "链纵深披露，不改变信号语义",
                 killed, total, killed / total * 100)
     return entries & ~both
 

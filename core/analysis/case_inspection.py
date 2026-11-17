@@ -61,7 +61,7 @@ import pandas as pd
 from core.analysis.condition_kernel import (
     PLUGIN_COLUMN_PREFIXES, MtfEvalContext, mask_for,
 )
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.registry_meta import default_params_for, derive_warmup
 from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup, to_utc
 from core.features.registry import INDICATOR_REGISTRY

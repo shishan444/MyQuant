@@ -18,10 +18,8 @@ pytestmark = [pytest.mark.integration]
 from fastapi.testclient import TestClient
 
 from core.analysis.executor import ensure_research_tables
-from core.analysis.hypothesis_service import (
-    ResearchError, register_hypothesis)
-from core.analysis.validation_service import (
-    run_isolated_backtest, run_sandbox_backtest)
+from tests.helpers.vr_factory import insert_hypothesis
+from core.analysis.validation_service import run_sandbox_backtest
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository.strategy import save_strategy
 from core.strategy.dna import (
@@ -65,12 +63,12 @@ def l3_env(tmp_path: Path):
         risk_genes=RiskGenes())
     save_strategy(db, strategy_id="st_l3", dna_json=dna.to_json(),
                   symbol="BTCUSDT", timeframe="4h")
-    hid = register_hypothesis(
+    hid = insert_hypothesis(
         db, conditions=_CONDS, statement="L3 端到端假设",
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2023-01-01T00:00:00Z",
                       "end": "2023-02-01T00:00:00Z"}],
-        strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+        strategy_params={"stop_loss": 0.05})
     from api.app import create_app
     app = create_app(db_path=db, data_dir=d)
     with TestClient(app, raise_server_exceptions=False) as c:
@@ -106,13 +104,9 @@ class TestL3AiResearchLoop:
         # verdict_counts：sandbox=2 三键纯净（A3/A5）
         assert lv["verdict_counts"] == {
             "pass": 0, "fail": 0, "inconclusive": 0, "sandbox": 2}
-        # 卡片快照三数字不变（沙盒不污染正式口径——C5）
-        cards = client.get("/api/research/hypothesis-cards",
-                           params={"page_size": 200}).json()["items"]
-        card = next(c for c in cards if c["hypothesis_id"] == hid)
-        assert card["validation_count"] == 0
-        assert card["latest_verdict"] is None
-        assert card["latest_record_id"] is None
+        # （卡片快照三数字锚随 hypothesis-cards 端点退役删除——
+        # retire-legacy cards 族；沙盒不污染正式口径的等价断言=
+        # 上方 verdict_counts 三键纯净）
         # 下钻取尽（A6 数据链路）
         drill = client.get(
             "/api/research/validation-records",
@@ -127,20 +121,11 @@ class TestL3AiResearchLoop:
                      | {x["record_id"] for x in page2["records"]})
         assert collected == {o1["record_id"], o2["record_id"]}
         assert page2["has_more"] is False
-        # 沙盒 record detail 200 空骨架
+        # 沙盒 record detail 200 携带明细（K1 新契约——明细行在场）
         det = client.get(
             f"/api/research/validation-records/{o1['record_id']}/detail")
         assert det.status_code == 200
-        assert det.json()["detail_available"] is False
-        assert det.json()["executions"] == []
-        # 同区间隔离验证 409（judged_ranges 含沙盒区间——红线 1）
-        with pytest.raises(ResearchError) as ei:
-            run_isolated_backtest(
-                db, d, hypothesis_id=hid, strategy_id="st_l3",
-                request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                               "start": "2023-03-02T00:00:00Z",
-                               "end": "2023-03-08T00:00:00Z"})
-        assert ei.value.code == "RESEARCH_RANGE_OVERLAP"
-        judged = ei.value.detail["judged_ranges"]
-        assert any(r["start"].startswith("2023-03-01") for r in judged), \
-            "沙盒区间应出现在判定并集明细中"
+        assert det.json()["detail_available"] is True
+        assert det.json()["executions"], "K1：沙盒新记录明细非空"
+        # 同区间隔离验证 409 面已随旧编排退役（judged_ranges 并集拦截
+        # 语义由沙盒挂假设区间进并集承载——retire-legacy 5.1）

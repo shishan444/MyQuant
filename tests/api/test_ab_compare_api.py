@@ -13,7 +13,7 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 
 
 @pytest.fixture()
@@ -201,4 +201,5 @@ class TestAbCompareRoute:
         assert resp.status_code == 422
         detail = resp.json()["detail"]
         assert detail["code"] == "RESEARCH_PARAM_INVALID"
-        assert "沙盒回测不落库逐笔（防污染纪律）" in detail["message"]
+        assert "params 形制无单区间" in detail["message"]
+        assert "存量隔离验证记录 record_id" in detail["message"]

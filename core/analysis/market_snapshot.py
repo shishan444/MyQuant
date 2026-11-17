@@ -36,7 +36,7 @@ from typing import Any, Optional, Union
 
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 # 三态判读已提升分段权威模块（add-regime-split；快照与分段同一把尺）
 from core.analysis.regime_segments import adx_state as _adx_state
 from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup, to_utc

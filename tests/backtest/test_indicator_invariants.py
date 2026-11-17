@@ -305,22 +305,3 @@ class TestContractConsistency:
         """factors.py 硬编码引用的列名与生成层一致。"""
         for col in ["bb_upper_20_2", "bb_lower_20_2", "atr_14"]:
             assert col in enhanced.columns, col
-
-    def test_volume_breakout_levels_distinct(self, enhanced):
-        """场景层解析：bb/keltner 的 upper 与 lower 必须解析到不同列。"""
-        from core.validation.scene.volume_breakout import _resolve_level_column
-
-        cols = enhanced.columns
-        for upper_lt, lower_lt in [
-            ("bb_upper", "bb_lower"),
-            ("keltner_upper", "keltner_lower"),
-        ]:
-            upper_col = _resolve_level_column(upper_lt, cols)
-            lower_col = _resolve_level_column(lower_lt, cols)
-            assert upper_col is not None and lower_col is not None, upper_lt
-            assert upper_col != lower_col, f"{upper_lt} 与 {lower_lt} 解析到同一列"
-            # 解析到的列语义正确：upper 列值 >= lower 列值（预热区外）
-            valid = enhanced[upper_col].notna()
-            assert (
-                enhanced[upper_col][valid] >= enhanced[lower_col][valid]
-            ).all(), upper_lt

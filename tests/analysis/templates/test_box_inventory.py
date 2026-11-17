@@ -14,7 +14,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.box_inventory import box_inventory, compute_box_segments
 from core.data.fapi.rest import default_data_dir
 

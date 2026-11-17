@@ -1,7 +1,7 @@
 """FastAPI 应用装配点：生命周期、CORS、路由挂载与 socket.io 桥。
 
 职能：create_app 是全工程唯一的应用工厂——初始化 DB schema、装配
-evolution runner、research executor 与 socket.io 实时通道，
+research executor 与 socket.io 实时通道，
 挂载全部 REST 路由；模块尾把 FastAPI 与 socket.io 组合为单一 ASGI
 应用供 uvicorn 启动。
 服务对象：全部 /api/* 路由（经 app.state 注入依赖）与 web 前端
@@ -26,10 +26,7 @@ logger = logging.getLogger("app")
 
 from core.analysis.errors import ResearchError
 from core.persistence.db_ext import init_db_ext
-from .routes import config, data, evolution, strategies
-from .routes import validate as validate_route
-from .routes import scene as scene_route
-from .routes import live_trading as live_trading_route
+from .routes import config, data, strategies
 from .routes import paper_trading as paper_trading_route
 from .routes.research.common import research_error_to_http
 from .schemas import HealthResponse
@@ -83,8 +80,8 @@ def create_app(
             DataFreshnessGuardian；测试注入替身。FAPI_STREAM_DISABLED
             置位时装配整体跳过且 factory 亦不调用——旁路优先）。
     """
-    # 无条件求值一次：lifespan 内 config.yaml 读取同用（两参显式传参时
-    # 分支内赋值会使 lifespan 引用未定义名——config 从未被打开）
+    # 无条件求值一次（两参显式传参时分支内赋值会使 lifespan 引用
+    # 未定义名——project_root 在 lifespan 内有消费）
     project_root = Path(__file__).resolve().parent.parent
     if db_path is None:
         db_path = _default_db_path(project_root)
@@ -100,17 +97,6 @@ def create_app(
         data_dir.mkdir(parents=True, exist_ok=True)
         init_db_ext(db_path)
         warn_if_no_api_key()
-
-        # 存量凭据一次性迁移清理（fix-audit-disclosure-security S-01）：
-        # config.json 明文凭据键 → data/credentials.json 后物理删键
-        from .routes.config import migrate_legacy_credentials
-        migrate_legacy_credentials(db_path)
-
-        # 进化域恢复：上次运行的中断/崩溃任务先回收再起 runner
-        from .runner import EvolutionRunner, set_ws_push_fn, recover_stale_tasks, restart_crashed_tasks
-
-        recover_stale_tasks(db_path)
-        restart_crashed_tasks(db_path)
 
         # Research executor（add-ai-research-mcp 1.4）：研究域表自愈 →
         # 中断任务回收 → 线程池执行器单例（SIGTERM 时随进程释放）
@@ -128,37 +114,6 @@ def create_app(
         app.state.db_path = db_path
         app.state.data_dir = data_dir
 
-        # 受限并发（research-tooling-data-quality 卡 B）：config
-        # evolution.max_concurrent_tasks 可配（缺省 2 上限 4——runner
-        # 内钳制）；config 无段时用缺省
-        import yaml as _yaml
-        try:
-            with open(project_root / "config.yaml") as _f:
-                _cfg = _yaml.safe_load(_f) or {}
-        except (OSError, _yaml.YAMLError) as _exc:
-            # config 缺失/损坏：降级缺省并留痕（宽捕获会静默吞掉编程错误）
-            _cfg = {}
-            logger.warning(
-                "config.yaml 读取失败（%s: %s），max_concurrent_tasks 用缺省 2",
-                type(_exc).__name__, _exc,
-            )
-        # 文档层非映射（如整文档裸标量）：与 or {} 防 None 同族的类型面
-        # 防御——否则 _cfg.get 处 AttributeError 启动崩溃
-        if not isinstance(_cfg, dict):
-            logger.warning(
-                "config.yaml 文档层非映射（%s），max_concurrent_tasks 用缺省 2",
-                type(_cfg).__name__,
-            )
-            _cfg = {}
-        _maxw = (_cfg.get("evolution") or {}).get(
-            "max_concurrent_tasks", 2)
-        runner = EvolutionRunner(
-            db_path=db_path, data_dir=data_dir, max_workers=_maxw)
-        app.state.evolution_runner = runner
-        # be-live-trading-chain：live_runner 装配占位（内核待 D5 全链
-        # 设计卡——装配点先例形制：evolution_runner/paper_scheduler 同层）
-        app.state.live_runner = None
-
         # B8.2/8.4: socket.io 唯一实时通道（native WS 已退役）
         import os as _os
         from . import realtime
@@ -174,10 +129,6 @@ def create_app(
             def _push(task_id: str, payload: dict) -> None:
                 realtime.broadcast(namespace, room=task_id, event=payload.get("type", "message"), payload=payload)
             return _push
-        _ws_push_evolution = _make_push("/evolution")
-
-        set_ws_push_fn(_ws_push_evolution)
-
         # 纸盘交易新域调度器（rebuild-paper-trading 组 3）：启动期恢复
         # 扫描（running 残态：可信续跑/不可信转 error）→ 守护线程拾取。
         # 摆位纪律：本段须在 runner.start() 之前——段的延迟 import 链与
@@ -273,18 +224,11 @@ def create_app(
             paper_scheduler.registry.guardian = fapi_guardian
             fapi_guardian.start_background()
 
-        runner.start()
-
         yield
 
-        # 关停序：先断推送（避免 runner 停止后回调打到空目标），再停
-        # evolution runner 与纸盘调度器，再停 fapi 流/建库，随后停
-        # 保鲜守护器（守护器停于 flush 前——避免 flush 后守护器再
-        # 写），最后清落盘缓冲（SIGTERM 关停序——分级落盘的停机清
-        # 缓冲面）
-        set_ws_push_fn(None)
-        runner.stop()
-        runner.join(timeout=5.0)
+        # 关停序：先停纸盘调度器，再停 fapi 流/建库，随后停保鲜
+        # 守护器（守护器停于 flush 前——避免 flush 后守护器再写），
+        # 最后清落盘缓冲（SIGTERM 关停序——分级落盘的停机清缓冲面）
         paper_scheduler.stop()
         paper_scheduler.join(timeout=5.0)
         if fapi_backfill is not None:
@@ -335,17 +279,13 @@ def create_app(
     # 挂载全部业务路由（研究域路由因包内延迟装配置于其后）
     app.include_router(config.router)
     app.include_router(strategies.router)
-    app.include_router(evolution.router)
     app.include_router(data.router)
-    app.include_router(live_trading_route.router)
     # 纸盘交易新域端点族（rebuild-paper-trading 5.1）
     app.include_router(paper_trading_route.router)
-    app.include_router(validate_route.router)
     from api.routes import workbench as workbench_route
     from api.routes import integrity_workbench as integrity_route
     app.include_router(workbench_route.router)
     app.include_router(integrity_route.router)
-    app.include_router(scene_route.router)
 
     # 研究域路由（add-ai-research-mcp）
     from api.routes import research as research_route

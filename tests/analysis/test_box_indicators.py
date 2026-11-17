@@ -345,8 +345,7 @@ class TestBoxRegimeConditions:
     def test_face_register_and_translate(self, tmp_path):
         """面三/四 假设登记＋翻译：BoxRegime eq 1 条件登记入册并翻译为
         SignalGene（indicator/params 原样传递）。"""
-        from core.analysis.hypothesis_service import register_hypothesis
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
         from core.persistence.db_ext import init_db_ext
         from core.analysis.executor import ensure_research_tables
 
@@ -359,17 +358,12 @@ class TestBoxRegimeConditions:
                 "action": "eq", "target": 1}
         then = {"subject": {"indicator": "RSI", "params": {"period": 14}},
                 "action": "gt", "target": 50}
-        hyp = register_hypothesis(
-            db, conditions={"when_conditions": [cond],
-                            "then_conditions": [then]},
-            statement="箱体态成立后动量走强",
-            strategy_params={"stop_loss": 0.05},
-            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1h",
-                          "start": "2026-01-01", "end": "2026-03-01"}])
-        assert hyp["hypothesis_id"]
-        out = translate_hypothesis(db, hypothesis_id=hyp["hypothesis_id"])
-        # genes 为「indicator(field)」字符串清单
-        assert "BoxRegime(box_state)" in out["genes"]
+        genes, _sources = build_signal_genes(
+            [cond], [then], db, strategy_timeframe="1h")
+        g = genes[0]
+        assert g.indicator == "BoxRegime" and g.field_name == "box_state"
+        assert g.params == {"window": 120, "width_thr": 0.08,
+                            "min_len": 48}
 
     def test_face_evaluate_condition(self):
         """面五回测求值：eq 1/gt 0.5/within_bars_after 三动作行为锚。"""
@@ -889,8 +883,7 @@ class TestBoxChannelRemainingFaces:
     def test_face_register_and_translate(self, tmp_path):
         """面三/四 假设登记＋翻译：BoxChannel price_below break_low
         条件（D2 破箱认错语义）登记入册并翻译为 SignalGene。"""
-        from core.analysis.hypothesis_service import register_hypothesis
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
         from core.persistence.db_ext import init_db_ext
         from core.analysis.executor import ensure_research_tables
 
@@ -904,16 +897,11 @@ class TestBoxChannelRemainingFaces:
                 "action": "price_below", "target": 0}
         then = {"subject": {"indicator": "RSI", "params": {"period": 14}},
                 "action": "gt", "target": 50}
-        hyp = register_hypothesis(
-            db, conditions={"when_conditions": [cond],
-                            "then_conditions": [then]},
-            statement="收盘破箱体破坏线后离场",
-            strategy_params={"stop_loss": 0.05},
-            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1h",
-                          "start": "2026-01-01", "end": "2026-03-01"}])
-        assert hyp["hypothesis_id"]
-        out = translate_hypothesis(db, hypothesis_id=hyp["hypothesis_id"])
-        assert "BoxChannel(break_low)" in out["genes"]
+        genes, _sources = build_signal_genes(
+            [cond], [then], db, strategy_timeframe="1h")
+        g = genes[0]
+        assert g.indicator == "BoxChannel" and g.field_name == "break_low"
+        assert g.params == p
 
 
 # --------------------------------------------- 补网：资格宽经 threshold 承载（R2）

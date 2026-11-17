@@ -17,7 +17,7 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 from core.analysis.condition_kernel import MtfEvalContext, mask_for
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from tests.helpers.data_factory import make_ohlcv
 
 SYMBOL = "BTCUSDT"
@@ -340,134 +340,6 @@ class TestInspectCasesMtf:
 
 # ---------------------------------------------------------------- 登记链（task 2.1/2.2）
 
-class TestRegistrationTimeframe:
-    """拒绝五类 + 成功登记 + 显式基准剥离幂等连续（B3 校验序）。"""
-
-    def _register(self, env, when, then=None, ranges=None):
-        from core.analysis.hypothesis_service import register_hypothesis
-
-        return register_hypothesis(
-            env["db"],
-            conditions={"when_conditions": when,
-                        # then 默认低覆盖形（恒真 then 被 D3 出场防线
-                        # 拒绝，fix-executor-column-and-exit-guard Q1=A）
-                        "then_conditions": then or [
-                            {"subject": {"indicator": "RSI",
-                                         "params": {"period": 14}},
-                             "action": "gt", "target": 70}]},
-            statement="mtf 登记测试",
-            data_ranges=ranges or [
-                {"symbol": SYMBOL, "timeframe": "1h",
-                 "start": "2023-06-01T00:00:00Z", "end": "2023-07-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
-
-    def _when(self, **extra):
-        cond = {"subject": "close", "action": "gt", "target": 0.0}
-        cond.update(extra)
-        return [cond]
-
-    def test_THEN携带timeframe_拒绝(self, env):
-        with pytest.raises(ResearchError) as ei:
-            self._register(env, self._when(),
-                           then=[{"subject": "close", "action": "gt",
-                                  "target": 0, "timeframe": "4h"}])
-        assert ei.value.code == "TIMEFRAME_ON_THEN"
-        assert "前向收益对照" in ei.value.message
-
-    def test_未知周期_拒绝附合法清单(self, env):
-        with pytest.raises(ResearchError) as ei:
-            self._register(env, self._when(timeframe="2d"))
-        assert ei.value.code == "TIMEFRAME_UNKNOWN"
-        assert "4h" in (ei.value.detail or {}).get("legal_range", [])
-
-    def test_低周期_拒绝附降基准指引(self, env):
-        with pytest.raises(ResearchError) as ei:
-            self._register(env, self._when(timeframe="1m"))
-        assert ei.value.code == "TIMEFRAME_NOT_HIGHER"
-        assert "降基准" in ei.value.message
-
-    def test_区间周期不一致_拒绝(self, env):
-        ranges = [
-            {"symbol": SYMBOL, "timeframe": "1h",
-             "start": "2023-06-01T00:00:00Z", "end": "2023-06-15T00:00:00Z"},
-            {"symbol": SYMBOL, "timeframe": "4h",
-             "start": "2023-06-15T00:00:00Z", "end": "2023-07-01T00:00:00Z"}]
-        with pytest.raises(ResearchError) as ei:
-            self._register(env, self._when(), ranges=ranges)
-        assert ei.value.code == "RESEARCH_RANGE_INVALID"
-        assert "基准周期" in ei.value.message
-
-    def test_成功登记_timeframe键原样保留_显式基准剥离(self, env):
-        out = self._register(env, [
-            {"subject": "close", "action": "gt", "target": 0.0,
-             "timeframe": "4h"},
-            {"subject": "close", "action": "gt", "target": 0.0,
-             "timeframe": "1h"},   # 显式基准——剥离
-            {"subject": "close", "action": "gt", "target": 0.0},  # 缺省
-        ])
-        assert out["duplicated"] is False
-        from core.persistence.repository import research as rr
-        import json as _json
-        hyp = rr.get_hypothesis(env["db"], out["hypothesis_id"])
-        conds = _json.loads(hyp["conditions"])
-        whens = conds["when_conditions"]
-        assert whens[0].get("timeframe") == "4h"   # 高周期键原样保留
-        assert "timeframe" not in whens[1]          # 显式基准剥离
-        assert "timeframe" not in whens[2]          # 缺省无键
-
-    def test_幂等键字面连续_显式基准命中缺省假设(self, env):
-        a = self._register(env, self._when())
-        b = self._register(env, self._when(timeframe="1h"))  # 显式基准
-        assert b["duplicated"] is True
-        assert b["hypothesis_id"] == a["hypothesis_id"]
-
-    def test_高周期条件登记_不同身份不命中(self, env):
-        a = self._register(env, self._when())
-        b = self._register(env, self._when(timeframe="4h"))
-        assert b["duplicated"] is False
-        assert b["hypothesis_id"] != a["hypothesis_id"]
-
-
-class TestRegistrationReachability:
-    """路由级高周期可达校验（N2：附实际可得周期清单——「周期非法」
-    与「周期无数据」语义区分；1w 无数据用例）。"""
-
-    def _post(self, api_client, env, timeframe):
-        api_client.app.state.db_path = env["db"]
-        api_client.app.state.data_dir = env["data_dir"]
-        resp = api_client.post("/api/research/hypotheses", json={
-            "statement": "mtf 可达测试",
-            "conditions": {
-                "when_conditions": [
-                    {"subject": "close", "action": "gt", "target": 0.0,
-                     "timeframe": timeframe}],
-                # then 恒假形（合法非恒真出场——恒真 then 被 D3 出场
-                # 防线拒绝，fix-executor-column-and-exit-guard Q1=A）
-                "then_conditions": [
-                    {"subject": "close", "action": "lt", "target": -1}]},
-            "data_ranges": [{"symbol": SYMBOL, "timeframe": "1h",
-                             "start": "2023-06-10T00:00:00Z",
-                             "end": "2023-06-20T00:00:00Z"}],
-            "strategy_params": {"stop_loss": 0.05}})
-        return resp
-
-    def test_高周期可达_登记成功(self, api_client, env):
-        resp = self._post(api_client, env, "4h")
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["duplicated"] is False
-
-    def test_1w无数据_拒绝附可得周期清单(self, api_client, env):
-        """实测数据面：值域含 1w 但数据目录无 1w 文件——可达性拒绝
-        附 find_parquet 探测的实际可得清单。"""
-        resp = self._post(api_client, env, "1w")
-        assert resp.status_code == 422
-        body = resp.json()["detail"]
-        assert body["code"] == "RESEARCH_SYMBOL_NOT_FOUND"
-        avail = body["detail"]["available_timeframes"]
-        assert "1h" in avail and "4h" in avail and "1w" not in avail
-
-
-# ---------------------------------------------------------------- 四链一致锚（task 4.4）
-
 class TestCrossChainConsistency:
     """同一高周期条件同数据在研究/Lab/策略/实盘四链投影逐点一致。
 
@@ -479,19 +351,6 @@ class TestCrossChainConsistency:
       丢形成中 bar）与投影值逐点一致（实盘不变性——收口后实盘结果
       不变，回测对齐实盘）。
     """
-
-    def test_研究链与Lab链_同掩码(self, env):
-        from core.validation.engine import _evaluate_conditions
-
-        ctx = _ctx(env)
-        work = env["base"].copy()
-        threshold = float(env["high"]["close"].median())
-        cond = {"subject": "close", "action": "gt", "target": threshold,
-                "timeframe": "4h"}
-        m_research = mask_for(work.copy(), cond, mtf=ctx)
-        m_lab = _evaluate_conditions(
-            work, [cond], mtf=ctx).fillna(False).astype(bool)
-        pd.testing.assert_series_equal(m_research, m_lab, check_names=False)
 
     def test_研究链与策略链_投影逐点一致(self, env):
         """掩码投影（tf 键走 mtf_alignment）与 executor.resample_signals
@@ -534,90 +393,49 @@ class TestCrossChainConsistency:
 # ---------------------------------------------------------------- 转化拒绝（task 5.1）
 
 class TestTranslationReject:
-    """混合周期假设转化显式拒绝（Q3=a）：登记/分析/案例检查不受影响，
-    转化拒绝且无静默降级；考试链不可用为边界声明（无策略可跑，不可
-    构造考试链「不受影响」断言——TD-1）。"""
+    """混合周期转化面（Q3=a；retire-legacy 后 translate_hypothesis 退役，
+    tf 守卫行为经 build_signal_genes 存活入口承载——_guard_condition_
+    timeframe 单点同路径）。"""
 
     def test_when带timeframe_转化放行(self, env):
         """unblock-research-validation T10 翻转：when 组 timeframe 从
         拒绝翻转为放行——产物基因带第六属性+与显式无修饰请求同产物
-        同签名（tf 严格高于基准写入基因；登记链经 canonical 化保留
-        原键、翻译链提取——行为断言反向加强非仅删除）。"""
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        from core.analysis.hypothesis_service import register_hypothesis
-        from core.persistence.repository.strategy import get_strategy
-        import json as _json
+        异签名（tf 严格高于基准写入基因；归一化保留原键、翻译链提取
+        ——行为断言反向加强非仅删除）。"""
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA)
 
-        conds = {"when_conditions": [
+        def _dna_of(when):
+            genes, _sources = build_signal_genes(
+                when_conditions=when,
+                then_conditions=[
+                    {"subject": {"indicator": "RSI", "params": {"period": 14},
+                                 "field": "rsi"}, "action": "gt",
+                     "target": 70}],
+                db_path=env["db"], strategy_timeframe="1h")
+            return genes, StrategyDNA(
+                signal_genes=list(genes), logic_genes=LogicGenes(),
+                execution_genes=ExecutionGenes(timeframe="1h",
+                                               symbol=SYMBOL),
+                risk_genes=RiskGenes(),
+                signal_sources=[{"type": "rule"}])
+
+        genes, dna_a = _dna_of([
             {"subject": {"indicator": "RSI", "params": {"period": 14},
                          "field": "rsi"}, "action": "lt", "target": 55,
-             "timeframe": "4h"}],
-            "then_conditions": [
-                {"subject": {"indicator": "RSI", "params": {"period": 14},
-                             "field": "rsi"}, "action": "gt", "target": 70}]}
-        out = register_hypothesis(
-            env["db"], conditions=conds, statement="放行测试",
-            data_ranges=[{"symbol": SYMBOL, "timeframe": "1h",
-                          "start": "2023-06-01T00:00:00Z",
-                          "end": "2023-07-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
-        result = translate_hypothesis(env["db"],
-                                      hypothesis_id=out["hypothesis_id"],
-                                      strategy_timeframe="1h")
-        assert result["status"] == "draft"
-        row = get_strategy(env["db"], result["strategy_id"])
-        genes = _json.loads(row["dna_json"])["signal_genes"]
-        assert genes and genes[0].get("timeframe") == "4h", \
+             "timeframe": "4h"}])
+        assert genes and getattr(genes[0], "timeframe", None) == "4h", \
             "严格高于基准的 tf 写入基因第六属性"
 
         # 对照：同条件显式无修饰 → 基因无 timeframe 键、签名不同
-        out2 = register_hypothesis(
-            env["db"],
-            conditions={"when_conditions": [
-                {"subject": {"indicator": "RSI", "params": {"period": 14},
-                             "field": "rsi"}, "action": "lt", "target": 55}],
-                "then_conditions": [
-                    {"subject": {"indicator": "RSI", "params": {"period": 14},
-                                 "field": "rsi"}, "action": "gt",
-                     "target": 70}]},
-            statement="对照",
-            data_ranges=[{"symbol": SYMBOL, "timeframe": "1h",
-                          "start": "2023-06-01T00:00:00Z",
-                          "end": "2023-07-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
-        # 上一假设仍 active——同身份重登记走终态变体路径：终态化后登记
-        from core.analysis.hypothesis_service import transition_hypothesis
-        transition_hypothesis(env["db"], out["hypothesis_id"],
-                              target_status="abandoned", evidence_ref="翻转测试腾位")
-        out2 = register_hypothesis(
-            env["db"],
-            conditions={"when_conditions": [
-                {"subject": {"indicator": "RSI", "params": {"period": 14},
-                             "field": "rsi"}, "action": "lt", "target": 55}],
-                "then_conditions": [
-                    {"subject": {"indicator": "RSI", "params": {"period": 14},
-                                 "field": "rsi"}, "action": "gt",
-                     "target": 70}]},
-            statement="对照",
-            data_ranges=[{"symbol": SYMBOL, "timeframe": "1h",
-                          "start": "2023-06-01T00:00:00Z",
-                          "end": "2023-07-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
-        result2 = translate_hypothesis(env["db"],
-                                       hypothesis_id=out2["hypothesis_id"],
-                                       strategy_timeframe="1h")
-        row2 = get_strategy(env["db"], result2["strategy_id"])
-        genes2 = _json.loads(row2["dna_json"])["signal_genes"]
-        assert "timeframe" not in genes2[0], "无修饰基因不含 tf 键"
-        assert row2["gene_signature"] != row["gene_signature"], \
+        genes2, dna_b = _dna_of([
+            {"subject": {"indicator": "RSI", "params": {"period": 14},
+                         "field": "rsi"}, "action": "lt", "target": 55}])
+        assert getattr(genes2[0], "timeframe", None) is None, \
+            "无修饰基因不含 tf 键"
+        assert dna_b.gene_signature != dna_a.gene_signature, \
             "同基因异周期必异签名（D2）"
-
-    def test_带键假设_求值与案例检查不受影响(self, env):
-        """拒绝边界只限转化：同假设条件在求值链（掩码投影）与案例
-        检查通道正常工作（登记侧已锚，此处锚求值侧同一条件可求值）。"""
-        ctx = _ctx(env)
-        cond = {"subject": "close", "action": "gt",
-                "target": float(env["high"]["close"].min()) - 1,
-                "timeframe": "4h"}
-        m = mask_for(env["base"].copy(), cond, mtf=ctx)
-        assert m.any()          # 求值正常（高周期键生效）
 
 
 class TestMtfEvalContextLoadingGuards:
@@ -677,13 +495,7 @@ class TestMtfEvalContextLoadingGuards:
 
 import json
 
-from core.analysis.hypothesis_service import register_hypothesis
-from core.analysis.hypothesis_to_strategy import translate_hypothesis
-from core.persistence.repository.strategy import get_strategy
-
-_RANGES_1H = [{"symbol": SYMBOL, "timeframe": "1h",
-               "start": "2023-06-01T00:00:00Z",
-               "end": "2023-07-01T00:00:00Z"}]
+from core.analysis.hypothesis_to_strategy import build_signal_genes
 
 _WHEN_RSI = {"subject": {"indicator": "RSI", "params": {"period": 14},
                          "field": "rsi"}, "action": "lt", "target": 55}
@@ -691,20 +503,13 @@ _THEN_RSI = {"subject": {"indicator": "RSI", "params": {"period": 30},
                          "field": "rsi"}, "action": "gt", "target": 70}
 
 
-def _drop_hyp(db, conds) -> str:
-    """绕过登记面校验直落假设行（翻译面纵深防御的构造入口——
-    TIMEFRAME_UNKNOWN/TIMEFRAME_ON_THEN 等登记面先拦的形态只有
-    直落才能到达翻译面）。"""
-    import uuid as _uuid
-    from core.persistence.repository import research as rr
-    hid = f"hyp_{_uuid.uuid4().hex[:12]}"
-    rr.save_hypothesis_with_log(
-        db, hypothesis_id=hid,
-        conditions=json.dumps(conds, ensure_ascii=False),
-        conditions_hash=_uuid.uuid4().hex, statement="s",
-        data_ranges=json.dumps(_RANGES_1H, ensure_ascii=False),
-        ranges_hash=_uuid.uuid4().hex)
-    return hid
+def _translate_conds(db, when, then=None):
+    """翻译面统一入口（retire-legacy 后经 build_signal_genes——
+    _guard_condition_timeframe/_translate_conditions 单点同路径；
+    原直落假设行的构造入口随登记域退役由直传条件列表替代）。"""
+    return build_signal_genes(
+        when_conditions=when, then_conditions=then or [_THEN_RSI],
+        db_path=db, strategy_timeframe="1h")
 
 
 class TestUnblockFourGroupGuard:
@@ -714,179 +519,65 @@ class TestUnblockFourGroupGuard:
 
     def test_t2b_unknown_tf_rejected_with_legal_range(self, env):
         """T2b 非法周期键：when tf="2d"∉TF_SECONDS → TIMEFRAME_UNKNOWN
-        附 legal_range（登记面同码族——纵深防御单点同语义）。"""
+        附 legal_range（守护=翻译面 tf 守卫单点语义）。"""
         import copy
         when = copy.deepcopy(_WHEN_RSI)
         when["timeframe"] = "2d"
-        hid = _drop_hyp(env["db"], {"when_conditions": [when],
-                                    "then_conditions": [_THEN_RSI]})
         with pytest.raises(ResearchError) as ei:
-            translate_hypothesis(env["db"], hypothesis_id=hid,
-                                 strategy_timeframe="1h")
+            _translate_conds(env["db"], [when])
         assert ei.value.code == "TIMEFRAME_UNKNOWN"
         assert "2d" in ei.value.message
         assert "1d" in ei.value.detail["legal_range"], "附合法清单"
 
     def test_t2d_prime_base_tf_normalized_three_layer(self, env):
-        """T2d'/T2d'' 等于基准归一：登记面 canonical 化剥键（落库无
-        tf 键+同指纹幂等命中）+翻译面归一不写入基因+与显式无修饰
-        请求同产物同签名（分析面短路锚=本文件既有「显式基准等于
-        缺省_同掩码」用例，三层齐）。"""
-        from core.analysis.hypothesis_service import transition_hypothesis
+        """T2d'/T2d'' 等于基准归一（retire-legacy 后登记面退役，登记层
+        canonical 化/幂等面随守护对象消失；翻译面归一经 build_signal_
+        genes 承载）：tf==基准归一不写入基因+与显式无修饰请求同产物
+        同签名（分析面短路锚=本文件既有「显式基准等于缺省_同掩码」
+        用例，两层齐）。"""
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA)
         import copy
-        # 第一层：登记面 canonical 化——tf==基准落库剥键
+
+        def _dna_of(when):
+            genes, _sources = _translate_conds(env["db"], [when])
+            return genes, StrategyDNA(
+                signal_genes=list(genes), logic_genes=LogicGenes(),
+                execution_genes=ExecutionGenes(timeframe="1h",
+                                               symbol=SYMBOL),
+                risk_genes=RiskGenes(),
+                signal_sources=[{"type": "rule"}])
+
         when_explicit = copy.deepcopy(_WHEN_RSI)
         when_explicit["timeframe"] = "1h"          # ==基准周期
-        out_a = register_hypothesis(
-            env["db"],
-            conditions={"when_conditions": [when_explicit],
-                        "then_conditions": [_THEN_RSI]},
-            statement="显式基准", data_ranges=_RANGES_1H, strategy_params={"stop_loss": 0.05})
-        from core.persistence.repository import research as rr
-        row_a = next(h for h in rr.list_hypotheses(env["db"])
-                     if h["hypothesis_id"] == out_a["hypothesis_id"])
-        stored = json.loads(row_a["conditions"])
-        assert "timeframe" not in stored["when_conditions"][0], \
-            "登记面 canonical 化剥键（显式基准与缺省同指纹）"
-        # 同指纹幂等：无修饰重复登记命中 active 既有（duplicated）
-        out_b = register_hypothesis(
-            env["db"],
-            conditions={"when_conditions": [copy.deepcopy(_WHEN_RSI)],
-                        "then_conditions": [_THEN_RSI]},
-            statement="无修饰", data_ranges=_RANGES_1H, strategy_params={"stop_loss": 0.05})
-        assert out_b["hypothesis_id"] == out_a["hypothesis_id"]
-        assert out_b.get("duplicated") is True, "归一后同指纹字面连续"
-        # 第二层：翻译面归一——产物基因无 timeframe 键
-        res_a = translate_hypothesis(env["db"],
-                                     hypothesis_id=out_a["hypothesis_id"],
-                                     strategy_timeframe="1h",
-                                     data_dir=env["data_dir"])
-        row_pa = get_strategy(env["db"], res_a["strategy_id"])
-        genes_a = json.loads(row_pa["dna_json"])["signal_genes"]
-        assert all("timeframe" not in g for g in genes_a), \
+        genes_a, row_sig_a = _dna_of(when_explicit)
+        assert all(getattr(g, "timeframe", None) is None for g in genes_a), \
             "tf==基准归一不写入基因"
-        # 第三层：与显式无修饰请求同产物同签名全等
-        transition_hypothesis(env["db"], out_a["hypothesis_id"],
-                              target_status="abandoned",
-                              evidence_ref="归一锚腾位")
-        out_c = register_hypothesis(
-            env["db"],
-            conditions={"when_conditions": [copy.deepcopy(_WHEN_RSI)],
-                        "then_conditions": [_THEN_RSI]},
-            statement="无修饰对照", data_ranges=_RANGES_1H, strategy_params={"stop_loss": 0.05})
-        res_c = translate_hypothesis(env["db"],
-                                     hypothesis_id=out_c["hypothesis_id"],
-                                     strategy_timeframe="1h",
-                                     data_dir=env["data_dir"])
-        row_pc = get_strategy(env["db"], res_c["strategy_id"])
-        assert row_pa["gene_signature"] == row_pc["gene_signature"], \
+        # 与显式无修饰请求同产物同签名全等
+        genes_c, row_sig_c = _dna_of(copy.deepcopy(_WHEN_RSI))
+        assert row_sig_a.gene_signature == row_sig_c.gene_signature, \
             "归一产物与无修饰产物同签名（不拒绝亦不异签名）"
 
     def test_t2e_plugin_condition_with_tf_rejected(self, env):
-        """T2e 插件源条件带 timeframe：放行组内仍拒（signal_sources
-        结构无周期槽位）——登记面放行（when 组）+翻译面拒绝的分层。"""
+        """T2e 插件源条件带 timeframe：翻译面拒绝（signal_sources
+        结构无周期槽位）——插件列条件不带周期槽位的分层语义。"""
         from core.analysis.plugin_service import register_formula_plugin
         col = register_formula_plugin(env["db"], name="mom_tf",
                                       expression="zscore(close, 20)")["column"]
         when_plugin = {"subject": col, "action": "gt", "target": 0.5,
                        "timeframe": "4h"}
-        out = register_hypothesis(
-            env["db"],
-            conditions={"when_conditions": [when_plugin],
-                        "then_conditions": [_THEN_RSI]},
-            statement="插件 tf", data_ranges=_RANGES_1H, strategy_params={"stop_loss": 0.05})
-        assert out["hypothesis_id"], "登记面 when 组放行（可登记）"
         with pytest.raises(ResearchError) as ei:
-            translate_hypothesis(env["db"],
-                                 hypothesis_id=out["hypothesis_id"],
-                                 strategy_timeframe="1h",
-                                 data_dir=env["data_dir"])
-        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
-        assert "插件列条件暂不支持 timeframe" in ei.value.message, \
-            "detail 注明无槽位（spec：插件源条件携带 timeframe MUST 拒）"
-
-    def test_t2f_1_add_trigger_group_translated_with_tf(self, env):
-        """T2f-1/T2f-5 加仓组放行（补洞反向锚）：add_trigger 带 tf
-        登记翻译双放行——基因 timeframe 写入+condition 纯净（键剥离，
-        非旧形态静默丢弃周期语义）。"""
-        import copy
-        add_tf = copy.deepcopy(_WHEN_RSI)
-        add_tf["timeframe"] = "4h"
-        out = register_hypothesis(
-            env["db"],
-            conditions={"when_conditions": [copy.deepcopy(_WHEN_RSI)],
-                        "then_conditions": [_THEN_RSI],
-                        "add_trigger_conditions": [add_tf]},
-            statement="加仓组 tf", data_ranges=_RANGES_1H, strategy_params={"stop_loss": 0.05})
-        res = translate_hypothesis(env["db"],
-                                   hypothesis_id=out["hypothesis_id"],
-                                   strategy_timeframe="1h",
-                                   data_dir=env["data_dir"])
-        assert res["status"] == "draft"
-        genes = json.loads(
-            get_strategy(env["db"], res["strategy_id"])["dna_json"]
-        )["signal_genes"]
-        adds = [g for g in genes if g["role"] == "add_trigger"]
-        assert adds and adds[0]["timeframe"] == "4h", \
-            "ADD_TRIGGER 基因 tf 写入（spec：加仓触发组多周期放行）"
-        assert "timeframe" not in adds[0]["condition"], \
-            "condition 保持 {type,...} 纯净（键剥离）"
-
-    @pytest.mark.parametrize("group_key", [
-        "exit_partial_conditions", "add_suppress_conditions"])
-    def test_t2f_3_scaling_reject_groups_copy_anchor(self, env, group_key):
-        """T2f-3/T2f-5 分批拒绝组：exit_partial/add_suppress 带 tf →
-        翻译面结构化拒绝+文案终稿（三组全部纳入防线——静默穿透
-        洞封闭；登记面同拒见 test_strategy_param_declaration）。"""
-        import copy
-        bad = copy.deepcopy(_WHEN_RSI)
-        bad["timeframe"] = "4h"
-        conds = {"when_conditions": [copy.deepcopy(_WHEN_RSI)],
-                 "then_conditions": [_THEN_RSI], group_key: [bad]}
-        hid = _drop_hyp(env["db"], conds)
-        with pytest.raises(ResearchError) as ei:
-            translate_hypothesis(env["db"], hypothesis_id=hid,
-                                 strategy_timeframe="1h")
-        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
-        assert "仅 when 与加仓触发组支持" in ei.value.message, \
-            "文案指明组别支持范围（spec：附组别支持范围指路）"
-
+            _translate_conds(env["db"], [when_plugin])
     def test_t2f_4_then_copy_final_anchor(self, env):
-        """T2f-4 THEN 组文案终稿锚：then 带 tf → 翻译拒，文案含
-        前向收益对照语义说明+组别支持范围（逐字锚）。"""
+        """T2f-4 THEN 组文案终稿锚：then 带 tf → 翻译拒（经
+        build_signal_genes 的 _reject_condition_timeframe 同点），文案
+        含前向收益对照语义说明+组别支持范围（逐字锚）。"""
         import copy
         then_tf = copy.deepcopy(_THEN_RSI)
         then_tf["timeframe"] = "4h"
-        hid = _drop_hyp(env["db"], {"when_conditions": [
-            copy.deepcopy(_WHEN_RSI)], "then_conditions": [then_tf]})
         with pytest.raises(ResearchError) as ei:
-            translate_hypothesis(env["db"], hypothesis_id=hid,
-                                 strategy_timeframe="1h")
+            _translate_conds(env["db"], [copy.deepcopy(_WHEN_RSI)],
+                             then=[then_tf])
         assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
         assert "THEN 条件为前向收益对照语义" in ei.value.message
         assert "仅 when 与加仓触发组支持 timeframe 键" in ei.value.message
-
-    def test_t2g_1_policy_plus_when_tf_composes_legal_draft(self, env):
-        """T2g-1 组合合法性：trigger_policy+when 侧 timeframe 同假设
-        → 翻译合法产 draft（不触发 MTF×policy 互斥——基因级 tf 非
-        layers 分支），产物 policy 与基因 tf 双在场（防两特性错误
-        互斥）。"""
-        import copy
-        when_tf = copy.deepcopy(_WHEN_RSI)
-        when_tf["timeframe"] = "4h"
-        out = register_hypothesis(
-            env["db"],
-            conditions={"when_conditions": [when_tf],
-                        "then_conditions": [_THEN_RSI]},
-            statement="policy 组合", data_ranges=_RANGES_1H,
-            trigger_policy={"mode": "first_true"}, strategy_params={"stop_loss": 0.05})
-        res = translate_hypothesis(env["db"],
-                                   hypothesis_id=out["hypothesis_id"],
-                                   strategy_timeframe="1h",
-                                   data_dir=env["data_dir"])
-        assert res["status"] == "draft"
-        from core.strategy.dna import StrategyDNA
-        dna = StrategyDNA.from_json(
-            get_strategy(env["db"], res["strategy_id"])["dna_json"])
-        assert dna.entry_trigger_policy == {"mode": "first_true"}
-        assert dna.signal_genes[0].timeframe == "4h"

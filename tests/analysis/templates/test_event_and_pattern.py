@@ -6,7 +6,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.event_study import event_study
 from core.analysis.templates.pattern_mining import similar_at_time
 
@@ -54,7 +54,7 @@ class TestEventStudy:
         df = _make_df(200)
         # 罕见条件：close > 极大值 → 0 事件
         # CARD-10 收编：小样本属业务拒绝 422（detail 披露事件计数）
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         with pytest.raises(ResearchError, match="事件数") as ei:
             event_study(df, condition={"subject": "close", "action": "gt",
                                        "target": 1e12}, window=5,
@@ -192,7 +192,7 @@ class TestEventStudyTimeframeKey:
         assert res.payload["n_events"] == 588
 
     def test_无ctx带高周期键_显式接线错误拒(self, tmp_path):
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
 
         base, _, _ = self._mtf_env(tmp_path)
         with pytest.raises(ResearchError) as ei:

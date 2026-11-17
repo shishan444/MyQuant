@@ -15,7 +15,7 @@ pytestmark = [pytest.mark.unit]
 from core.analysis.condition_kernel import (
     PLUGIN_COLUMN_PREFIXES, collect_condition_plugin_columns,
     collect_condition_refs, mask_for, mask_for_all)
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 
 
 def _make_df(n: int = 300, seed: int = 42, start: str = "2024-01-01") -> pd.DataFrame:
@@ -193,7 +193,7 @@ class TestConditionItemStrictness:
     def test_t6c_array_whitelist_with_keys_detail(self):
         """T6c 数组校验白名单：未知键附 {unknown_keys, legal_keys}+指路。"""
         from core.analysis.condition_kernel import validate_conditions_array
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         with pytest.raises(ResearchError) as ei:
             validate_conditions_array([
                 {"subject": {"indicator": "RSI", "params": {}},

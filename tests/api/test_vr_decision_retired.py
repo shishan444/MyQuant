@@ -18,8 +18,8 @@ from fastapi.testclient import TestClient
 
 from core.analysis import validation_service as vs_mod
 from core.analysis.executor import ensure_research_tables
-from core.analysis.hypothesis_service import register_hypothesis
-from core.analysis.validation_service import run_isolated_backtest
+from tests.helpers.vr_factory import insert_hypothesis
+from core.analysis.validation_service import run_sandbox_backtest
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
 from core.persistence.repository.strategy import save_strategy
@@ -43,7 +43,7 @@ def env(tmp_path: Path):
     db = tmp_path / "q.db"
     init_db_ext(db)
     ensure_research_tables(db)
-    hid = register_hypothesis(
+    hid = insert_hypothesis(
         db,
         conditions={
             "when_conditions": [{"subject": {"indicator": "RSI",
@@ -55,7 +55,7 @@ def env(tmp_path: Path):
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2024-01-01T00:00:00Z",
                       "end": "2024-01-15T00:00:00Z"}],
-        strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+        strategy_params={"stop_loss": 0.05})
     s = build_sample("pct_long")
     save_strategy(db, strategy_id="st_retire",
                   dna_json=s["dna"].to_json(), symbol="BTCUSDT",
@@ -68,12 +68,10 @@ def env(tmp_path: Path):
 
 def test_write_side_key_absent(env):
     """T3-1 写侧：新验证记录 trades 载荷无 decision_json 键。"""
-    out = run_isolated_backtest(
-        env["db"], env["dir"], hypothesis_id=env["hid"],
-        strategy_id="st_retire",
-        request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                       "start": "2024-03-25T00:00:00Z",
-                       "end": "2024-04-10T00:00:00Z"})
+    out = run_sandbox_backtest(
+        env["db"], env["dir"], strategy_id="st_retire",
+        hypothesis_id=env["hid"], symbol="BTCUSDT", timeframe="4h",
+        start="2024-03-25T00:00:00Z", end="2024-04-10T00:00:00Z")
     assert out["record_id"]
     trades = rr.get_validation_executions(env["db"], out["record_id"])
     assert trades, "fixture 须产生至少一份明细"
@@ -84,12 +82,10 @@ def test_write_side_key_absent(env):
 
 def test_detail_endpoint_decision_absent(env):
     """T3-1 读侧：detail 响应 trades 行 decision 键不在场。"""
-    out = run_isolated_backtest(
-        env["db"], env["dir"], hypothesis_id=env["hid"],
-        strategy_id="st_retire",
-        request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                       "start": "2024-03-01T00:00:00Z",
-                       "end": "2024-03-20T00:00:00Z"})
+    out = run_sandbox_backtest(
+        env["db"], env["dir"], strategy_id="st_retire",
+        hypothesis_id=env["hid"], symbol="BTCUSDT", timeframe="4h",
+        start="2024-03-01T00:00:00Z", end="2024-03-20T00:00:00Z")
     r = env["client"].get(
         f"/api/research/validation-records/{out['record_id']}/detail")
     assert r.status_code == 200

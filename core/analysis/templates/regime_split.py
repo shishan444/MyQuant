@@ -19,7 +19,7 @@ import pandas as pd
 
 from core.analysis.condition_kernel import MtfEvalContext, mask_for, p_value_for, stat_window_mask
 from core.analysis.warmup_loader import to_utc
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.param_guard import _require_int_range
 from core.analysis.regime_segments import GATES, build_segments
 from core.analysis.result import AnalysisResult, build_result

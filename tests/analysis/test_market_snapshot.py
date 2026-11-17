@@ -19,7 +19,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.market_snapshot import get_market_snapshot
 from core.persistence.repository import research as rr
 from tests.helpers.regime_factory import (

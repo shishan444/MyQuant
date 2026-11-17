@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.result import build_result
 from core.analysis.templates.ruler_compare import (
     BOX_EDGE_WINDOW_DEFAULTS, DEFAULT_B, DEFAULT_COMPARE_WARMUP_BARS,

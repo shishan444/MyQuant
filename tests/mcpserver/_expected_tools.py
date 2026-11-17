@@ -6,52 +6,33 @@
 直接显示缺/多的工具名。
 
 清单内容取自 build_server(profile="research") 真实输出（2026-09-26，
-main 39949a7）。增减工具只改本常量一处；与 mcpserver/server.py 的
+main 39949a7；retire-legacy-subsystems 渐进收缩中——当前=原集−旧验证
+4+union_balance）。增减工具只改本常量一处；与 mcpserver/server.py 的
 注册集失联由三处集合断言拦截。
 """
 from __future__ import annotations
 
 EXPECTED_RESEARCH_TOOLS: frozenset[str] = frozenset({
-    "batch_delete_strategies",
     "get_analysis_task",
-    "get_evolution_strategies",
-    "get_hypothesis",
     "get_market_snapshot",
     "get_paper_history",
     "get_paper_report",
     "get_paper_task",
     "get_research_log",
     "get_strategy",
-    "get_validation_report",
     "inspect_cases",
     "list_data_sources",
-    "list_evolution_tasks",
-    "list_feature_requests",
-    "list_hypotheses",
     "list_indicators",
     "list_paper_tasks",
     "list_signal_columns",
     "list_strategies",
     "mount_paper_task",
-    "pause_evolution_task",
-    "poll_evolution_task",
     "query_indicator",
     "query_paper_signals",
-    "resume_evolution_task",
-    "run_staged_validation",
     "register_formula_plugin",
-    "register_hypothesis",
     "register_model_plugin",
     "run_analysis",
     "run_backtest",
-    "run_isolated_validation",
-    "run_random_window_test",
-    "stop_evolution_task",
-    "submit_feature_request",
-    "transition_hypothesis",
-    "translate_hypothesis_to_strategy",
-    "trigger_evolution",
     "unmount_paper_task",
-    "union_balance",
     "update_strategy_metadata",
 })

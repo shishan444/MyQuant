@@ -20,7 +20,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.event_policy import mask_to_events
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.strategy.dna import (
     ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA,
 )
@@ -222,49 +222,3 @@ class TestMtfBoundary:
             batch_signal_sets([_mtf_policy_dna()], df, dfs)
         assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
 
-
-class TestEvolutionInheritance:
-    """进化继承（6.3 / D11 / Q5=random.choice 沿元字段先例）。"""
-
-    def test_crossover_子代_policy_取自亲代(self) -> None:
-        from core.evolution.operators import crossover
-        a = _policy_dna({"mode": "first_true"})
-        b = _policy_dna({"mode": "suppress_bars", "bars": 48})
-        seen = set()
-        for _ in range(40):
-            child = crossover(a, b)
-            assert child.entry_trigger_policy in (
-                {"mode": "first_true"},
-                {"mode": "suppress_bars", "bars": 48})   # 非静默丢失
-            seen.add(json.dumps(child.entry_trigger_policy,
-                                sort_keys=True))
-        assert len(seen) == 2                    # 两亲代取值都出现
-
-    def test_crossover_单亲带policy_继承不丢失(self) -> None:
-        from core.evolution.operators import crossover
-        a = _policy_dna({"mode": "first_true"})
-        b = _policy_dna(None)
-        for _ in range(20):
-            child = crossover(a, b)
-            assert child.entry_trigger_policy in (
-                {"mode": "first_true"}, None)
-
-    def test_mutate_mtf_mode_带policy个体_形态不变(self) -> None:
-        """带 policy 个体跳过 mtf_mode 变异（不产生 MTF+policy 形态）。"""
-        from core.evolution.operators import mutate_mtf_mode
-        dna = _mtf_policy_dna()
-        out = mutate_mtf_mode(dna)
-        assert out.entry_trigger_policy == {"mode": "first_true"}
-        assert out.mtf_mode == dna.mtf_mode       # no-op：mode 与形态不变
-        assert "mtf_mode" not in out.mutation_ops
-
-    def test_变异算子_往返存活(self) -> None:
-        """11 个变异算子全走 to_dict/from_dict 往返——字段经白名单
-        扩展后天然存活（代表算子锚）。"""
-        from core.evolution.operators import (
-            mutate_confluence_threshold, mutate_proximity_mult)
-        dna = _policy_dna({"mode": "suppress_bars", "bars": 24})
-        for op in (mutate_confluence_threshold, mutate_proximity_mult):
-            out = op(dna)
-            assert out.entry_trigger_policy == {"mode": "suppress_bars",
-                                                "bars": 24}

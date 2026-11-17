@@ -43,7 +43,6 @@ def client(tmp_path: Path):
     from core.persistence.db_ext import init_db_ext
     from core.analysis.executor import ensure_research_tables
     from api.app import create_app
-    from core.analysis.hypothesis_service import register_hypothesis
     db = tmp_path / "q.db"
     init_db_ext(db)
     ensure_research_tables(db)
@@ -52,7 +51,8 @@ def client(tmp_path: Path):
     from core.persistence.repository.strategy import save_strategy
     save_strategy(db, strategy_id="st_wb", dna_json="{}", symbol="BTCUSDT",
                   timeframe="4h", gene_signature="sig_wb_test")
-    register_hypothesis(
+    from tests.helpers.vr_factory import insert_hypothesis
+    insert_hypothesis(
         db,
         conditions={"when_conditions": [
             {"subject": {"indicator": "RSI", "params": {"period": 14}},
@@ -242,28 +242,49 @@ class TestEmbeddedAndMissing:
         assert by_id["vr_04"]["result"] is None  # 三态缺失如实
         assert by_id["vr_01"]["pollution_cause"] is None  # 未标注 NULL
 
-    def test_same_source_as_strategy_report(self, client):
-        """与 GET /validation/{strategy_id}/report 同源同值（同一 record 两视图）。
 
-        修正记录：原版在 report 404（strategy 实体未种）与交集空时
-        零断言恒绿——Scenario 同源同值实际未被证明。现 fixture 已种
-        st_wb 实体，两视图交集由种子确定（vr_00/02 isolated、vr_04
-        random_window），硬断言共有字段一致。
-        """
-        rep = client.get("/api/research/validation/st_wb/report")
-        assert rep.status_code == 200  # 实体已种——404 即种子失效
-        rep_iso = {r["record_id"]: r for r in rep.json()["isolated_backtests"]}
-        rep_win_ids = {r["record_id"] for r in rep.json()["random_window_summaries"]}
-        mine = {r["record_id"]: r for r in client.get(
-            "/api/research/validation-records",
-            params={"strategy_id": "st_wb", "limit": 200}).json()["records"]}
-        # 交集非空（同源性可证明）+ 两视图 record 归属一致
-        assert set(mine) == (set(rep_iso) | rep_win_ids)
-        assert {"vr_00", "vr_02"} <= set(rep_iso)
-        assert "vr_04" in rep_win_ids
-        # 共有字段同值：isolated 行 verdict 两视图一致
-        for rid in ("vr_00", "vr_02"):
-            assert mine[rid]["verdict"] == rep_iso[rid]["verdict"]
+
+class TestPollutionCauseLegacyDisclosure:
+    """存量污染标注查询（retire-legacy ADDED 条款·响应披露面）：
+    历史回扫标注数据为 D4 行数据不动的事实——pollution_cause 带值
+    行经列表端点如实返回（历史标注事实照常可查）；未标注行 NULL
+    语义由既有 test_params_result_json_embedded_and_null(:243) 承载。"""
+
+    _CAUSE = "gene_tf_drift"
+
+    @pytest.fixture()
+    def polluted_client(self, tmp_path: Path):
+        from core.persistence.db_ext import init_db_ext
+        from core.analysis.executor import ensure_research_tables
+        from api.app import create_app
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from core.persistence.orm.models import ValidationRecord
+        db = tmp_path / "q.db"
+        init_db_ext(db)
+        ensure_research_tables(db)
+        Session = sessionmaker(bind=create_engine(f"sqlite:///{db}"))
+        with Session() as sess:
+            for rid, cause in (("vr_pol", self._CAUSE),
+                               ("vr_clean", None)):
+                sess.add(ValidationRecord(
+                    record_id=rid, hypothesis_id="fr_wb", strategy_id=None,
+                    level="isolated_backtest", segmentation="", verdict="pass",
+                    range_hash=f"rh_{rid}", pollution_cause=cause,
+                    params="{}", result=None,
+                    created_at="2026-11-01T00:00:00+00:00"))
+            sess.commit()
+        app = create_app(db_path=db, data_dir=tmp_path / "data")
+        with TestClient(app, raise_server_exceptions=False) as c:
+            yield c
+
+    def test_pollution_cause_value_returned_as_is(self, polluted_client):
+        """带标注行：pollution_cause 原样返回（历史标注可查）。"""
+        rows = polluted_client.get(
+            "/api/research/validation-records").json()["records"]
+        by_id = {r["record_id"]: r for r in rows}
+        assert by_id["vr_pol"]["pollution_cause"] == self._CAUSE
+        assert by_id["vr_clean"]["pollution_cause"] is None
 
 
 class TestStagedLevelFilter:

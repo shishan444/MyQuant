@@ -103,6 +103,10 @@ def validation_record_detail(
     elif row["level"] == "staged_validation":
         per_exec_metrics = [
             s.get("metrics") or {} for s in result_json.get("segments", [])]
+    elif row["level"] == "sandbox_backtest":
+        # K1（retire-legacy D-3.7 读取补档）：sandbox 新记录单份——
+        # 顶层 metrics 直嵌（与 isolated 同形）
+        per_exec_metrics = [result_json.get("metrics") or {}]
     trace_by_ref: Dict[str, list] = {}
     for tr in rr.get_vr_signal_trace_rows(db_path, record_id):
         trace_by_ref.setdefault(tr["exec_ref"], []).append(tr)

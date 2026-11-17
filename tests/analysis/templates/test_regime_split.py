@@ -14,7 +14,7 @@ pytestmark = [pytest.mark.unit]
 
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.condition_stats import condition_stats
 from core.analysis.templates.regime_split import regime_split
 from tests.helpers.regime_factory import (

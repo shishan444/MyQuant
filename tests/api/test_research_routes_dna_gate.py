@@ -79,30 +79,16 @@ def _register_hypothesis(client: TestClient, strategy_params={"stop_loss": 0.05}
 
 def _post_endpoint(client: TestClient, endpoint: str, sid: str,
                    hypothesis_id: str | None = None):
-    """四端点同语义请求（strategy_id 消费面）。"""
-    if endpoint == "validate-backtest":
-        return client.post("/api/research/validate-backtest", json={
-            "hypothesis_id": hypothesis_id, "strategy_id": sid,
-            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                              "start": "2024-02-05T00:00:00Z",
-                              "end": "2024-03-01T00:00:00Z"}})
-    if endpoint == "staged-validation":
-        return client.post("/api/research/staged-validation", json={
-            "strategy_id": sid, "symbol": "BTCUSDT", "timeframe": "4h",
-            "start": "2024-02-05", "end": "2024-03-01"})
+    """端点同语义请求（strategy_id 消费面）——retire-legacy 后旧验证
+    三端点退役，参数轴收敛到存活的 backtest-sandbox。"""
     if endpoint == "backtest-sandbox":
         return client.post("/api/research/backtest-sandbox", json={
             "strategy_id": sid, "symbol": "BTCUSDT", "timeframe": "4h",
             "start": "2024-02-05", "end": "2024-03-01"})
-    if endpoint == "random-window-test":
-        return client.post("/api/research/random-window-test", json={
-            "strategy_id": sid, "symbol": "BTCUSDT", "timeframe": "4h",
-            "data_start": "2024-02-05", "data_end": "2024-03-20"})
     raise ValueError(endpoint)
 
 
-ENDPOINTS = ("validate-backtest", "staged-validation",
-             "backtest-sandbox", "random-window-test")
+ENDPOINTS = ("backtest-sandbox",)
 
 
 @pytest.fixture(autouse=True)

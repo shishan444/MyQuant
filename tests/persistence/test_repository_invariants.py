@@ -16,7 +16,7 @@ pytestmark = [pytest.mark.unit]
 
 from core.persistence.db_ext import init_db_ext
 from core.persistence.orm import models
-from core.persistence.repository import dataset_meta, live_trading, strategy
+from core.persistence.repository import dataset_meta, strategy  # live_trading 已退役（retire-legacy B2）
 
 
 class TestUpdateWhitelistPartitionInvariants:
@@ -25,16 +25,6 @@ class TestUpdateWhitelistPartitionInvariants:
     列增删时（新列进白名单或身份列）此处红——提醒同步白名单，
     防「新列不可更新」或「身份列可改写」两类静默漂移。
     """
-
-    def test_live_trading白名单划分闭包(self):
-        allowed = set(live_trading._ALLOWED_UPDATE_COLUMNS)
-        table_cols = {c.name for c in models.LiveTradingTask.__table__.columns}
-        identity = table_cols - allowed
-        # 身份列契约：创建后不可改（含内部键 updated_at 在白名单侧）
-        assert identity == {"task_id", "symbol", "timeframe", "dna_json",
-                            "direction", "created_at"}, \
-            "身份列集合漂移——白名单与身份划分需重新裁决"
-        assert not (allowed & identity)
 
     def test_strategy更新白名单在模型列集内(self):
         allowed = set(strategy._ALLOWED_UPDATE_FIELDS)
@@ -45,18 +35,3 @@ class TestUpdateWhitelistPartitionInvariants:
 class TestUpdatedAtMonotonicity:
     """updated_at 单调族：写后不减、恒 >= created_at。"""
 
-    def test_live任务写序列单调(self, tmp_path):
-        db = tmp_path / "inv.db"
-        init_db_ext(db)
-        live_trading.save_live_trading_task(
-            db, task_id="t1", symbol="BTCUSDT", timeframe="4h",
-            dna_json="{}", direction="long")
-        import time
-        prev = live_trading.get_live_trading_task(db, "t1")["updated_at"]
-        for i in range(5):
-            time.sleep(0.002)
-            live_trading.update_live_trading_task(db, "t1", balance=1000.0 + i)
-            row = live_trading.get_live_trading_task(db, "t1")
-            assert row["updated_at"] >= prev, "写后 updated_at 不减"
-            assert row["updated_at"] >= row["created_at"], "不得早于创建时刻"
-            prev = row["updated_at"]

@@ -23,12 +23,9 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.executor import ensure_research_tables
-from core.analysis.hypothesis_service import (
-    ResearchError, register_hypothesis,
-)
-from core.analysis.hypothesis_to_strategy import translate_hypothesis
+from core.analysis.errors import ResearchError
+from tests.helpers.vr_factory import insert_hypothesis
 from core.persistence.db_ext import init_db_ext
-from core.persistence.repository.strategy import get_strategy
 from tests.helpers.data_factory import make_ohlcv
 
 SYMBOL = "BTCUSDT"
@@ -52,44 +49,37 @@ def env(tmp_path: Path):
     return {"db": db, "data_dir": data_dir}
 
 
-def _register(env, when) -> str:
-    out = register_hypothesis(
-        env["db"],
-        conditions={"when_conditions": [when],
-                    "then_conditions": [_THEN_RSI]},
-        statement="hour_utc 翻译面", data_ranges=_RANGES, strategy_params={"stop_loss": 0.05})
-    return out["hypothesis_id"]
+def _translate(env, when, strategy_timeframe="1h"):
+    """翻译面统一入口（retire-legacy 后经 build_signal_genes——
+    hour_utc 域校验/基因承载在 _translate_conditions 同路径）。"""
+    from core.analysis.hypothesis_to_strategy import build_signal_genes
+    genes, _sources = build_signal_genes(
+        when_conditions=[when], then_conditions=[_THEN_RSI],
+        db_path=env["db"], strategy_timeframe=strategy_timeframe)
+    return genes
 
 
 class TestHourUtcTranslation:
     def test_inbound_comparison_translated_to_gene(self, env):
-        """域内承载：gt 12（[0,24) 内+日内基准）→ draft 策略
-        signal_genes 含 hour_utc 基因（indicator/params 空承载/
-        condition gt 阈值/入场角色/field None）。"""
-        hid = _register(
+        """域内承载：gt 12（[0,24) 内+日内基准）→ 翻译产物含
+        hour_utc 基因（indicator/params 空承载/condition gt 阈值/
+        入场角色/field None）。"""
+        genes = _translate(
             env, {"subject": "hour_utc", "action": "gt", "target": 12.0})
-        out = translate_hypothesis(
-            env["db"], hypothesis_id=hid,
-            strategy_timeframe="1h", data_dir=env["data_dir"])
-        row = get_strategy(env["db"], out["strategy_id"])
-        genes = json.loads(row["dna_json"])["signal_genes"]
-        hour_genes = [g for g in genes if g["indicator"] == "hour_utc"]
+        hour_genes = [g for g in genes if g.indicator == "hour_utc"]
         assert hour_genes, f"hour_utc 基因未承载: {genes}"
         g = hour_genes[0]
-        assert g["condition"] == {"type": "gt", "threshold": 12.0}
-        assert g["params"] == {}
-        assert g["role"] == "entry_trigger"
-        assert g["field"] is None
+        assert g.condition == {"type": "gt", "threshold": 12.0}
+        assert g.params == {}
+        assert g.role.value == "entry_trigger"
+        assert g.field_name is None
 
     def test_target_outside_domain_rejected(self, env):
         """域外拒：target=25 超出 [0,24)（比较恒 False 无语义，
         security F-1 硬校验）——登记面放行，翻译面唯一防线。"""
-        hid = _register(
-            env, {"subject": "hour_utc", "action": "lt", "target": 25.0})
         with pytest.raises(ResearchError) as ei:
-            translate_hypothesis(
-                env["db"], hypothesis_id=hid,
-                strategy_timeframe="1h", data_dir=env["data_dir"])
+            _translate(env, {"subject": "hour_utc", "action": "lt",
+                             "target": 25.0})
         assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
         assert "[0,24)" in ei.value.message
 
@@ -99,21 +89,18 @@ class TestHourUtcTranslation:
         拒（不可表达动作集）；小时列翻译防线经直插库构造存量形
         测试（登记面拒/翻译防线两态各自在案）。"""
         with pytest.raises(ResearchError) as ei_reg:
-            _register(
-                env, {"subject": "hour_utc", "action": "cross",
-                      "target": 12.0})
-        assert ei_reg.value.code == "RESEARCH_CONDITION_INVALID"
+            _translate(env, {"subject": "hour_utc", "action": "cross",
+                             "target": 12.0})
+        assert ei_reg.value.code in (
+            "RESEARCH_CONDITION_INVALID", "RESEARCH_NOT_EXPRESSIBLE")
 
     def test_daily_base_timeframe_rejected(self, env):
         """求值轴拒：基准 1d（条件无修饰回退基准）→ 每日一 bar 下
         小时列值恒定无意义。设计语义=拦库内/手工路径；基准周期是
         translate 参数，登记面不管，正常链可触达（本文件实证）。"""
-        hid = _register(
-            env, {"subject": "hour_utc", "action": "gt", "target": 12.0})
         with pytest.raises(ResearchError) as ei:
-            translate_hypothesis(
-                env["db"], hypothesis_id=hid,
-                strategy_timeframe="1d", data_dir=env["data_dir"])
+            _translate(env, {"subject": "hour_utc", "action": "gt",
+                             "target": 12.0}, strategy_timeframe="1d")
         assert ei.value.code == "RESEARCH_CONDITION_INVALID"
         assert "求值轴" in ei.value.message
 
@@ -128,15 +115,12 @@ class TestHourUtcTranslation:
     def test_hour_domain_boundaries(self, env, target, should_pass):
         """[0,24) 小时域边界两侧（属性补强——security F-1 域校验
         的临界条件：0 含入、24 排除、负值拒）。"""
-        hid = _register(
-            env, {"subject": "hour_utc", "action": "gt", "target": target})
         if should_pass:
-            out = translate_hypothesis(
-                env["db"], hypothesis_id=hid,
-                strategy_timeframe="1h", data_dir=env["data_dir"])
-            assert any("hour_utc" in g for g in out["genes"])
+            genes = _translate(
+                env, {"subject": "hour_utc", "action": "gt",
+                      "target": target})
+            assert any(g.indicator == "hour_utc" for g in genes)
         else:
             with pytest.raises(ResearchError, match=r"\[0,24\)"):
-                translate_hypothesis(
-                    env["db"], hypothesis_id=hid,
-                    strategy_timeframe="1h", data_dir=env["data_dir"])
+                _translate(env, {"subject": "hour_utc", "action": "gt",
+                                 "target": target})

@@ -9,7 +9,7 @@ from typing import Any, Dict
 
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 
 
 def require_column(df: pd.DataFrame, column: str, *, template: str) -> None:

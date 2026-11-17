@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.result import AnalysisResult, build_result
 
 # 方向封闭枚举（mixed 是执行概念不属研究主张——不开放）

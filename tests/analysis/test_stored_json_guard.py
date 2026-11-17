@@ -24,7 +24,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.errors import ResearchError
-from core.analysis.hypothesis_service import register_hypothesis
+from tests.helpers.vr_factory import insert_hypothesis
 from core.analysis.signal_assembly import assemble_signal_set
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
@@ -61,7 +61,7 @@ def data_dir(tmp_path: Path) -> Path:
 
 
 def _register_hyp(db) -> str:
-    return register_hypothesis(
+    return insert_hypothesis(
         db, conditions={
             "when_conditions": [
                 {"subject": {"indicator": "RSI", "params": {"period": 14}},
@@ -72,7 +72,7 @@ def _register_hyp(db) -> str:
         statement="s", data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                                      "start": "2024-05-01T00:00:00Z",
                                      "end": "2024-06-01T00:00:00Z"}]
-    , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+    , strategy_params={"stop_loss": 0.05})
 
 
 def _save_strategy(db, sid) -> None:
@@ -88,151 +88,6 @@ def _save_strategy(db, sid) -> None:
         risk_genes=RiskGenes())
     save_strategy(db, strategy_id=sid, dna_json=dna.to_json(),
                   symbol="BTCUSDT", timeframe="4h")
-
-
-class TestIdempotentResultCorrupt:
-    """幂等命中记录 result 损坏 → RESEARCH_STORED_DATA_INVALID。"""
-
-    def test_isolated_dup_result_corrupt_rejected(self, db, data_dir):
-        """隔离回测幂等重放：result_json 损坏 → 422 结构化拒绝点名
-        record_id 与来源（修复前：裸 JSONDecodeError 炸 500）。"""
-        from core.analysis.validation_service import (
-            _range_hash, run_isolated_backtest,
-        )
-        hid = _register_hyp(db)
-        req = {"symbol": "BTCUSDT", "timeframe": "4h",
-               "start": "2024-01-01T00:00:00Z", "end": "2024-01-15T00:00:00Z"}
-        rr.save_validation_with_log(
-            db, record_id="rec_broken", hypothesis_id=hid, strategy_id="st_x",
-            level="isolated_backtest", params=json.dumps({"request_range": req}),
-            result=BROKEN_JSON, verdict="pass", range_hash=_range_hash(req))
-        with pytest.raises(ResearchError) as ei:
-            run_isolated_backtest(db, data_dir, hypothesis_id=hid,
-                                  strategy_id="st_x", request_range=req)
-        assert ei.value.code == "RESEARCH_STORED_DATA_INVALID"
-        assert ei.value.status == 422
-        assert "validation_records.result" in ei.value.message
-        assert ei.value.detail["record_id"] == "rec_broken"
-        assert "parse_error" in ei.value.detail
-
-    def test_random_window_dup_result_corrupt_rejected(self, db, data_dir):
-        """随机窗幂等重放：result 损坏同面拒绝（同 helper 单源）。"""
-        from core.analysis.validation_service import _range_hash
-        from core.analysis.validation_service import random_window_test
-        hid = _register_hyp(db)
-        _save_strategy(db, "st_rw")
-        rh = _range_hash({"symbol": "BTCUSDT", "timeframe": "4h",
-                          "start": "2023-11-01T00:00:00Z",
-                          "end": "2024-02-01T00:00:00Z",
-                          "window_bars": 200, "n": 8, "seed": 42})
-        rr.save_validation_with_log(
-            db, record_id="rec_rw_broken", hypothesis_id=hid,
-            strategy_id="st_rw", level="random_window",
-            params=json.dumps({"seed": 42}), result=BROKEN_JSON,
-            verdict="pass", range_hash=rh)
-        with pytest.raises(ResearchError) as ei:
-            random_window_test(db, data_dir, strategy_id="st_rw",
-                               symbol="BTCUSDT", timeframe="4h",
-                               data_start="2023-11-01T00:00:00Z",
-                               data_end="2024-02-01T00:00:00Z",
-                               hypothesis_id=hid)
-        assert ei.value.code == "RESEARCH_STORED_DATA_INVALID"
-        assert ei.value.detail["record_id"] == "rec_rw_broken"
-
-
-class TestAuthorityKeyBlacklist:
-    """CARD-03：幂等 result_json 内嵌权威键不覆盖 base（记录列与
-    调用方为权威源）；正常键合并与 direction 收敛不受影响。"""
-
-    def _dup_with_result(self, db, result_json: str) -> dict:
-        from core.analysis.validation_service import (
-            _range_hash, run_isolated_backtest,
-        )
-        hid = _register_hyp(db)
-        req = {"symbol": "BTCUSDT", "timeframe": "4h",
-               "start": "2024-01-01T00:00:00Z", "end": "2024-01-15T00:00:00Z"}
-        rr.save_validation_with_log(
-            db, record_id="rec_auth", hypothesis_id=hid, strategy_id="st_a",
-            level="isolated_backtest", params=json.dumps({"request_range": req}),
-            result=result_json, verdict="pass", range_hash=_range_hash(req))
-        return run_isolated_backtest(db, db, hypothesis_id=hid,
-                                     strategy_id="st_a", request_range=req)
-
-    def test_authority_keys_not_overridden(self, db, caplog):
-        """伪造三键（record_id/verdict/duplicated）不覆盖权威值
-        （修复前：duplicated=false / verdict=fake / record_id=FAKE
-        会从 result 内嵌透出——幂等语义可被库内数据伪造）。"""
-        forged = json.dumps({
-            "record_id": "FAKE_ID", "verdict": "fail", "duplicated": False,
-            "metrics": {"total_trades": 1}})
-        with caplog.at_level("WARNING", logger="core.analysis.validation_service"):
-            out = self._dup_with_result(db, forged)
-        assert out["record_id"] == "rec_auth"
-        assert out["verdict"] == "pass"
-        assert out["duplicated"] is True
-        # 非权威键仍顶层化合并（黑名单不误伤）
-        assert out["metrics"] == {"total_trades": 1}
-        # 命中跳过有 warning 留痕
-        assert any("权威键" in r.message for r in caplog.records)
-
-    def test_normal_result_merges_unchanged(self, db, caplog):
-        """正常 result（无权威键）零 warning、合并行为不变（守卫
-        不改既有正常链路）。"""
-        normal = json.dumps({
-            "metrics": {"total_trades": 2}, "bars_used": 300,
-            "direction": "short"})
-        with caplog.at_level("WARNING", logger="core.analysis.validation_service"):
-            out = self._dup_with_result(db, normal)
-        assert out["duplicated"] is True
-        assert out["verdict"] == "pass"
-        assert out["metrics"] == {"total_trades": 2}
-        assert out["direction"] == "short"  # 合法二值原样回显
-        assert not caplog.records
-
-    def test_result_json_non_dict_guarded(self, db, data_dir):
-        """result_json 为合法 JSON 但非 dict（如数组——load_stored_json
-        只拦解析失败不拦形制）：isinstance 守卫兜住不炸，权威三键仍
-        正确、direction 收敛 long（防御分支行为锁定——非 dict 内容
-        不参与合并，result 内嵌键缺席如实缺席）。"""
-        out = self._dup_with_result(db, "[1, 2, 3]")
-        assert out["record_id"] == "rec_auth"
-        assert out["verdict"] == "pass"
-        assert out["duplicated"] is True
-        assert out["direction"] == "long"
-        assert "metrics" not in out  # 非 dict 无可合并键
-
-
-class TestHypothesisJsonCorrupt:
-    """假设 conditions / data_ranges 损坏 → 翻译结构化拒绝。"""
-
-    def _translate(self, db, hid):
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        return translate_hypothesis(db, hypothesis_id=hid)
-
-    @pytest.mark.parametrize("column", ["conditions", "data_ranges"])
-    def test_corrupt_column_rejected(self, db, column):
-        """逐列畸形：RESEARCH_STORED_DATA_INVALID，message 点名
-        research_hypotheses.<列>，detail 带 hypothesis_id 与 parse_error
-        （修复前：裸 JSONDecodeError 炸 500）。"""
-        hid = _register_hyp(db)
-        with sqlite3.connect(str(db)) as conn:
-            conn.execute(
-                f"UPDATE research_hypotheses SET {column} = ? "
-                "WHERE hypothesis_id = ?", (BROKEN_JSON, hid))
-            conn.commit()
-        with pytest.raises(ResearchError) as ei:
-            self._translate(db, hid)
-        assert ei.value.code == "RESEARCH_STORED_DATA_INVALID"
-        assert ei.value.status == 422
-        assert f"research_hypotheses.{column}" in ei.value.message
-        assert ei.value.detail["hypothesis_id"] == hid
-        assert "parse_error" in ei.value.detail
-
-    def test_intact_hypothesis_still_translates(self, db):
-        """完好假设翻译不受影响（守卫不误伤正常链路）。"""
-        hid = _register_hyp(db)
-        out = self._translate(db, hid)
-        assert out["status"] == "draft"
 
 
 class TestModelPluginConfigCorrupt:

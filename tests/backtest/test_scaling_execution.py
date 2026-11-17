@@ -315,21 +315,6 @@ class TestEngineScalingExecution:
         ss = dna_to_signal_set(dna, df)
         assert not ss.adds.any() and not ss.reduces.any()
 
-    def test_evolution_guard_no_scaling_roles(self):
-        """进化守护（B5-28）：population 不产 ADD/REDUCE/ADD_INHIBIT
-        角色（现状断言防回归）。"""
-        from core.evolution.population import create_random_dna
-        import random
-        random.seed(42)
-        bad = {SignalRole.ADD_TRIGGER, SignalRole.ADD_GUARD,
-               SignalRole.ADD_INHIBIT, SignalRole.REDUCE_TRIGGER,
-               SignalRole.REDUCE_GUARD}
-        for _ in range(30):
-            dna = create_random_dna()
-            roles = {g.role for g in dna.signal_genes}
-            assert not (roles & bad), f"进化产物含分批角色: {roles & bad}"
-
-
 class TestGeneTfAddsBroadcastEngine:
     """T2f-2 引擎层（tester 补——unblock-research-validation spec
     「加仓触发组多周期放行」Scenario：1d 掩码广播为基准轴状态窗，

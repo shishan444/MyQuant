@@ -103,36 +103,6 @@ class TestStrategyCreateValidation:
         assert any("exit_fraction" in e for e in r.json()["detail"]["errors"])
 
 
-class TestLiveTaskValidation:
-    def test_nan_rejected(self, api_client):
-        """live 任务创建值域锚：与 paper 链同防线。"""
-        dna = _genes_dna(stop_loss=float("nan"))
-        r = api_client.post("/api/live-trading/tasks",
-                            json={"symbol": "BTCUSDT", "timeframe": "4h",
-                                  "dna_json": dna.to_json()})
-        assert r.status_code == 422
-        assert r.json()["detail"]["code"] == "DNA_VALIDATION_FAILED"
-
-    def test_trail_early_rejected(self, api_client):
-        """live 创建点 trail 早拒锚：装载即拒前移——trail 在 Runner
-        装载点才拒（任务已落库才失败），现创建点落库前 422。"""
-        dna = _genes_dna(sl_mode="trail")
-        r = api_client.post("/api/live-trading/tasks",
-                            json={"symbol": "BTCUSDT", "timeframe": "4h",
-                                  "dna_json": dna.to_json()})
-        assert r.status_code == 422
-        detail = r.json()["detail"]
-        assert detail["code"] == "DNA_TRADING_INCOMPATIBLE"
-        assert any("trail" in e.lower() for e in detail["errors"])
-
-    def test_valid_dna_passes(self, api_client):
-        dna = _genes_dna()
-        r = api_client.post("/api/live-trading/tasks",
-                            json={"symbol": "BTCUSDT", "timeframe": "4h",
-                                  "dna_json": dna.to_json()})
-        assert r.status_code == 201, r.text
-
-
 class TestBehaviorTightening:
     def test_structurally_incomplete_dna_rejected(self, api_client):
         """行为收紧锚：无 exit 信号的最小裸 DNA 此前可创建，现按
@@ -178,23 +148,3 @@ class TestPutBypassClosed:
         assert r.json()["dna"]["risk_genes"]["stop_loss"] == 0.08
 
 
-class TestEvolutionInitialDnaClosed:
-    """CARD-15 残留 2：进化 initial_dna 收口——坏值此前 201 落库，
-    population.init_population 祖先直接 append 无校验（随机个体/子代
-    有 validate_dna 唯祖先漏），坏基因扩散整代种群。"""
-
-    def test_evolution_bad_initial_dna_rejected(self, api_client):
-        r = api_client.post("/api/evolution/tasks", json={
-            "symbol": "BTCUSDT", "timeframe": "4h",
-            "initial_dna": _dna_dict(stop_loss=1.0)})
-        assert r.status_code == 422, r.text
-        detail = r.json()["detail"]
-        assert detail["code"] == "DNA_VALIDATION_FAILED"
-        assert any("stop loss" in e.lower() for e in detail["errors"])
-
-    def test_evolution_valid_initial_dna_passes(self, api_client):
-        """对照锚：合法 initial_dna 照常建任务。"""
-        r = api_client.post("/api/evolution/tasks", json={
-            "symbol": "BTCUSDT", "timeframe": "4h",
-            "initial_dna": _dna_dict()})
-        assert r.status_code == 201, r.text

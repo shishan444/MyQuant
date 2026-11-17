@@ -14,7 +14,7 @@ pytestmark = [pytest.mark.integration]
 
 from core.analysis.errors import ResearchError
 from core.analysis.executor import ensure_research_tables
-from core.analysis.hypothesis_service import register_hypothesis
+from tests.helpers.vr_factory import insert_hypothesis
 from core.analysis.plugin_service import (
     _plugin_allowed_columns,
     enrich_with_plugin_columns,
@@ -22,7 +22,7 @@ from core.analysis.plugin_service import (
     register_formula_plugin,
 )
 from core.analysis.registry_meta import derive_warmup_full
-from core.analysis.validation_service import run_isolated_backtest
+from core.analysis.validation_service import run_sandbox_backtest
 from core.persistence.db_ext import init_db_ext
 
 _EXPRESSIONS = {
@@ -93,21 +93,7 @@ class TestI1RegistrationAndReference:
         for name, expr in _EXPRESSIONS.items():
             register_formula_plugin(db, name=name, expression=expr)
         assert "fx_kf_slope" in _plugin_allowed_columns(db)
-        r = register_hypothesis(
-            db,
-            conditions={
-                "when_conditions": [
-                    {"subject": "fx_kf_slope", "action": "lt", "target": 0}],
-                "then_conditions": [
-                    {"subject": {"indicator": "EMA", "params": {"period": 30},
-                                 "field": "ema"},
-                     "action": "price_above", "target": 0}]},
-            statement="I1-2 插件列假设引用锚",
-            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
-                          "start": _HYP_START, "end": _HYP_END}],
-            direction="short",
-            strategy_params={"sl_mode": "pct", "stop_loss": 0.05})
-        assert r["hypothesis_id"]
+        # 登记面已退役（retire-legacy）——引用可达性经白名单锚承载
         # 条件求值直接锚：when 条件（fx_kf_slope lt 0）的数据面在
         # 合成行情上时真时假——非全 False（条件永不可触发）非全 True
         enriched = enrich_with_plugin_columns(db, market_df, {"fx_kf_slope"})
@@ -167,12 +153,15 @@ class TestS1AcceptancePipeline:
     （管道连通性口径——verdict 三态任意，不设盈利门槛）。"""
 
     def test_s1_full_chain(self, db, data_dir):
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+        from core.persistence.repository.strategy import save_strategy
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA)
 
         for name, expr in _EXPRESSIONS.items():
             register_formula_plugin(db, name=name, expression=expr)
-        hid = register_hypothesis(
-            db,
+        hid = insert_hypothesis(
+            db, hypothesis_id="hyp_s1_chain",
             conditions={
                 "when_conditions": [
                     {"subject": "fx_kf_slope", "action": "lt", "target": 0}],
@@ -183,26 +172,37 @@ class TestS1AcceptancePipeline:
             statement="S-1 全链锚（管道连通性）",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": _HYP_START, "end": _HYP_END}],
-            direction="short",
             strategy_params={"sl_mode": "pct", "stop_loss": 0.05},
-        )["hypothesis_id"]
+        )
+        # 翻译产物经 build_signal_genes（retire-legacy 后翻译组装面
+        # 退役）——插件源+内置基因手构 DNA 落库供沙盒消费
+        genes, sources = build_signal_genes(
+            when_conditions=[
+                {"subject": "fx_kf_slope", "action": "lt", "target": 0}],
+            then_conditions=[
+                {"subject": {"indicator": "EMA", "params": {"period": 30},
+                             "field": "ema"},
+                 "action": "price_above", "target": 0}],
+            db_path=db, strategy_timeframe="4h")
+        dna = StrategyDNA(
+            signal_genes=list(genes), logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(sl_mode="pct", stop_loss=0.05,
+                                 direction="short"),
+            signal_sources=[{"type": "rule"},
+                            *(dict(t) for t in (sources or []))])
+        sid = "st_s1_chain"
+        save_strategy(db, strategy_id=sid, dna_json=dna.to_json(),
+                      symbol="BTCUSDT", timeframe="4h", parent_ids=hid,
+                      status="draft")
 
-        t = translate_hypothesis(db, hypothesis_id=hid, data_dir=data_dir)
-        assert t["status"] == "draft" and t["risk_genes"] == "declared"
-
-        v = run_isolated_backtest(
-            db, data_dir, hypothesis_id=hid, strategy_id=t["strategy_id"],
-            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": _RUN_START, "end": _RUN_END})
+        v = run_sandbox_backtest(
+            db, data_dir, strategy_id=sid, hypothesis_id=hid,
+            symbol="BTCUSDT", timeframe="4h",
+            start=_RUN_START, end=_RUN_END)
         assert v["record_id"], "验证记录在案"
-        assert v["verdict"] in ("pass", "fail", "inconclusive")
-        assert v["warmup"]["bars"] >= 200, "kalman 固定贡献进 warmup"
-        # 幂等：同请求重跑返回既有记录
-        v2 = run_isolated_backtest(
-            db, data_dir, hypothesis_id=hid, strategy_id=t["strategy_id"],
-            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": _RUN_START, "end": _RUN_END})
-        assert v2["record_id"] == v["record_id"]
+        assert v["sandbox"] is True
+        assert v["warmup_bars"] >= 200, "kalman 固定贡献进 warmup"
 
     def test_s1_series_mount_fully_wired(self, db, market_df):
         """series 档 fx 形制接线：fx_kf_level 作 sl_series_source 挂载

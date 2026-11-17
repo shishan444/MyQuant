@@ -13,8 +13,8 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.hypothesis_service import ResearchError
-from core.validation.engine import _evaluate_single_condition
+from core.analysis.errors import ResearchError
+from core.analysis.condition_eval import _evaluate_single_condition
 from tests.helpers.data_factory import make_ohlcv
 
 
@@ -121,7 +121,7 @@ class TestLookbackTargetBoundary:
 
     def test_inner_action合法集对拍_防分支漂移(self):
         # 枚举对拍锚：期望硬编 vs 实现 frozenset（求值分支增删时此锚红）
-        from core.validation.engine import _LOOKBACK_INNER_ACTIONS
+        from core.analysis.condition_eval import _LOOKBACK_INNER_ACTIONS
         assert set(_LOOKBACK_INNER_ACTIONS) == {
             "gt", "lt", "ge", "le", "price_above"}
 
@@ -182,103 +182,19 @@ class TestCrossSeriesTargetUnresolvable:
         assert not out.any()
 
 
-class TestEvaluateConditionsEmptyFallbackUnreachable:
-    """_evaluate_conditions 末尾兜底（engine.py:337）不可达判定。
-
-    调用图依据：空 conditions 列表在 :315-316 已短路返回；非空列表经
-    :327-328 首轮 ``result = mask`` 必赋值，:334 ``if result is not None``
-    恒真先行返回——:337 不可达（防御分支，无合法输入路径）。
-    """
-
-
-class TestValidateHypothesisStatsBoundaries:
-    """validate_hypothesis 统计装配的边界侧：区间参数缺省、零触发、
-    同日数据（days_covered=0）——统计兜底字段空形契约。"""
-
-    SYMBOL = "BTCUSDT"
-
-    @staticmethod
-    def _write_parquet(d, n=300, freq="4h", days_span=None):
-        import numpy as np
-
-        d.mkdir(parents=True, exist_ok=True)
-        if days_span is None:
-            idx = pd.date_range("2023-06-01", periods=n, freq=freq, tz="UTC",
-                                name="timestamp")
-        else:
-            # 同日数据：全部 bar 落在同一自然日内（days_covered=0）
-            idx = pd.date_range(days_span, periods=n, freq=freq, tz="UTC",
-                                name="timestamp")
-        rng = np.random.default_rng(11)
-        close = 60000 + np.cumsum(rng.normal(0, 100, n))
-        pd.DataFrame({"open": close, "high": close + 50, "low": close - 50,
-                      "close": close, "volume": rng.uniform(100, 800, n),
-                      "trades": 40}, index=idx).to_parquet(
-            d / f"BTCUSDT_4h.parquet")
-
-    def test_不带start_end_全量载入照常验证(self, tmp_path):
-        """start/end 缺省（None）→ 跳过区间过滤直用全量（引擎统计链
-        区间过滤分支的缺省侧）。"""
-        from core.validation.engine import validate_hypothesis
-
-        d = tmp_path / "mkt"
-        self._write_parquet(d)
-        res = validate_hypothesis(
-            self.SYMBOL, "4h", None, None,
-            when_conditions=[{"subject": "close", "action": "gt",
-                              "target": 0}],
-            then_conditions=[], then_window=4, data_dir=str(d))
-        assert res.total_count > 0
-
-    def test_零触发_统计兜底字段空形(self, tmp_path):
-        """WHEN 恒假（gt 天文阈值）→ 零触发 → percentiles/concentration/
-        extremes/signal_frequency 均空形（changes 空与 total 0 双兜底）。"""
-        from core.validation.engine import validate_hypothesis
-
-        d = tmp_path / "mkt"
-        self._write_parquet(d)
-        res = validate_hypothesis(
-            self.SYMBOL, "4h", None, None,
-            when_conditions=[{"subject": "close", "action": "gt",
-                              "target": 1e12}],
-            then_conditions=[], then_window=4, data_dir=str(d))
-        assert res.total_count == 0
-        assert res.match_rate == 0
-        assert res.percentiles == {}
-        assert res.concentration == {}
-        assert res.extremes == []
-        assert res.signal_frequency == {}
-
-    def test_同日数据_days_covered为零_频率空形(self, tmp_path):
-        """全部 bar 同日（days_covered=0）且确有触发 → 频率统计跳过
-        （分母护栏），其余统计照常产出。"""
-        from core.validation.engine import validate_hypothesis
-
-        d = tmp_path / "mkt"
-        self._write_parquet(d, n=6, days_span="2024-01-01")
-        res = validate_hypothesis(
-            self.SYMBOL, "4h", None, None,
-            when_conditions=[{"subject": "close", "action": "gt",
-                              "target": 0}],
-            then_conditions=[], then_window=1, data_dir=str(d))
-        assert res.total_count > 0
-        assert res.signal_frequency == {}
-        assert res.percentiles != {}
-
-
 class TestEngineResolveHelperBoundaries:
     """engine 解析/求值辅助函数的边界侧锚（解析失败降级、缺省兜底、
     未知类型 False 形、坏值缺省回退——不炸不误报）。"""
 
     def test_resolve_target_无冒号字符串_精确列名命中(self, df):
         """无 ':' 的字符串 target 直奔精确列名分支（:463）。"""
-        from core.validation.engine import _resolve_target
+        from core.analysis.condition_eval import _resolve_target
         out = _resolve_target(df, "close")
         pd.testing.assert_series_equal(out, df["close"])
 
     def test_resolve_pattern_subject列缺失_全False降级(self, df):
         """形态求值 subject 列不在 df → 全 False（卡3c 精确语义）。"""
-        from core.validation.engine import _resolve_pattern
+        from core.analysis.condition_eval import _resolve_pattern
         out = _resolve_pattern(df, "consecutive_up", "no_such_col")
         assert len(out) == len(df)
         assert not out.any()
@@ -286,7 +202,7 @@ class TestEngineResolveHelperBoundaries:
     def test_resolve_pattern_consecutive_target缺省_count3默认(self, df):
         """consecutive_up/down 的 target=None → count=3 缺省，
         与显式 3 逐位一致（缺省形契约）。"""
-        from core.validation.engine import _resolve_pattern
+        from core.analysis.condition_eval import _resolve_pattern
         up_none = _resolve_pattern(df, "consecutive_up", "close", None)
         up_3 = _resolve_pattern(df, "consecutive_up", "close", 3)
         pd.testing.assert_series_equal(up_none.astype(bool), up_3.astype(bool))
@@ -295,18 +211,18 @@ class TestEngineResolveHelperBoundaries:
         pd.testing.assert_series_equal(down_none.astype(bool), down_3.astype(bool))
 
     def test_resolve_pattern_未知形态_全False(self, df):
-        from core.validation.engine import _resolve_pattern
+        from core.analysis.condition_eval import _resolve_pattern
         out = _resolve_pattern(df, "nonsense_pattern", "close")
         assert not out.any()
 
     def test_resolve_snr_pattern_subject列缺失_全False降级(self, df):
-        from core.validation.engine import _resolve_snr_pattern
+        from core.analysis.condition_eval import _resolve_snr_pattern
         out = _resolve_snr_pattern(df, "touch_bounce", "no_such_col", {})
         assert len(out) == len(df)
         assert not out.any()
 
     def test_resolve_snr_pattern_未知形态_全False(self, df):
-        from core.validation.engine import _resolve_snr_pattern
+        from core.analysis.condition_eval import _resolve_snr_pattern
         out = _resolve_snr_pattern(df, "nonsense_pattern", "close", {})
         assert not out.any()
 
@@ -314,13 +230,13 @@ class TestEngineResolveHelperBoundaries:
         """_spike_condition 直调坏 str target（引擎链路中会被
         _resolve_target 拦为 None，此处锚函数自身契约：float 失败 →
         2.0 缺省，与显式 2.0 逐位一致）。"""
-        from core.validation.engine import _spike_condition
+        from core.analysis.condition_eval import _spike_condition
         out = _spike_condition(df["volume"], df, "garbage_str")
         base = _spike_condition(df["volume"], df, 2.0)
         pd.testing.assert_series_equal(out, base)
 
     def test_shrink_坏str乘数_float失败回退缺省05(self, df):
-        from core.validation.engine import _shrink_condition
+        from core.analysis.condition_eval import _shrink_condition
         out = _shrink_condition(df["volume"], df, "garbage_str")
         base = _shrink_condition(df["volume"], df, 0.5)
         pd.testing.assert_series_equal(out, base)
@@ -328,7 +244,7 @@ class TestEngineResolveHelperBoundaries:
     def test_lookback_condition_mode_all_全窗达成形(self, df):
         """mode='all' 分支（引擎 action_map 仅注册 lookback_any，
         all 模式为 THEN 侧共享形制——函数级特征锚）。"""
-        from core.validation.engine import _lookback_condition
+        from core.analysis.condition_eval import _lookback_condition
         cond = {"inner_action": "gt", "target": 0, "window": 2}
         out = _lookback_condition(df, cond, df["close"], "all")
         assert len(out) == len(df)
@@ -344,81 +260,47 @@ class TestEngineResolveHelperBoundaries:
                 warnings=None)
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
 
-    def test_then_conditions_pattern类action_循环空转兜底False(self, df):
-        """THEN 条件为 pattern 类 action（非 drop/lt/le/rise/gt/ge 系）
-        → 主核验循环空转、兜底段非 drop/rise → False。"""
-        from core.validation.engine import _check_then_conditions
-        window = df.iloc[1:9]
-        out = _check_then_conditions(
-            window, [{"action": "consecutive_up", "target": 3}],
-            trigger_price=float(df["close"].iloc[0]))
-        assert out is False
 
+class TestWickTouchStatFace:
+    """影线触碰统计面（阶段四②盲区消解——_wick_touch_condition 整函数
+    零覆盖补强；语义与回测面 executor._eval_wick_touch 对齐锚）。
+    line=subject 列解析序列（action_map 分派传 subject_series）。"""
 
-class TestStatsAssemblyEmptyChangesUnreachable:
-    """validate_hypothesis 统计段空集合分支不可达判定
-    （:246/:260/:269/:281 的 False 侧，即 changes/total 为空时跳过
-    percentiles/concentration/signal_frequency/extremes）。
+    def test_above_branch(self, df):
+        """direction=above：最高价近线（|high−line|≤|line|×1%）+收盘
+        在线下——固定线列构造全覆盖触发。"""
+        import pandas as pd
+        line_val = 100.0
+        staged = df.assign(
+            bb_lower=pd.Series(line_val, index=df.index),
+            high=line_val * 1.005,   # 距线 0.5%（1% 带内）
+            close=line_val * 0.99)   # 收盘在线下
+        out = _evaluate_single_condition(staged, {
+            "subject": "bb_lower", "action": "wick_touch",
+            "target": 0, "direction": "above"})
+        assert int(out.sum()) == len(df), "above 全 bar 触发（带内+线下）"
 
-    调用图依据：changes 与 triggers 在逐触发循环内同步 append
-    （:224/:232）；循环出口 :234-235「not triggers → 提前 return」，
-    :181-182「零触发提前 return」，:117/:121/:130 数据缺失/区间空
-    提前 return——控制流到达 :246 时 triggers 必非空，故 changes
-    必非空、total_count = len(triggers) >= 1（:238）且 len(df) > 0
-    （:120 已拦）。四个 False 侧分支均无合法输入路径（防御冗余）。
-    """
+    def test_below_branch(self, df):
+        """direction=below：最低价近线+收盘在线上。"""
+        import pandas as pd
+        line_val = 100.0
+        staged = df.assign(
+            bb_lower=pd.Series(line_val, index=df.index),
+            low=line_val * 0.995,
+            close=line_val * 1.01)
+        out = _evaluate_single_condition(staged, {
+            "subject": "bb_lower", "action": "wick_touch",
+            "target": 0, "direction": "below"})
+        assert int(out.sum()) == len(df), "below 全 bar 触发（带内+线上）"
 
-
-class TestResolveTargetSplitGuardUnreachable:
-    """_resolve_target 跨周期 split 长度守卫（:453 False 侧 → :463）
-    不可达判定。
-
-    调用图依据：:451 ``if ":" in target:`` 已保证含分隔符；
-    ``target.split(":", 1)``（:452）对含 sep 的字符串恒返回 2 段
-    （maxsplit=1 下 len 只能为 2）——:453 ``len(parts) == 2`` 恒真，
-    False 侧无输入路径（防御分支）。
-    """
-
-
-class TestThenTargetBoundary:
-    """0.3.7 TD-11 THEN 侧同规：坏 target 与 WHEN 侧同一拒绝语义。"""
-
-    def test_空条件集_求值恒False(self, df):
-        """阶段四盲区消解：_evaluate_conditions 空 conditions 头部
-        早退（:323）→ 全 False 序列。尾部同名 return（:345）不可达：
-        conditions 非空时循环至少一次、result 必被赋值（result is
-        None → result = mask），循环出口 result is not None 恒真
-        ——防御冗余，无输入路径。"""
-        from core.validation.engine import _evaluate_conditions
-        out = _evaluate_conditions(df, [], None)
-        assert isinstance(out, pd.Series)
-        assert len(out) == len(df)
-        assert not out.any()
-
-    def test_then_target坏str_同构拒绝(self, df):
-        from core.validation.engine import _check_then_conditions
-        with pytest.raises(ResearchError) as ei:
-            _check_then_conditions(df, [
-                {"action": "drop", "target": "close", "window": 4}],
-                trigger_price=100.0)
-        assert ei.value.code == "RESEARCH_PARAM_INVALID"
-        assert (ei.value.detail or {})["param"] == "condition.target"
-
-    def test_then_target缺省0_既有契约保持(self, df):
-        from core.validation.engine import _check_then_conditions
-        # 缺省 0：drop change <= 0 触发（跌即匹配）
-        out = _check_then_conditions(df, [{"action": "drop"}],
-                                     trigger_price=10**9)
-        assert isinstance(out, bool)
-
-    def test_then_target坏str_window0截空_兜底块应同构拒绝(self, df):
-        """CARD-02 转正：window=0 经 _cond_window 在循环体结构化拒绝
-        （F-2 同码族，param=condition.window 先于 target 校验触发），
-        不再静默截空落兜底块。REST 入站侧同步 ge=1 早拒。"""
-        from core.validation.engine import _check_then_conditions
-        with pytest.raises(ResearchError) as ei:
-            _check_then_conditions(df, [
-                {"action": "drop", "target": "close", "window": 0}],
-                trigger_price=100.0)
-        assert ei.value.code == "RESEARCH_PARAM_INVALID"
-        assert (ei.value.detail or {})["param"] == "condition.window"
+    def test_above_off_band_no_touch(self, df):
+        """负向：高价距线超 1% 带（0.5%→2%）——触碰带外零触发。"""
+        import pandas as pd
+        line_val = 100.0
+        staged = df.assign(
+            bb_lower=pd.Series(line_val, index=df.index),
+            high=line_val * 1.02, close=line_val * 0.99)
+        out = _evaluate_single_condition(staged, {
+            "subject": "bb_lower", "action": "wick_touch",
+            "target": 0, "direction": "above"})
+        assert int(out.sum()) == 0, "带外零触发（proximity 判定有效）"

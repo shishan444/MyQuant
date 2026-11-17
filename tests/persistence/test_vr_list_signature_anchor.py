@@ -35,24 +35,15 @@ def test_count_signature_anchor():
 
 
 def test_call_sites_unchanged():
-    """四处调用点形制锚（B1.6 勘误清单——tester-2 修正：原版仅断言
-    模块可导入与仓储 def 在场，调用面零适配未被证明，属断言虚标）。
+    """存活调用点形制锚（retire-legacy 后收缩为端点单点——原四处中
+    的 validation 档案端点与两处 iter_all_pages 消费面已随退役消失；
+    tester-2 修正史：仅断言模块可导入属断言虚标，改源文本锚定）。
 
     每处以源文本锚定调用形制：调用被改写（换函数/改直调为 lambda/
     传入新参改写调用面）即红，与上两签名锚构成「形参只增不改、
     调用方零适配」的完整实证。"""
     import api.routes.research.records_list as rl
-    import api.routes.research.validation as val
-    import core.analysis.validation_service as vs
-    import core.analysis.hypothesis_service as hs
-    # 端点接线调用（records_list.py:126——全 keyword 形制）
+    # 端点接线调用（records_list.py:126——全 keyword 形制）；retire-
+    # legacy 后 validation_service/hypothesis_service 两处 iter_all_pages
+    # 消费面随旧编排与登记域退役，存活调用面收缩为端点单点
     assert "rows = rr.list_validation_records(" in inspect.getsource(rl)
-    # 档案端点调用（validation.py:167——keyword+limit=200 单页全量）
-    assert ("records = rr.list_validation_records(" in
-            inspect.getsource(val))
-    # iter_all_pages 消费两处（validation_service.py:1090/
-    # hypothesis_service.py:1283——lambda off, lim 形态）
-    assert ("lambda off, lim: rr.list_validation_records(" in
-            inspect.getsource(vs))
-    assert ("lambda off, lim: rr.list_validation_records(" in
-            inspect.getsource(hs))

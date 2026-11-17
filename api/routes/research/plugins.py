@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from api.deps import get_data_dir, get_db_path
 from core.analysis import plugin_service as ps
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.persistence.repository import research as rr
 
 logger = logging.getLogger(__name__)
@@ -77,14 +77,6 @@ def create_model_plugin(
     if out.get("status") == "pending":
         return JSONResponse(status_code=202, content=out)
     return out
-
-
-@router.get("/plugins/pools")
-def get_plugin_pools() -> Dict[str, Any]:
-    """四层池名单（be-plugin-pool-authority D10）：core/strategy/pools.py
-    单源直出（快照权威自需求文档升格入工程）；纯 GET 幂等零副作用。"""
-    from core.strategy.pools import POOLS
-    return {"pools": POOLS, "source": "engineering_authority"}
 
 
 @router.get("/plugins/formula")

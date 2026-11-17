@@ -16,7 +16,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.wave_inventory import (
     compute_zigzag_waves, wave_inventory)
 from core.data.fapi.rest import default_data_dir

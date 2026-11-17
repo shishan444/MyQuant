@@ -10,7 +10,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.param_guard import (
     _require_enum,
     _require_int_range,

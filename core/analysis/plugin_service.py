@@ -18,11 +18,40 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from core.analysis.column_ref import BASE_SUBJECT_COLUMNS, _looks_like_encoded
-from core.analysis.hypothesis_service import (
-    ResearchError,
-    allowed_subject_columns,
-    hash_json,
-)
+from core.analysis.errors import ResearchError
+
+
+def hash_json(obj) -> str:
+    """对象 → 稳定 sha256 指纹（json 键序归一 + 非 ASCII 保真）。
+
+    原 hypothesis_service 工具（retire-legacy 任务 9 迁入——插件域
+    config_hash 唯一存活消费）；同对象恒同指纹，跨进程可复现。
+    """
+    import hashlib
+    import json
+    return hashlib.sha256(
+        json.dumps(obj, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
+def allowed_subject_columns(db_path):
+    """subject 可引用列：(精确列全集, 内置指标输出列前缀集)。
+
+    原 hypothesis_service 工具（retire-legacy 任务 9 迁入——插件注册
+    校验与列守卫的存活消费）；插件列来自 signal_registry（精确名）。
+    """
+    from core.analysis.column_ref import BASE_SUBJECT_COLUMNS
+    from core.features.registry import INDICATOR_REGISTRY
+    from core.persistence.repository import research as rr
+
+    cols = set(BASE_SUBJECT_COLUMNS)
+    builtin_prefixes = set()
+    for defn in INDICATOR_REGISTRY.values():
+        for f in defn.output_fields:
+            builtin_prefixes.add(f)
+    for entry in rr.list_signal_registry_entries(db_path, only_visible=True):
+        cols.add(entry["column_name"])
+    return cols, builtin_prefixes
 from core.features.registry import INDICATOR_REGISTRY
 from core.persistence.repository import research as rr
 

@@ -74,7 +74,7 @@ def distribution_compare(
             # 0.3.7 H1：数据语义空结果结构化拒绝（数据空 ≠ 请求错 ≠
             # 服务器错误）——与形制非法（param_guard 422）和小样本
             # （下方 422）可区分；异步降级路径经既有失败任务落库同构
-            from core.analysis.hypothesis_service import ResearchError
+            from core.analysis.errors import ResearchError
             span = ([str(series.index[0]), str(series.index[-1])]
                     if not series.empty else None)
             raise ResearchError(
@@ -92,7 +92,7 @@ def distribution_compare(
     if len(a) < min_samples or len(b) < min_samples:
         # 0.3.2 卡4 分流实施补全：小样本属业务拒绝（422）非内部错误
         # ——原裸 ValueError 经快路径收尾落 500，误导 Agent 盲重试
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
             f"小样本拒绝: group_a={len(a)}, group_b={len(b)} < {min_samples}",

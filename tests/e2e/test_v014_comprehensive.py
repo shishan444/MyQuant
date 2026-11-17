@@ -50,9 +50,6 @@ class TestConsoleErrors:
     def test_no_console_errors_lab_page(self, page: Page):
         assert len(self._collect_errors(page, BASE + "/lab")) == 0
 
-    def test_no_console_errors_evolution_page(self, page: Page):
-        assert len(self._collect_errors(page, BASE + "/evolution")) == 0
-
     def test_no_console_errors_strategies_page(self, page: Page):
         assert len(self._collect_errors(page, BASE + "/strategies")) == 0
 
@@ -66,7 +63,7 @@ class TestNavigation:
     # nav 链接对齐 Sidebar 实际清单（d9a6a0b 前端重构后：/lab 仍在路由表
     # 但已不在 nav；/verify 前端链接待 F4 联动退役——retire-verify-sessions
     # 后端面已 404，纯前端 nav 断言暂保留）
-    ROUTES = ["/workbench", "/verify", "/batch-backtest", "/evolution", "/plugins", "/strategies", "/trading", "/data", "/settings"]
+    ROUTES = ["/workbench", "/verify", "/batch-backtest", "/plugins", "/strategies", "/trading", "/data", "/settings"]
 
     def test_sidebar_navigation_links_work(self, page: Page):
         page.goto(BASE, timeout=10000)
@@ -81,7 +78,7 @@ class TestNavigation:
         page.goto(BASE, timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        for route in ["/workbench", "/evolution", "/strategies", "/data", "/settings"]:
+        for route in ["/workbench", "/strategies", "/data", "/settings"]:
             page.locator(f"nav a[href='{route}']").first.click()
             page.wait_for_timeout(1000)
             assert route in page.url, f"Expected {route} in URL, got {page.url}"
@@ -94,7 +91,7 @@ class TestNavigation:
         assert "/workbench" in page.url, f"Expected redirect to /workbench, got {page.url}"
 
     def test_direct_url_access(self, page: Page):
-        for route in ["/data", "/lab", "/evolution", "/strategies", "/settings"]:
+        for route in ["/data", "/lab", "/strategies", "/settings"]:
             page.goto(BASE + route, timeout=10000)
             page.wait_for_load_state("domcontentloaded", timeout=10000)
             _wait_react(page)
@@ -132,7 +129,6 @@ class TestLayoutComponents:
     def test_header_title_updates_per_page(self, page: Page):
         titles_map = {
             "/workbench": "观察工作台",
-            "/evolution": "进化中心",
             "/strategies": "策略库",
             "/data": "数据管理",
             "/settings": "设置",
@@ -186,12 +182,6 @@ class TestPageContent:
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
         assert "出场规则" in page.content(), "出场规则区未找到"
-
-    def test_evolution_page_has_heading(self, page: Page):
-        page.goto(BASE + "/evolution", timeout=10000)
-        page.wait_for_load_state("domcontentloaded", timeout=10000)
-        _wait_react(page)
-        assert "进化中心" in page.content(), "进化中心标题未找到"
 
     def test_strategies_page_has_search(self, page: Page):
         """策略库 (/strategies, 替代旧 /library)."""

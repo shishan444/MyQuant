@@ -37,67 +37,11 @@ BAD_TF_CASES = [
         {"symbol": "BTCUSDT", "timeframe": "13x", "indicator": "RSI"},
         "timeframe", id="指标读数"),
     pytest.param(
-        "/api/research/validate-backtest",
-        {"hypothesis_id": "hyp_x", "strategy_id": "st_x", "request_range": _RANGE},
-        "request_range.timeframe", id="隔离回测"),
-    pytest.param(
-        "/api/research/staged-validation",
-        {"strategy_id": "st_x", "symbol": "BTCUSDT", "timeframe": "13x",
-         "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"},
-        "timeframe", id="分段验证"),
-    pytest.param(
         "/api/research/backtest-sandbox",
         {"strategy_id": "st_x", "symbol": "BTCUSDT", "timeframe": "13x",
          "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"},
         "timeframe", id="沙盒回测"),
-    pytest.param(
-        "/api/research/random-window-test",
-        {"strategy_id": "st_x", "symbol": "BTCUSDT", "timeframe": "13x",
-         "data_start": "2024-01-01T00:00:00Z", "data_end": "2024-02-01T00:00:00Z"},
-        "timeframe", id="随机窗口"),
 ]
-
-
-class TestUnknownTimeframeRejected:
-    @pytest.mark.parametrize(("endpoint", "payload", "field"), BAD_TF_CASES)
-    def test_illegal_timeframe_returns_structured_422(
-            self, api_client, endpoint, payload, field):
-        resp = api_client.post(endpoint, json=payload)
-        assert resp.status_code == 422, f"{endpoint} 应 422 而非 {resp.status_code}"
-        detail = resp.json()["detail"]
-        assert detail["code"] == "TIMEFRAME_UNKNOWN"
-        assert detail["detail"]["field"] == field, "field 须定位到具体请求字段"
-        assert "13x" in detail["detail"]["timeframe"]
-        assert "4h" in detail["detail"]["legal_range"], "legal_range 附合法清单"
-
-    def test_rejection_leaves_no_persistent_side_effect(self, api_client):
-        """非法周期登记：假设与日志零落库（拒绝路径零持久副作用）。"""
-        resp = api_client.post("/api/research/hypotheses", json={
-            "strategy_params": {"stop_loss": 0.05}, "conditions": CONDITIONS, "statement": "守卫",
-            "data_ranges": [_RANGE]})
-        assert resp.status_code == 422
-
-        hyps = api_client.get("/api/research/hypotheses").json()
-        assert hyps["items"] == []
-        logs = api_client.get("/api/research/log").json()
-        assert logs["items"] == []
-
-    def test_timeframe_validated_before_symbol_reachability(self, api_client):
-        """同请求双错（非法周期 + 不可达 symbol）：timeframe 值域校验先报。"""
-        resp = api_client.post("/api/research/hypotheses", json={
-            "strategy_params": {"stop_loss": 0.05}, "conditions": CONDITIONS, "statement": "守卫",
-            "data_ranges": [{**_RANGE, "symbol": "NOPEUSDT"}]})
-        assert resp.status_code == 422
-        detail = resp.json()["detail"]
-        assert detail["code"] == "TIMEFRAME_UNKNOWN", \
-            "值域校验应先于 symbol 可达性探测"
-
-    def test_legal_timeframe_unaffected(self, api_client):
-        """合法周期通道不受守卫影响（登记照常 200）。"""
-        resp = api_client.post("/api/research/hypotheses", json={
-            "strategy_params": {"stop_loss": 0.05}, "conditions": CONDITIONS, "statement": "守卫",
-            "data_ranges": [{**_RANGE, "timeframe": "4h"}]})
-        assert resp.status_code == 200, resp.text
 
 
 class TestSandboxEconomicParamBounds:

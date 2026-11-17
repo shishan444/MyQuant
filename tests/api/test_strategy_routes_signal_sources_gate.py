@@ -40,7 +40,9 @@ from core.strategy.dna import RiskGenes, SignalGene, SignalRole, StrategyDNA
 from core.strategy.validator import has_plugin_sources, validate_dna
 from tests.helpers.data_factory import make_dna
 
-ROUTES = ("backtest", "compare", "batch")  # verify 已退役（retire-verify-sessions）
+# retire-legacy 后 backtest/compare/batch 三通道退役——读库装载
+# 拒绝面经存活 sandbox 通道承载（_load_strategy_dna 单点同码）
+ROUTES = ("sandbox",)
 
 # 三类畸形（直改库/live dna_json 通道构造集——save_strategy 与
 # from_json 均原样透传，三类全可达）
@@ -95,17 +97,11 @@ def _persist(db_path: Path, sid: str, dna_json: str) -> None:
 
 
 def _post_route(client: TestClient, route: str, sid: str):
-    """四读库路径同语义请求（strategy_id 消费面）。"""
-    if route == "backtest":
-        return client.post("/api/strategies/backtest", json={
-            "strategy_id": sid, "dataset_id": "BTCUSDT_4h"})
-    if route == "compare":
-        return client.post("/api/strategies/compare", json={
-            "strategy_ids": [sid], "dataset_id": "BTCUSDT_4h"})
-    if route == "batch":
-        return client.post("/api/strategies/batch-backtest/stream", json={
-            "strategy_ids": [sid],
-            "data_ranges": [{"start": "2024-01-01", "end": "2024-06-01"}]})
+    """读库路径同语义请求（strategy_id 消费面——sandbox 通道）。"""
+    if route == "sandbox":
+        return client.post("/api/research/backtest-sandbox", json={
+            "strategy_id": sid, "symbol": "BTCUSDT", "timeframe": "4h",
+            "start": "2024-01-01", "end": "2024-01-10"})
     raise ValueError(route)
 
 
@@ -262,10 +258,13 @@ class TestStoredBadSourcesRejectedOnReadPaths:
         assert resp.status_code == 422, (
             f"[{route}/{label}] {resp.status_code} {resp.text[:300]}")
         body = resp.json()["detail"]
-        assert body["code"] == "DNA_VALIDATION_FAILED", (
+        # sandbox 通道经研究错误族外层包装（RESEARCH_DNA_INVALID——
+        # detail.errors 透传 validate_dna 明细）
+        assert body["code"] == "RESEARCH_DNA_INVALID", (
             f"[{route}/{label}] {body}")
-        assert any("signal_sources" in e for e in body["errors"]), (
-            f"[{route}/{label}] {body['errors']}")
+        errors = body["detail"]["errors"]
+        assert any("signal_sources" in e for e in errors), (
+            f"[{route}/{label}] {errors}")
 
     def test_missing_ref_not_plugin_code(self, api_client):
         """D-3 迁移格（错误码归位——本 change 唯一对外行为变化）：
@@ -276,11 +275,11 @@ class TestStoredBadSourcesRejectedOnReadPaths:
         _persist(db, "s-missing-ref",
                  _dna_with_sources(BAD_SOURCES["缺ref"]).to_json())
 
-        resp = _post_route(api_client, "backtest", "s-missing-ref")
+        resp = _post_route(api_client, "sandbox", "s-missing-ref")
 
         assert resp.status_code == 422, resp.text
         body = resp.json()["detail"]
-        assert body["code"] == "DNA_VALIDATION_FAILED", body
+        assert body["code"] == "RESEARCH_DNA_INVALID", body
         assert body["code"] != "PLUGIN_SOURCES_UNSUPPORTED", (
             f"缺 ref 形态仍报能力边界码（D-3 未归位）：{body}")
 
@@ -292,89 +291,8 @@ class TestStoredBadSourcesRejectedOnReadPaths:
         _persist(db, "s-order", _dna_with_sources(
             [{"type": "fomula"}, _plugin_source()]).to_json())
 
-        resp = _post_route(api_client, "backtest", "s-order")
+        resp = _post_route(api_client, "sandbox", "s-order")
 
         assert resp.status_code == 422, resp.text
-        assert resp.json()["detail"]["code"] == "DNA_VALIDATION_FAILED", (
+        assert resp.json()["detail"]["code"] == "RESEARCH_DNA_INVALID", (
             resp.text)
-
-    @pytest.mark.parametrize("route", ROUTES)
-    def test_legal_pure_plugin_still_plugin_code(self, api_client, route):
-        """对照：合法纯插件策略（结构过+插件源在场）仍报
-        PLUGIN_SOURCES_UNSUPPORTED——新判据不误伤能力边界判据
-        （R-8 基准的负面锚）。"""
-        db = api_client.app.state.db_path
-        _persist(db, "s-legal-plugin",
-                 _dna_with_sources([_plugin_source()]).to_json())
-
-        resp = _post_route(api_client, route, "s-legal-plugin")
-
-        assert resp.status_code == 422, f"[{route}] {resp.text}"
-        body = resp.json()["detail"]
-        assert body["code"] == "PLUGIN_SOURCES_UNSUPPORTED", (
-            f"[{route}] {body}")
-
-
-class TestInlineDnaBadSources:
-    """内联直传入口（backtest dna 字段）：Pydantic 收窄后只剩 dict
-    形态畸形两类可达。"""
-
-    @pytest.mark.parametrize(
-        "label", ["拼错type", "缺ref"], ids=["拼错type", "缺ref"])
-    def test_inline_dict_form_malformed_422(self, api_client, label):
-        """内联 dna 的 signal_sources 为 dict 形态畸形（拼错/缺 ref）
-        → 422 DNA_VALIDATION_FAILED（现状放行——直传即跑）。"""
-        dna = _json.loads(
-            _dna_with_sources(BAD_SOURCES[label]).to_json())
-        resp = api_client.post("/api/strategies/backtest", json={
-            "dna": dna, "symbol": "BTCUSDT", "timeframe": "4h",
-            "dataset_id": "BTCUSDT_4h"})
-        assert resp.status_code == 422, (
-            f"[{label}] {resp.status_code} {resp.text[:300]}")
-        body = resp.json()["detail"]
-        assert body["code"] == "DNA_VALIDATION_FAILED", f"[{label}] {body}"
-
-    def test_inline_nondict_intercepted_by_pydantic(self, api_client):
-        """内联 dna 的 signal_sources 非 dict 条目 → Pydantic 前拦
-        （非结构码——A-3 边界在内联分支同效）。"""
-        dna = _json.loads(make_dna().to_json())
-        dna["signal_sources"] = ["x"]
-        resp = api_client.post("/api/strategies/backtest", json={
-            "dna": dna, "symbol": "BTCUSDT", "timeframe": "4h",
-            "dataset_id": "BTCUSDT_4h"})
-        assert resp.status_code == 422, resp.text
-        detail = resp.json()["detail"]
-        is_structured = isinstance(detail, dict) and \
-            detail.get("code") == "DNA_VALIDATION_FAILED"
-        assert not is_structured, detail
-
-
-class TestLiveEntryDnaJsonDirect:
-    """live 入口（POST /api/live-trading/tasks）：dna_json 字符串直传
-    ——不经 Pydantic List[Dict]，四形态全可达（含顶层非 list）。"""
-
-    @pytest.mark.parametrize(
-        ("label", "sources"),
-        [
-            pytest.param("拼错type", [{"type": "fomula"}], id="拼错type"),
-            pytest.param("非dict条目", [{"type": "rule"}, "x"], id="非dict条目"),
-            pytest.param("缺ref", [{"type": "formula"}], id="缺ref"),
-            pytest.param("顶层非list", 5, id="顶层非list"),
-        ],
-    )
-    def test_live_dna_json_malformed_422(self, api_client, label, sources):
-        """四形态畸形经 dna_json 直传 → 422 DNA_VALIDATION_FAILED
-        （现状：拼错/缺 ref 型行为错位〔缺 ref 报 PLUGIN 码、拼错型
-        放行落库〕、非 dict/顶层非 list 型 500 或裸异常——from_json
-        原样透传后无判据拦截）。"""
-        dna = _dna_with_sources(sources)
-        resp = api_client.post("/api/live-trading/tasks", json={
-            "symbol": "BTCUSDT", "timeframe": "4h",
-            "dna_json": dna.to_json(), "direction": "long"})
-
-        assert resp.status_code == 422, (
-            f"[{label}] {resp.status_code} {resp.text[:300]}")
-        body = resp.json()["detail"]
-        assert body["code"] == "DNA_VALIDATION_FAILED", f"[{label}] {body}"
-        assert any("signal_sources" in e for e in body["errors"]), (
-            f"[{label}] {body['errors']}")

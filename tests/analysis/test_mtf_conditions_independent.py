@@ -25,7 +25,8 @@ from core.analysis.condition_identity import (
     canonical_condition_hash, legacy_compatible_hash,
 )
 from core.analysis.condition_kernel import MtfEvalContext, mask_for
-from core.analysis.hypothesis_service import ResearchError, register_hypothesis
+from core.analysis.errors import ResearchError
+from tests.helpers.vr_factory import insert_hypothesis
 from core.data.mtf_alignment import project_completed, project_completed_bool
 from core.data.timeframes import TF_SECONDS
 from tests.helpers.data_factory import make_ohlcv
@@ -77,7 +78,7 @@ def rand_env(tmp_path: Path):
 
 
 def _register(db, when, then=None, ranges=None):
-    return register_hypothesis(
+    return insert_hypothesis(
         db,
         conditions={"when_conditions": when,
                     "then_conditions": then or [
@@ -96,66 +97,6 @@ def _when(**extra):
 
 
 # ---------------------------------------------------------------- 登记链（B3）
-
-class TestRegistrationIndependent:
-    def test_校验序_THEN带未知周期_报THEN拒而非值域拒(self, db):
-        """B3 校验序 THEN 拒 → 值域：then 带非法周期键先命中
-        TIMEFRAME_ON_THEN（跨周期前向窗口归属未定义是更根本的拒绝）。"""
-        with pytest.raises(ResearchError) as ei:
-            _register(db, _when(),
-                      then=[{"subject": "close", "action": "gt",
-                             "target": 0, "timeframe": "2d"}])
-        assert ei.value.code == "TIMEFRAME_ON_THEN"
-        assert "前向收益对照" in ei.value.message
-
-    def test_未知周期_拒绝附合法清单(self, db):
-        with pytest.raises(ResearchError) as ei:
-            _register(db, _when(timeframe="2d"))
-        assert ei.value.code == "TIMEFRAME_UNKNOWN"
-        legal = (ei.value.detail or {}).get("legal_range", [])
-        assert "4h" in legal and "1w" in legal and "2d" not in legal
-
-    def test_低周期_拒绝附降基准指引与基准周期(self, db):
-        with pytest.raises(ResearchError) as ei:
-            _register(db, _when(timeframe="15m"))
-        assert ei.value.code == "TIMEFRAME_NOT_HIGHER"
-        assert "降基准" in ei.value.message
-        assert (ei.value.detail or {}).get("base_timeframe") == "1h"
-
-    def test_区间symbol不一致_拒绝(self, db):
-        ranges = [
-            {"symbol": SYMBOL, "timeframe": "1h",
-             "start": "2024-03-01T00:00:00Z", "end": "2024-03-15T00:00:00Z"},
-            {"symbol": "ETHUSDT", "timeframe": "1h",
-             "start": "2024-03-15T00:00:00Z", "end": "2024-04-01T00:00:00Z"}]
-        with pytest.raises(ResearchError) as ei:
-            _register(db, _when(), ranges=ranges)
-        assert ei.value.code == "RESEARCH_RANGE_INVALID"
-        assert "基准周期" in ei.value.message
-
-    def test_混合假设登记成功_键原样保留_显式基准剥离(self, db):
-        """spec「混合周期假设登记成功」：高周期与缺省条件并存，
-        timeframe 原样保留；显式基准在 canonical 化时剥离。"""
-        out = _register(db, [
-            {"subject": "close", "action": "gt", "target": 0.0,
-             "timeframe": "4h"},
-            {"subject": "close", "action": "gt", "target": 0.0}])
-        assert out["duplicated"] is False
-        from core.persistence.repository import research as rr
-        hyp = rr.get_hypothesis(db, out["hypothesis_id"])
-        whens = json.loads(hyp["conditions"])["when_conditions"]
-        assert whens[0].get("timeframe") == "4h"
-        assert "timeframe" not in whens[1]
-
-    def test_幂等_先显式基准后缺省_反序命中同一假设(self, db):
-        """spec「指纹周期归一连续」登记侧：显式基准与缺省同身份。"""
-        a = _register(db, _when(timeframe="1h"))
-        b = _register(db, _when())
-        assert b["duplicated"] is True
-        assert b["hypothesis_id"] == a["hypothesis_id"]
-
-
-# ---------------------------------------------------------------- 指纹（B4）
 
 class TestFingerprintIndependent:
     """指纹独立推导：按 docstring 归一规则手工拼 \\x1f 段并 sha256
@@ -362,117 +303,6 @@ class TestWarmupRejectIndependent:
 
 # ---------------------------------------------------------------- Lab 投影器（B5）
 
-class TestMergeToBaseIndependent:
-    def test_值投影器_收盘挂载无前视_位移退役(self):
-        """spec「既有链形成期窗口收口」：4h close [7,77]——T0 开盘 bar
-        的 7 自 T0+4h 起可见（旧 +1 位移在开盘窗内即暴露=前视，退役）。"""
-        from core.validation.mtf import merge_to_base
-
-        base = make_ohlcv(n=12, freq="1h", start="2024-03-05", seed=3)
-        info = _ohlcv([7.0, 77.0])
-        merged = merge_to_base(base, {"4h": info}, base_tf_minutes=60)
-        col = merged["close_4h"]
-        assert col.iloc[:4].isna().all()        # 首根收盘前不可见
-        assert col.iloc[4:8].tolist() == [7.0] * 4
-        assert col.iloc[8:12].tolist() == [77.0] * 4
-
-    def test_OHLCV列同样投影_排除清单移除(self):
-        from core.validation.mtf import merge_to_base
-
-        base = make_ohlcv(n=8, freq="1h", start="2024-03-05", seed=3)
-        info = _ohlcv([7.0, 77.0])
-        merged = merge_to_base(base, {"4h": info}, base_tf_minutes=60)
-        for col in ("open_4h", "high_4h", "low_4h", "close_4h", "volume_4h"):
-            assert col in merged.columns
-
-    def test_后缀列名与列序保持(self):
-        from core.validation.mtf import merge_to_base
-
-        base = make_ohlcv(n=8, freq="1h", start="2024-03-05", seed=3)
-        info = pd.DataFrame(
-            {"ema_20": [1.0, 2.0], "rsi_14": [55.0, 45.0]},
-            index=_grid(_T0, 2, "4h"))
-        merged = merge_to_base(base, {"4h": info}, base_tf_minutes=60)
-        added = [c for c in merged.columns if c.endswith("_4h")]
-        assert added == ["ema_20_4h", "rsi_14_4h"]   # 列序不变
-
-
-# ---------------------------------------------------------------- 四链一致（B6）
-
-class TestCrossChainIndependent:
-    def test_策略链信号投影_与研究链布尔投影逐点一致(self):
-        """spec「三链对齐语义一致」最小独立证明：同一 4h 布尔序列，
-        resample_signals（策略链，索引推断 delta）与 project_completed_
-        bool（研究/Lab 掩码通道）在基准轴逐点同值。"""
-        from core.strategy.executor import resample_signals
-
-        mask = pd.Series([False, True, False, True, False],
-                         index=_grid(_T0, 5, "4h"))
-        base_idx = _grid(_T0, 20, "1h")
-        via_strategy = resample_signals(mask, base_idx)
-        via_research = project_completed_bool(mask, base_idx, "4h")
-        pd.testing.assert_series_equal(via_strategy, via_research)
-        # 期望手算：T 窗 [04:00,08:00)→挂载 08:00..11h；[12:00,16:00)
-        # →挂载 16:00..19h
-        expected = ([False] * 8 + [True] * 4 + [False] * 4
-                    + [True] * 4 + [False] * 0)[:20]
-        assert via_strategy.tolist() == expected
-
-    def test_Lab链值投影通道_与权威值投影同构(self):
-        from core.validation.mtf import merge_to_base
-
-        base = make_ohlcv(n=12, freq="1h", start="2024-03-05", seed=3)
-        info = _ohlcv([7.0, 77.0])
-        merged = merge_to_base(base, {"4h": info[["close"]]},
-                               base_tf_minutes=60)
-        direct = project_completed(info["close"], base.index, "4h")
-        pd.testing.assert_series_equal(
-            merged["close_4h"], direct, check_names=False)
-
-
-# ---------------------------------------------------------------- 转化拒绝（B7）
-
-class TestTranslationRejectIndependent:
-    def test_多周期假设转化放行_基因写入周期(self, db, rand_env):
-        """unblock-research-validation T10 翻转（独立链复锚）：带
-        timeframe 键 when 假设转化放行——产物基因带第六属性 tf、
-        禁止静默降级为无标记草稿（行为断言反向加强）。"""
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        from core.persistence.repository import strategy as sr
-        from core.persistence.repository.strategy import get_strategy
-        import json as _json
-
-        when = [{"subject": {"indicator": "RSI", "params": {"period": 14},
-                             "field": "rsi"}, "action": "lt",
-                 "target": 55, "timeframe": "4h"}]
-        then = [{"subject": {"indicator": "RSI", "params": {"period": 30},
-                             "field": "rsi"}, "action": "gt", "target": 70}]
-        out = _register(db, when, then)
-        result = translate_hypothesis(
-            db, hypothesis_id=out["hypothesis_id"],
-            strategy_timeframe="1h")
-        assert result["status"] == "draft"
-        row = get_strategy(db, result["strategy_id"])
-        genes = _json.loads(row["dna_json"])["signal_genes"]
-        assert genes and genes[0].get("timeframe") == "4h", \
-            "基因级 tf 写入（不静默降级）"
-        assert row["status"] == "draft", "草稿落库（get_strategy 直查）"
-
-    def test_同假设登记与求值不受转化边界影响(self, db, rand_env):
-        """spec：拒绝文案明示登记/条件求值类分析/案例检查不受影响。"""
-        out = _register(db, _when(timeframe="4h"))
-        assert out["duplicated"] is False       # 登记可用
-        ctx = MtfEvalContext(
-            rand_env["data_dir"], SYMBOL, "1h",
-            eval_start=rand_env["base"].index[0])
-        mask = mask_for(rand_env["base"].copy(),
-                         {"subject": "close", "action": "gt",
-                          "target": 0.0, "timeframe": "4h"}, ctx)
-        assert mask.dtype == bool and len(mask) == len(rand_env["base"])
-
-
-# ---------------------------------------------------------------- 模板透传（B2/场景⑬）
-
 class TestTemplatePassthroughIndependent:
     """spec ai-research-tools「高周期中心条件经投影求值」+ 场景矩阵⑬
     （tester 补充锚——实施锚在模板级缺失，见交付说明）。
@@ -560,41 +390,6 @@ class TestTemplatePassthroughIndependent:
 
 
 # ---------------------------------------------------------------- 路由可达（N2）
-
-class TestReachabilityIndependent:
-    def test_高周期周期无数据_拒绝附探测可得清单(self, tmp_path, db):
-        """N2：「周期非法」与「周期无数据」语义区分——数据目录仅 1h
-        文件时，4h 键拒绝附实际可得清单（仅 1h）。"""
-        from fastapi.testclient import TestClient
-
-        from MyQuant.api.app import create_app
-
-        data_dir = tmp_path / "only_1h"
-        data_dir.mkdir()
-        _write_parquet(data_dir, "1h",
-                       make_ohlcv(n=100, freq="1h", start="2024-03-01",
-                                  seed=11))
-        app = create_app(db_path=db, data_dir=data_dir)
-        with TestClient(app) as client:
-            resp = client.post("/api/research/hypotheses", json={
-                "statement": "可达独立复核",
-                "conditions": {
-                    "when_conditions": [
-                        {"subject": "close", "action": "gt",
-                         "target": 0.0, "timeframe": "4h"}],
-                    "then_conditions": [
-                        {"subject": "close", "action": "gt", "target": 0}]},
-                "data_ranges": [
-                    {"symbol": SYMBOL, "timeframe": "1h",
-                     "start": "2024-03-10T00:00:00Z",
-                     "end": "2024-03-20T00:00:00Z"}]})
-        assert resp.status_code == 422, resp.text
-        body = resp.json()["detail"]
-        assert body["code"] == "RESEARCH_SYMBOL_NOT_FOUND"
-        assert body["detail"]["available_timeframes"] == ["1h"]
-
-
-# ---------------------------------------------------------------- P-5 字符串 subject decode（3b33c4f 回归）
 
 class TestP5StringSubjectDecode:
     """P-5（design R2 subject/target 对称）：模板层字符串化 subject 与

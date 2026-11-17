@@ -26,8 +26,6 @@ from core.strategy.dna import (
 )
 from core.backtest.engine import BacktestEngine
 from core.strategy.executor import dna_to_signal_set
-from core.evolution.operators import crossover, mutate_layer_timeframe
-from core.evolution.population import create_random_mtf_layer
 
 # ── Shared Fixtures ──
 
@@ -189,103 +187,6 @@ def test_mtf_signal_pipeline_no_roles():
     assert isinstance(sig_set.entries, pd.Series)
 
 # ── E2E Test 4: Evolution produces valid MTF strategies ──
-
-def test_random_layer_produces_evaluable_strategy():
-    """Random MTF layer should produce a strategy that can be evaluated."""
-    random.seed(42)
-    layer = create_random_mtf_layer("1d")
-
-    dna = StrategyDNA(
-        signal_genes=[
-            SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, "RSI_14",
-                        {"type": "lt", "threshold": 30}),
-            SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, "RSI_14",
-                        {"type": "gt", "threshold": 70}),
-        ],
-        logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
-        execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
-        risk_genes=RiskGenes(stop_loss=0.05, take_profit=0.10),
-        layers=[layer],
-    )
-
-    enhanced_df = _make_ohlcv_df(500, "4h")
-    daily_df = _make_ohlcv_df(200, "1d")
-
-    dfs_by_timeframe = {"4h": enhanced_df, "1d": daily_df}
-
-    # Should not raise any errors
-    sig_set = dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
-    assert isinstance(sig_set.entries, pd.Series)
-
-def test_evolution_cycle_produces_valid_mtf():
-    """Full evolution cycle: create -> crossover -> mutate should produce valid DNA."""
-    random.seed(42)
-
-    # Create two parent MTF strategies
-    parent_a = StrategyDNA(
-        signal_genes=[
-            SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, "RSI_14",
-                        {"type": "lt", "threshold": 30}),
-            SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, "RSI_14",
-                        {"type": "gt", "threshold": 70}),
-        ],
-        logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
-        execution_genes=ExecutionGenes(timeframe="4h"),
-        risk_genes=RiskGenes(),
-        layers=[
-            TimeframeLayer("1d", [
-                SignalGene("EMA", {"period": 50}, SignalRole.ENTRY_TRIGGER, "ema_50",
-                            {"type": "price_above"}),
-            ], LogicGenes(), role="structure"),
-            TimeframeLayer("1h", [
-                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, "RSI_14",
-                            {"type": "lt", "threshold": 30}),
-            ], LogicGenes(), role="execution"),
-        ],
-    )
-
-    parent_b = StrategyDNA(
-        signal_genes=[
-            SignalGene("EMA", {"period": 20}, SignalRole.ENTRY_TRIGGER, "ema_20",
-                        {"type": "price_above"}),
-        ],
-        logic_genes=LogicGenes(entry_logic="OR", exit_logic="AND"),
-        execution_genes=ExecutionGenes(timeframe="4h"),
-        risk_genes=RiskGenes(),
-        layers=[
-            TimeframeLayer("3d", [
-                SignalGene("EMA", {"period": 200}, SignalRole.ENTRY_TRIGGER, "ema_200",
-                            {"type": "price_above"}),
-            ], LogicGenes(), role="structure"),
-        ],
-    )
-
-    # Crossover
-    child = crossover(parent_a, parent_b)
-
-    # Verify child structure
-    assert child.layers is not None
-    assert len(child.layers) >= 1  # At least the max of both parents' layers
-
-    # Verify no duplicate timeframes
-    tfs = [layer.timeframe for layer in child.layers]
-    assert len(tfs) == len(set(tfs)), f"Duplicate timeframes: {tfs}"
-
-    # Verify all layers have roles
-    for layer in child.layers:
-        assert layer.role is not None
-
-    # Mutate
-    mutated = mutate_layer_timeframe(child, candidate_timeframes=["1h", "1d", "3d"])
-
-    # Still no duplicates after mutation
-    tfs = [layer.timeframe for layer in mutated.layers]
-    assert len(tfs) == len(set(tfs)), f"Duplicate timeframes after mutation: {tfs}"
-
-    # Can serialize and deserialize
-    serialized = mutated.to_dict()
-    restored = StrategyDNA.from_dict(serialized)
-    assert len(restored.layers) == len(mutated.layers)
 
 # ── E2E Test 5: DNA Serialization Round-trip ──
 

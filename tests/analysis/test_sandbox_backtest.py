@@ -15,16 +15,16 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.analysis.hypothesis_service import (
-    ResearchError, register_hypothesis)
+from core.analysis.errors import ResearchError
 from core.analysis.isolation import judged_ranges_union
 from core.analysis.validation_service import (
-    SANDBOX_MAX_BARS, run_isolated_backtest, run_sandbox_backtest)
+    SANDBOX_MAX_BARS, run_sandbox_backtest)
 from core.persistence.repository.strategy import save_strategy
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
 from core.strategy.dna import (
     ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA)
+from tests.helpers.vr_factory import insert_hypothesis
 
 _CONDS = {
     "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
@@ -116,27 +116,27 @@ class TestSandboxBacktest:
             self, data_dir, strategy_id_module):
         """挂假设的沙盒区间计入判定并集——同区间隔离验证被 409。"""
         db, sid = strategy_id_module
-        hid = register_hypothesis(
+        hid = insert_hypothesis(
             db, conditions=_CONDS, statement="s",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2023-01-01T00:00:00Z",
-                          "end": "2023-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+                          "end": "2023-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
         out = run_sandbox_backtest(
             db, data_dir, strategy_id=sid, symbol="BTCUSDT",
             timeframe="4h", start="2023-03-01", end="2023-03-20",
             hypothesis_id=hid)
         assert out["hypothesis_id"] == hid
-        # 同区间隔离验证：区间重叠被拒（窥探拦截）
-        with pytest.raises(ResearchError) as ei:
-            run_isolated_backtest(
-                db, data_dir, hypothesis_id=hid, strategy_id=sid,
-                request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                               "start": "2023-03-05T00:00:00Z",
-                               "end": "2023-03-15T00:00:00Z"})
-        assert ei.value.code == "RESEARCH_RANGE_OVERLAP"
-        judged = ei.value.detail["judged_ranges"]
-        assert any(r["start"].startswith("2023-03-01") for r in judged), \
-            "沙盒区间应出现在判定并集明细中"
+        # 沙盒区间计入判定并集（retire-legacy 后旧隔离 409 通道退役，
+        # 并集面经研究日志 data_ranges 留痕直读验证——同一事实源；
+        # 沙盒实写 entry_type=sandbox_backtest，judged_ranges_union
+        # 不过滤类型直读全部条目 data_ranges）
+        import json as _json
+        entries = [e for e in rr.list_research_log(db, hypothesis_id=hid)
+                   if e["entry_type"] == "sandbox_backtest"]
+        assert entries, "沙盒执行留 validate 日志"
+        ranges = _json.loads(entries[-1]["data_ranges"] or "[]")
+        assert any(str(r.get("start", "")).startswith("2023-03-01")
+                   for r in ranges), "沙盒区间应出现在并集留痕明细中"
 
     def test_over_limit_rejected(self, strategy_id_module, data_dir):
         db, sid = strategy_id_module
@@ -161,6 +161,22 @@ class TestSandboxBacktest:
         assert out["hypothesis_id"] is None
         adhoc_rows = rr.list_validation_records(db, hypothesis_id="adhoc")
         assert any(r["record_id"] == out["record_id"] for r in adhoc_rows)
+
+    def test_adhoc_sandbox_not_in_any_union(self, fresh_env, data_dir):
+        """无假设请求不落账（retire-legacy ADDED「判定并集账本与
+        sandbox 记账」场景 2 的并集面收紧）：不携带 hypothesis_id 的
+        沙盒执行照常跑，其执行区间不得进入任何假设的判定并集——
+        并集读侧按 hypothesis_id 归集，adhoc 留痕（hypothesis_id=None）
+        不被任何假设的现算吸收。"""
+        db, sid = fresh_env
+        out = run_sandbox_backtest(
+            db, data_dir, strategy_id=sid, symbol="BTCUSDT",
+            timeframe="4h", start="2023-03-01", end="2023-03-10")
+        assert out["hypothesis_id"] is None
+        hid = _hyp(db)  # 自报区间 2022-11~12，与执行区间不相交
+        union = judged_ranges_union(db, hid)
+        assert all(not str(r.get("start", "")).startswith("2023-03")
+                   for r in union), "adhoc 沙盒区间不得进入判定并集"
 
 
 @pytest.fixture()
@@ -187,14 +203,15 @@ def fresh_env(tmp_path: Path):
 
 
 def _hyp(db: Path) -> str:
-    """注册假设（自报区间 2022-11~12——避开沙盒/隔离执行区间，
-    并集计数用例互不污染）。"""
-    return register_hypothesis(
+    """直插假设（自报区间 2022-11~12——避开沙盒/隔离执行区间，
+    并集计数用例互不污染；register_hypothesis 退役后经 vr_factory
+    SQL 直插，仅构造手段变化）。"""
+    return insert_hypothesis(
         db, conditions=_CONDS, statement="统一流契约",
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2022-11-01T00:00:00Z",
                       "end": "2022-12-01T00:00:00Z"}],
-        strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+        strategy_params={"stop_loss": 0.05})
 
 
 def _sbx_row(db: Path, record_id: str) -> dict:
@@ -229,9 +246,11 @@ class TestSandboxRecordUnification:
         assert row["verdict"] == ""
         assert row["pollution_cause"] is None
         assert row["components"] is None
-        assert row["signal_trace"] is None
-        assert row["trade_semantics"] is None
-        assert row["stop_price"] is None
+        # K1（retire-legacy D-3.7）：三明细随记录原子落库，三布尔对齐
+        # 旧链打 1（口径=留痕管线执行成功）；正式验证专属列仍 NULL
+        assert row["signal_trace"] == 1
+        assert row["trade_semantics"] == 1
+        assert row["stop_price"] == 1
         assert row["created_at"]
 
     def test_sandbox_result_carries_full_metrics(
@@ -243,8 +262,10 @@ class TestSandboxRecordUnification:
             timeframe="4h", start="2023-03-01", end="2023-03-20",
             hypothesis_id=_hyp(db))
         result = json.loads(_sbx_row(db, out["record_id"])["result"])
+        # K1 ④：纯增 mtf_gated_bars 顶层键（null=无门控面与 0=门控全过
+        # 严格区分——读侧 :87 既有提取位零改动）
         assert set(result) == {"metrics", "symbol", "timeframe",
-                               "bars_used", "warmup_bars"}
+                               "bars_used", "warmup_bars", "mtf_gated_bars"}
         metrics = result["metrics"]
         assert {"total_return", "total_trades", "win_rate",
                 "max_drawdown", "excess_return"} <= set(metrics)
@@ -275,21 +296,20 @@ class TestSandboxRecordUnification:
             assert params[k] == v
         assert "request_range" not in params
 
-    def test_sandbox_record_zero_side_effects(self, fresh_env, data_dir):
-        """TC-1-4：写零副作用——明细三表零行+零 validate 日志。"""
+    def test_sandbox_record_detail_side_contract(self, fresh_env, data_dir):
+        """TC-1-4（K1 翻转，retire-legacy D-3.7）：明细随记录落库——
+        equity 曲线行在场+零 validate 日志（研究日志独立事务照旧）。"""
         db, sid = fresh_env
         out = run_sandbox_backtest(
             db, data_dir, strategy_id=sid, symbol="BTCUSDT",
             timeframe="4h", start="2023-03-01", end="2023-03-10")
         import sqlite3
         conn = sqlite3.connect(str(db))
-        for table in ("vr_trade_detail", "vr_equity_curve",
-                      "vr_signal_trace"):
-            n = conn.execute(
-                f"SELECT COUNT(*) FROM {table} WHERE record_id = ?",
-                (out["record_id"],)).fetchone()[0]
-            assert n == 0, f"{table} 出现沙盒行"
+        n_eq = conn.execute(
+            "SELECT COUNT(*) FROM vr_equity_curve WHERE record_id = ?",
+            (out["record_id"],)).fetchone()[0]
         conn.close()
+        assert n_eq >= 1, "K1：sandbox 新记录须有权益曲线明细行"
         logs = rr.list_research_log(db)
         assert not any(e["entry_type"] == "validate" for e in logs)
 
@@ -374,34 +394,6 @@ class TestSandboxRecordUnification:
         assert set(out) == nine | {"record_id"}
         assert out["note"] == ("沙盒结果不构成验证证据；关联假设的区间"
                                "已计入判定并集")
-
-    def test_idem_query_level_isolation_bidirectional(
-            self, fresh_env, data_dir):
-        """TC-1-9：幂等面双向隔离——沙盒行入库不改变幂等面行为。"""
-        db, sid = fresh_env
-        hid = _hyp(db)
-        iso = run_isolated_backtest(
-            db, data_dir, hypothesis_id=hid, strategy_id=sid,
-            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": "2023-01-05T00:00:00Z",
-                           "end": "2023-01-25T00:00:00Z"})
-        sbx = run_sandbox_backtest(
-            db, data_dir, strategy_id=sid, symbol="BTCUSDT",
-            timeframe="4h", start="2023-03-01", end="2023-03-10",
-            hypothesis_id=hid)
-        rows = {r["record_id"]: r for r in rr.list_validation_records(db)}
-        iso_hash = rows[iso["record_id"]]["range_hash"]
-        sbx_hash = rows[sbx["record_id"]]["range_hash"]
-        # 正向对照：正式 hash 以 isolated level 查命中自身（幂等面未变）
-        hit = rr.find_validation_by_identity(
-            db, hid, sid, iso_hash, level="isolated_backtest")
-        assert hit is not None and hit["record_id"] == iso["record_id"]
-        # 沙盒 hash 以 isolated level 查零命中正式行
-        assert rr.find_validation_by_identity(
-            db, hid, sid, sbx_hash, level="isolated_backtest") is None
-        # 正式 hash 以 sandbox level 查零命中沙盒行
-        assert rr.find_validation_by_identity(
-            db, hid, sid, iso_hash, level="sandbox_backtest") is None
 
     def test_sandbox_log_entry_form_byte_identical(
             self, fresh_env, data_dir):
@@ -498,3 +490,52 @@ class TestSandboxRecordUnification:
         logs = [e for e in rr.list_research_log(db)
                 if e["entry_type"] == "sandbox_backtest"]
         assert len(logs) == 2  # 两条日志如实
+
+
+class TestSandboxDetailWiring:
+    """K1 明细接线验收锚（retire-legacy-subsystems 任务 5.0——四点
+    验收：detail_available/executions/trace_rows/原子性）。"""
+
+    def test_ka_detail_available_executions_trace_rows(
+            self, fresh_env, data_dir):
+        """K-A：sandbox 执行成功——明细端点三要素齐备（executions 非空
+        单份 exec_ref=main+trace_rows 非空+三布尔 true）。"""
+        db, sid = fresh_env
+        out = run_sandbox_backtest(
+            db, data_dir, strategy_id=sid, symbol="BTCUSDT",
+            timeframe="4h", start="2023-03-01", end="2023-03-20",
+            hypothesis_id=_hyp(db))
+        execs = rr.get_validation_executions(db, out["record_id"])
+        assert execs, "executions 非空"
+        assert len(execs) == 1 and execs[0]["exec_ref"] == "main"
+        assert execs[0]["exec_index"] == 0
+        traces = rr.get_vr_signal_trace_rows(db, out["record_id"])
+        assert traces, "trace_rows 非空（留痕行随记录落库）"
+        for tr in traces:
+            assert tr["exec_ref"] == "main"
+        row = _sbx_row(db, out["record_id"])
+        assert (row["signal_trace"], row["trade_semantics"],
+                row["stop_price"]) == (1, 1, 1)
+
+    def test_kb_detail_failure_rolls_back_whole_record(
+            self, fresh_env, data_dir, monkeypatch):
+        """K-B：明细写入失败注入——事务整体回滚主表无残留行+异常穿至
+        调用方（形制沿 TC-7-1 先例：日志先行独立事务不受波及）。"""
+        db, sid = fresh_env
+        import core.analysis.validation_service as vs_mod
+
+        def _bad_payload(*_a, **_k):
+            return {"trades": [], "equity": {"unknown_column_xyz": 1}}
+
+        monkeypatch.setattr(vs_mod, "_build_detail_payload", _bad_payload)
+        with pytest.raises(Exception):
+            run_sandbox_backtest(
+                db, data_dir, strategy_id=sid, symbol="BTCUSDT",
+                timeframe="4h", start="2023-03-01", end="2023-03-10")
+        monkeypatch.undo()
+        assert rr.list_validation_records(db) == [], "主表无残留行（整体回滚）"
+        import sqlite3
+        conn = sqlite3.connect(str(db))
+        n = conn.execute("SELECT COUNT(*) FROM vr_equity_curve").fetchone()[0]
+        conn.close()
+        assert n == 0, "明细表无残留行"

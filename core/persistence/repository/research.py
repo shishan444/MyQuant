@@ -22,7 +22,6 @@ from sqlalchemy import and_, case, func, insert, or_, select, update
 from core.analysis.errors import load_stored_json  # 轻量定义点（errors.py 头部声明：任何模块可安全模块级 import）
 from core.persistence.orm.models import (
     AnalysisTask,
-    FeatureRequest,
     FormulaPlugin,
     ModelPlugin,
     ResearchHypothesis,
@@ -86,64 +85,6 @@ def _apply_keyset(
 
 # ============================================================ 假设（双写组合）
 
-def save_hypothesis_with_log(
-    db_path: Path,
-    *,
-    hypothesis_id: str,
-    conditions: str,
-    conditions_hash: str,
-    statement: str,
-    data_ranges: str,
-    ranges_hash: str,
-    strategy_params: Optional[str] = None,
-    log_id: Optional[str] = None,
-    screen_use: Optional[Dict[str, str]] = None,
-) -> None:
-    """原子写：research_hypotheses + research_log(register) [+ screen_use]。
-
-    log_id 可注入（测试原子性用）；任一后续 insert 失败时假设行一并
-    回滚。screen_use（add-screen-patterns）：{ref_id, data_ranges}——
-    登记引用扫描候选时同事务追加谱系日志（区间经判定并集机制自动
-    纳入隔离，isolation.py 零改动）。strategy_params（0.4.2 R1）：
-    声明块归一形 JSON 串；None=无声明（列 NULL，翻译走平台默认）。
-    """
-    engine = _engine_for(db_path)
-    now = _now()
-    with engine.begin() as conn:
-        conn.execute(insert(ResearchHypothesis).values(
-            hypothesis_id=hypothesis_id,
-            conditions=conditions, conditions_hash=conditions_hash,
-            statement=statement,
-            data_ranges=data_ranges, ranges_hash=ranges_hash,
-            strategy_params=strategy_params,
-            status="active",
-            created_at=now, updated_at=now,
-        ))
-        conn.execute(insert(ResearchLog).values(
-            log_id=log_id or _new_id(),
-            hypothesis_id=hypothesis_id,
-            entry_type="register",
-            ref_id=hypothesis_id,
-            data_ranges=data_ranges,
-            summary=statement,
-            created_at=now,
-        ))
-        if screen_use is not None:
-            conn.execute(insert(ResearchLog).values(
-                log_id=_new_id(),
-                hypothesis_id=hypothesis_id,
-                # GAP-10 泛化：entry_type/summary 随 screen_use dict 携带
-                # （新路径 analysis_ref；缺省沿 screen_use 旧值——存量
-                # 调用方与测试零适配）
-                entry_type=screen_use.get("entry_type", "screen_use"),
-                ref_id=screen_use["ref_id"],
-                data_ranges=screen_use["data_ranges"],
-                summary=screen_use.get(
-                    "summary", "scan candidate referenced at registration"),
-                created_at=now,
-            ))
-
-
 def get_hypothesis(db_path: Path, hypothesis_id: str) -> Optional[Dict[str, Any]]:
     engine = _engine_for(db_path)
     with engine.connect() as conn:
@@ -152,164 +93,6 @@ def get_hypothesis(db_path: Path, hypothesis_id: str) -> Optional[Dict[str, Any]
                 ResearchHypothesis.hypothesis_id == hypothesis_id)
         ).mappings().first()
     return dict(row) if row is not None else None
-
-
-def find_active_hypothesis_by_identity(
-    db_path: Path, conditions_hash: str, ranges_hash: str
-) -> Optional[Dict[str, Any]]:
-    """幂等键查询：同条件集+同区间集且 active 的既有假设（重复登记返回既有）。"""
-    engine = _engine_for(db_path)
-    with engine.connect() as conn:
-        row = conn.execute(
-            select(ResearchHypothesis).where(
-                ResearchHypothesis.conditions_hash == conditions_hash,
-                ResearchHypothesis.ranges_hash == ranges_hash,
-                ResearchHypothesis.status == "active",
-            ).order_by(ResearchHypothesis.created_at)
-        ).mappings().first()
-    return dict(row) if row is not None else None
-
-
-def list_hypotheses_by_identity(
-    db_path: Path, conditions_hash: str, ranges_hash: str
-) -> List[Dict[str, Any]]:
-    """同身份全部假设实体（0.4.2 R4 身份族——全状态含终态，区别于
-    find_active_hypothesis_by_identity 的 active 限定；终态后重登记产
-    族内新实体，族=至多 1 active + 0..n 终态）。created_at 升序。"""
-    engine = _engine_for(db_path)
-    with engine.connect() as conn:
-        rows = conn.execute(
-            select(ResearchHypothesis).where(
-                ResearchHypothesis.conditions_hash == conditions_hash,
-                ResearchHypothesis.ranges_hash == ranges_hash,
-            ).order_by(ResearchHypothesis.created_at,
-                       ResearchHypothesis.hypothesis_id)
-        ).mappings().all()
-    return [dict(r) for r in rows]
-
-
-def parse_parent_ids(raw: Optional[str]) -> List[Any]:
-    """parent_ids 列值 → id 列表（双形制归一，review-042 CARD-06 单点）。
-
-    落库形制两种：JSON 数组（进化/手工来源，多父）与裸串（翻译器落库
-    为单 id 串非 JSON 数组）；raw 空/None 归一为空列表。JSON 解析出非
-    列表（单值形）包装为单元素列表。谱系查询（本文件）与验证档案
-    _build_lineage 共用——两处各自实现曾是同一解析的第二份漂移源。
-    """
-    if not raw:
-        return []
-    try:
-        parsed = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return [raw]  # 裸串形制——当单 id 处理
-    if not isinstance(parsed, list):
-        return [str(parsed)]  # 单值 JSON 形兼容
-    return parsed
-
-
-def list_strategies_by_parent_hypotheses(
-    db_path: Path, hypothesis_ids: List[str]
-) -> List[Dict[str, Any]]:
-    """parent_ids JSON 数组成员精确匹配 id 集的策略（0.4.2 R4 谱系查询）。
-
-    精确成员判定非子串匹配（进化/手工来源策略的 JSON 数组不误命中）；
-    全量无 limit（谱系披露不截断）。created_at 升序。
-    """
-    if not hypothesis_ids:
-        return []
-    id_set = set(hypothesis_ids)
-    # 显式列裁剪（review-042 CARD-07）：消费方仅需四列——select(Strategy)
-    # 全表会把 dna_json（Text 大载荷）整体拖进内存；成员匹配保留在
-    # Python 侧（正确性优先——JSON 数组的 SQL LIKE 有子串误命中）。
-    # 行数上限/parent 关联表方案是 S-3 性能债（TD 登记），不在此卡
-    engine = _engine_for(db_path)
-    with engine.connect() as conn:
-        rows = conn.execute(
-            select(
-                Strategy.strategy_id, Strategy.parent_ids,
-                Strategy.status, Strategy.created_at,
-            ).where(
-                Strategy.parent_ids.isnot(None),
-            ).order_by(Strategy.created_at, Strategy.strategy_id)
-        ).mappings().all()
-    out = []
-    for row in rows:
-        if id_set.intersection(str(p) for p in parse_parent_ids(row["parent_ids"])):
-            out.append(dict(row))
-    return out
-
-
-def count_validation_records_by_strategy(
-    db_path: Path, strategy_ids: List[str]
-) -> Dict[str, Dict[str, Dict[str, int]]]:
-    """按 strategy_id 的 level×verdict 聚合计数（0.4.2 R4/DC-8——SQL
-    聚合不经列表截断；大谱系计数与记录实况一致）。
-
-    Returns:
-        {strategy_id: {level: {"count": n, "pass": n, "fail": n,
-                               "inconclusive": n}}}
-    """
-    if not strategy_ids:
-        return {}
-    engine = _engine_for(db_path)
-    with engine.connect() as conn:
-        rows = conn.execute(
-            select(
-                ValidationRecord.strategy_id,
-                ValidationRecord.level,
-                ValidationRecord.verdict,
-                func.count().label("n"),
-            ).where(
-                ValidationRecord.strategy_id.in_(strategy_ids),
-            ).group_by(
-                ValidationRecord.strategy_id,
-                ValidationRecord.level,
-                ValidationRecord.verdict,
-            )
-        ).all()
-    out: Dict[str, Dict[str, Dict[str, int]]] = {}
-    for sid, level, verdict, n in rows:
-        bucket = out.setdefault(sid, {}).setdefault(
-            level, {"count": 0, "pass": 0, "fail": 0, "inconclusive": 0})
-        bucket["count"] += n
-        if verdict in bucket:
-            bucket[verdict] += n
-    return out
-
-
-def list_validation_record_ids_by_strategy(
-    db_path: Path, strategy_ids: List[str]
-) -> Dict[str, Dict[str, List[str]]]:
-    """按 strategy_id 的 level 分组 record_id 全量升序（变更一 B2 切片 b）。
-
-    SQL 全量查询不经列表截断（spec「MUST NOT 截断扫描」——直插 201 条
-    记录的实体编号明细须全量披露）；与 count_validation_records_by_strategy
-    同文件同域保持单源（两函数同 strategy_id 域消费，防漂移约束一并保持）。
-
-    Returns:
-        {strategy_id: {level: [record_id, ...]}}（record_id 升序）
-    """
-    if not strategy_ids:
-        return {}
-    engine = _engine_for(db_path)
-    with engine.connect() as conn:
-        rows = conn.execute(
-            select(
-                ValidationRecord.strategy_id,
-                ValidationRecord.level,
-                ValidationRecord.record_id,
-            ).where(
-                ValidationRecord.strategy_id.in_(strategy_ids),
-            ).order_by(
-                ValidationRecord.strategy_id,
-                ValidationRecord.level,
-                ValidationRecord.record_id,
-            )
-        ).all()
-    out: Dict[str, Dict[str, List[str]]] = {}
-    for sid, level, record_id in rows:
-        out.setdefault(sid, {}).setdefault(level, []).append(record_id)
-    return out
 
 
 def list_hypotheses(
@@ -331,165 +114,6 @@ def list_hypotheses(
         stmt = stmt.where(ResearchHypothesis.status == status)
     with engine.connect() as conn:
         return [dict(r) for r in conn.execute(stmt).mappings()]
-
-
-def count_hypotheses(
-    db_path: Path, *, status: Optional[str] = None,
-) -> int:
-    """假设真总数（过滤口径与 list_hypotheses 一致）。"""
-    stmt = select(func.count()).select_from(ResearchHypothesis)
-    if status is not None:
-        stmt = stmt.where(ResearchHypothesis.status == status)
-    engine = _engine_for(db_path)
-    with engine.connect() as conn:
-        return conn.execute(stmt).scalar_one()
-
-
-def transition_hypothesis_with_promotion(
-    db_path: Path,
-    hypothesis_id: str,
-    *,
-    target_status: str,
-    terminal_ref: str,
-    superseded_by: Optional[str] = None,
-    promote: bool = False,
-    log_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """条件迁移 + 迁移日志 +（promote 时）谱系 draft 原子转正，同一事务。
-
-    转正经生命周期迁移服务 transit（build-strategy-lifecycle 3.1：
-    draft→active 事件同事务落表，conn 透传；语义与直改等价）。
-    refuted 定证后谱系 draft 经 transit 归档（build-strategy-lifecycle
-    3.2 镜像形制：trigger=refute，谱系空跳过+留痕）。
-
-    promote 独立证据条件（improve-mcp-agent-loop M4）：仅当存在挂
-    (hypothesis_id, 该 draft) 的 verdict=pass 记录才转正——防"用别的
-    策略的 pass 定证、转正未验证的 draft"的调包；无自身 pass 时假设
-    照常定证、draft 保持 draft（日志记因）。draft 已被人工删除则跳过
-    转正并落日志（显式清理不阻塞假设定案）。
-
-    Returns:
-        {"rows": 0|1, "promoted": bool, "promoted_strategy_id": Optional[str],
-         "promotion_note": Optional[str]}
-    """
-    from core.persistence.orm.models import Strategy
-
-    engine = _engine_for(db_path)
-    now = _now()
-    out: Dict[str, Any] = {"rows": 0, "promoted": False,
-                           "promoted_strategy_id": None, "promotion_note": None}
-    with engine.begin() as conn:
-        result = conn.execute(
-            update(ResearchHypothesis)
-            .where(ResearchHypothesis.hypothesis_id == hypothesis_id,
-                   ResearchHypothesis.status == "active")
-            .values(
-                status=target_status,
-                terminal_ref=terminal_ref,
-                superseded_by=superseded_by,
-                updated_at=now,
-            )
-        )
-        if result.rowcount == 0:
-            return out
-        out["rows"] = 1
-        conn.execute(insert(ResearchLog).values(
-            log_id=log_id or _new_id(),
-            hypothesis_id=hypothesis_id,
-            entry_type="transition",
-            ref_id=terminal_ref,
-            summary=f"active -> {target_status} (ref={terminal_ref})",
-            created_at=now,
-        ))
-
-        if target_status == "refuted":
-            # 证伪归档接入（build-strategy-lifecycle 3.2，promote 的
-            # 镜像形制）：refuted 定证成功后谱系 draft 经 transit 归档
-            # （trigger=refute，evidence=假设级 fail 记录 record_id=
-            # terminal_ref——hypothesis_service 已强制其 verdict=fail），
-            # conn 透传同事务；谱系空跳过+留痕。对象范围：refuted 时谱系
-            # 恒 draft 或不存在（无「转正后事后证伪」路径），from 恒
-            # draft；「任意→archived」完整 from 覆盖由 DELETE 人工边承载
-            drafts = conn.execute(
-                select(Strategy.strategy_id)
-                .where(Strategy.parent_ids == hypothesis_id,
-                       Strategy.status == "draft")
-            ).scalars().all()
-            if not drafts:
-                out["promotion_note"] = "谱系无 draft，跳过证伪归档"
-                conn.execute(insert(ResearchLog).values(
-                    log_id=_new_id(), hypothesis_id=hypothesis_id,
-                    entry_type="refutation", ref_id=terminal_ref,
-                    summary="refutation skipped: no draft in lineage",
-                    created_at=now))
-                return out
-            from core.strategy.lifecycle import transit as _transit
-            for draft_id in drafts:
-                _transit(
-                    db_path, draft_id, target="archived", trigger="refute",
-                    evidence={"hypothesis_id": hypothesis_id,
-                              "record_id": terminal_ref},
-                    conn=conn)
-                conn.execute(insert(ResearchLog).values(
-                    log_id=_new_id(), hypothesis_id=hypothesis_id,
-                    entry_type="refutation", ref_id=draft_id,
-                    summary=(f"draft archived <- refuted "
-                             f"(evidence-bound fail {terminal_ref})"),
-                    created_at=now))
-            return out
-
-        if not promote:
-            return out
-
-        drafts = conn.execute(
-            select(Strategy.strategy_id)
-            .where(Strategy.parent_ids == hypothesis_id,
-                   Strategy.status == "draft")
-        ).scalars().all()
-        if not drafts:
-            out["promotion_note"] = "谱系无 draft（已删除或未转化），跳过转正"
-            conn.execute(insert(ResearchLog).values(
-                log_id=_new_id(), hypothesis_id=hypothesis_id,
-                entry_type="promotion", ref_id=terminal_ref,
-                summary="promotion skipped: no draft in lineage",
-                created_at=now))
-            return out
-
-        for draft_id in drafts:
-            has_own_pass = conn.execute(
-                select(ValidationRecord.record_id)
-                .where(ValidationRecord.hypothesis_id == hypothesis_id,
-                       ValidationRecord.strategy_id == draft_id,
-                       ValidationRecord.verdict == "pass")
-                .limit(1)
-            ).first()
-            if has_own_pass is None:
-                out["promotion_note"] = (
-                    f"draft {draft_id} 无自身 pass 记录，保持 draft（证据绑定未满足）")
-                conn.execute(insert(ResearchLog).values(
-                    log_id=_new_id(), hypothesis_id=hypothesis_id,
-                    entry_type="promotion", ref_id=draft_id,
-                    summary="promotion skipped: draft has no own pass record",
-                    created_at=now))
-                continue
-            # build-strategy-lifecycle 3.1：转正改经迁移服务（status
-            # 唯一合法写通道），conn 透传=与假设定案同事务（外层回滚
-            # 两侧皆无）；draft→active 事件（trigger=credential）同事务
-            # 落表。凭证判定与上方预检同式（服务单点纪律：内层再核一次）
-            from core.strategy.lifecycle import transit as _transit
-            _transit(
-                db_path, draft_id, target="active", trigger="credential",
-                evidence={"hypothesis_id": hypothesis_id,
-                          "record_id": has_own_pass[0]},
-                conn=conn)
-            out["promoted"] = True
-            out["promoted_strategy_id"] = draft_id
-            conn.execute(insert(ResearchLog).values(
-                log_id=_new_id(), hypothesis_id=hypothesis_id,
-                entry_type="promotion", ref_id=draft_id,
-                summary=f"draft promoted -> active (evidence-bound pass {has_own_pass[0]})",
-                created_at=now))
-        return out
 
 
 # ============================================================ 研究日志
@@ -568,84 +192,6 @@ def count_research_log(
 
 # ============================================================ 验证记录（双写组合）
 
-def save_validation_with_log(
-    db_path: Path,
-    *,
-    record_id: str,
-    hypothesis_id: str,
-    strategy_id: Optional[str],
-    level: str,
-    segmentation: str = "",
-    params: str,
-    result: Optional[str],
-    verdict: str,
-    range_hash: str,
-    components: Optional[str] = None,
-    log_id: Optional[str] = None,
-    detail: Optional[List[Dict[str, Any]]] = None,
-    trace: Optional[List[Dict[str, Any]]] = None,
-) -> None:
-    """原子多写：validation_records + research_log(validate) + 明细两表+留痕表。
-
-    segmentation：0.3.3 G7 幂等第五维（分段身份——默认空串=非分段，
-    隔离/随机窗调用方可不传；分段调用方传 segmentation_identity 值）。
-    detail（add-validation-detail B4）：执行份明细列表（_build_detail_payload
-    产物，每份 {trades, equity}（行级含四标识列）），缺省 None 不写
-    明细表（签名向后兼容——沙盒/既有调用方零适配）。携带时四写同一
-    事务：任一失败整体回滚——「记录在而明细残缺」不可达（specs
-    「验证明细原子落盘」）。
-    trace（add-vr-signal-trace 任务 4.2）：信号留痕行列表（trace_
-    resolver 产物，行级含 exec_ref/bar_time/seq/outcome/reason/
-    event_code/size/price/capped/gene_hits）。缺省 None 行为逐位
-    一致（沙盒/其他调用方零适配）；非 None（含空列表——管线通而
-    事实空）时第五写：行批量 INSERT VrSignalTrace+记录三布尔打 1，
-    与四写同一事务——「记录在而留痕残缺」不可达（打标与数据一致
-    性由同事务结构性封死）。三布尔打标口径=「本批留痕管线执行成功」
-    非事件有无。
-    """
-    engine = _engine_for(db_path)
-    now = _now()
-    with engine.begin() as conn:
-        conn.execute(insert(ValidationRecord).values(
-            record_id=record_id,
-            hypothesis_id=hypothesis_id,
-            strategy_id=strategy_id,
-            level=level,
-            segmentation=segmentation,
-            params=params,
-            result=result,
-            verdict=verdict,
-            range_hash=range_hash,
-            components=components,
-            **(
-                {"signal_trace": 1, "trade_semantics": 1, "stop_price": 1}
-                if trace is not None else {}),
-            created_at=now,
-        ))
-        conn.execute(insert(ResearchLog).values(
-            log_id=log_id or _new_id(),
-            hypothesis_id=hypothesis_id,
-            entry_type="validate",
-            ref_id=record_id,
-            summary=f"{level}: {verdict}",
-            created_at=now,
-        ))
-        if detail:
-            for exec_payload in detail:
-                equity_row = dict(exec_payload["equity"])
-                equity_row["record_id"] = record_id
-                conn.execute(insert(VrEquityCurve).values(**equity_row))
-                trade_rows = exec_payload["trades"]
-                if trade_rows:
-                    rows = [dict(t, record_id=record_id) for t in trade_rows]
-                    conn.execute(insert(VrTradeDetail), rows)
-        # 第五写（add-vr-signal-trace 任务 4.2）：留痕行批量落库——
-        # trace 参数 None 即整块跳过（行为与现状逐位一致）；非 None
-        # 且非空时行落库（record_id 由本层补——resolver 行不含）
-        if trace:
-            conn.execute(insert(VrSignalTrace), [
-                dict(t, record_id=record_id) for t in trace])
-
 def save_sandbox_validation_record(
     db_path: Path,
     *,
@@ -655,17 +201,27 @@ def save_sandbox_validation_record(
     params: str,
     result: Optional[str],
     range_hash: str,
+    detail: Optional[List[Dict[str, Any]]] = None,
+    trace: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
-    """沙盒回测留痕单写（add-sandbox-records-unified-flow C1）：validation_records
-    独立成行（level=sandbox_backtest），与先行的 append_research_log 是两个
-    独立事务——并集读日志、记录页读本表，两个事实源各管各的账。
+    """沙盒回测留痕写入（add-sandbox-records-unified-flow C1；K1 扩展
+    retire-legacy D-3.7 ⑤）：validation_records 独立成行（level=
+    sandbox_backtest），与先行的 append_research_log 是两个独立事务
+    ——并集读日志、记录页读本表，两个事实源各管各的账。
 
     level/segmentation/verdict 三值写死不设形参（防误用）：沙盒身份由
     level 定义；verdict 空串=不动 schema 的最小语义漂移（三值域保持
-    纯净，不参与三态判定与三键统计）。五列（pollution_cause/components/
-    signal_trace/trade_semantics/stop_price）不写落 NULL——明细与留痕
-    是正式验证专属。不复用 save_validation_with_log：那会多写一条
-    entry_type="validate" 日志（语义分叉）且事务域绑定明细表。
+    纯净，不参与三态判定与三键统计）。
+
+    detail/trace（K1，2026-11-16 用户终裁「新记录必须保留明细」）：
+    缺省 None 行为逐位不变（向后兼容）；携带时同一 engine.begin()
+    事务内原子多写 VrEquityCurve+VrTradeDetail+VrSignalTrace（行组装
+    与 INSERT 逻辑自 save_validation_with_log :633-647 迁移承载、行为
+    等价），三布尔（signal_trace/trade_semantics/stop_price）在 trace
+    携带时对齐旧链打 1（口径=管线执行成功非事件有无）——主表与三明细
+    同事务，「记录在而明细残缺」不可达。不复用 save_validation_with_log：
+    那会多写一条 entry_type="validate" 日志（语义分叉）且签名绑定正式
+    验证专属形参。
 
     唯一约束冲突理论不可达（调用方 range_hash 掺 record_id——每次执行
     恒新，D5）；SQLite 异常裸穿（fail-loud：禁止「记录写失败但指标照常
@@ -683,31 +239,26 @@ def save_sandbox_validation_record(
             result=result,
             verdict="",
             range_hash=range_hash,
+            **(
+                {"signal_trace": 1, "trade_semantics": 1, "stop_price": 1}
+                if trace is not None else {}),
             created_at=_now(),
         ))
-
-
-def find_validation_by_identity(
-    db_path: Path, hypothesis_id: str, strategy_id: Optional[str],
-    range_hash: str, *, level: str, segmentation: str = "",
-) -> Optional[Dict[str, Any]]:
-    """幂等键查询（0.3.3 G7 五元）：同 (hypothesis_id, strategy_id,
-    range_hash, level, segmentation) 的既有记录——level 等值过滤使
-    幂等命中仅发生在同类记录间（隔离/分段/随机窗互不命中——跨类型
-    误命中的现状缺陷随之修复）。level 无默认值：调用方必须显式声明
-    查询的身份类型。"""
-    engine = _engine_for(db_path)
-    with engine.connect() as conn:
-        row = conn.execute(
-            select(ValidationRecord).where(
-                ValidationRecord.hypothesis_id == hypothesis_id,
-                ValidationRecord.strategy_id == strategy_id,
-                ValidationRecord.range_hash == range_hash,
-                ValidationRecord.level == level,
-                ValidationRecord.segmentation == segmentation,
-            ).order_by(ValidationRecord.created_at)
-        ).mappings().first()
-    return dict(row) if row is not None else None
+        # K1 明细三写（行为等价迁移自 save_validation_with_log）：
+        # detail 每份 equity 行+trades 批量行；trace 留痕行批量——
+        # record_id 由本层补
+        if detail:
+            for exec_payload in detail:
+                equity_row = dict(exec_payload["equity"])
+                equity_row["record_id"] = record_id
+                conn.execute(insert(VrEquityCurve).values(**equity_row))
+                trade_rows = exec_payload["trades"]
+                if trade_rows:
+                    rows = [dict(t, record_id=record_id) for t in trade_rows]
+                    conn.execute(insert(VrTradeDetail), rows)
+        if trace:
+            conn.execute(insert(VrSignalTrace), [
+                dict(t, record_id=record_id) for t in trace])
 
 
 def get_validation_record_by_id(
@@ -1197,69 +748,6 @@ _LATEST_RECORD_EXPR = (
     .limit(1).scalar_subquery())
 
 
-def _cards_filters(status: Optional[str], q: Optional[str]):
-    """status 等值+q 子串过滤条件（%/_ 字面转义——LIKE 案义字符不作
-    通配符；空/全空白 q 不过滤）。"""
-    filters = []
-    if status is not None:
-        filters.append(ResearchHypothesis.status == status)
-    if q is not None and q.strip():
-        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        filters.append(ResearchHypothesis.statement.like(
-            f"%{escaped}%", escape="\\"))
-    return filters
-
-
-def list_hypothesis_cards(
-    db_path: Path, *,
-    status: Optional[str] = None,
-    q: Optional[str] = None,
-    offset: int = 0, limit: int = 50,
-    cursor: Optional[Tuple[Optional[str], str]] = None,
-    order: str = "desc",
-) -> List[Dict[str, Any]]:
-    """主任务卡片行（B1）：hypotheses 主表+三标量子查询单 SQL 联查。
-
-    卡片七字段为三源表派生视图（权威在各源表，本函数零持久化）；
-    adhoc 记录（hypothesis_id='adhoc'）因假设表零父行被主表联查自然
-    排除（结构事实非过滤特判）。cursor=(recent_activity_at,
-    hypothesis_id) keyset 续页无漂移（沿 _apply_keyset 四表同构收口）。
-    """
-    stmt = select(
-        ResearchHypothesis.hypothesis_id,
-        ResearchHypothesis.statement,
-        ResearchHypothesis.status,
-        _VALIDATION_COUNT_EXPR.label("validation_count"),
-        _LATEST_VERDICT_EXPR.label("latest_verdict"),
-        _LATEST_RECORD_EXPR.label("latest_record_id"),
-        _ACTIVITY_EXPR.label("recent_activity_at"),
-    )
-    for f in _cards_filters(status, q):
-        stmt = stmt.where(f)
-    stmt = _apply_keyset(
-        stmt, _ACTIVITY_EXPR, ResearchHypothesis.hypothesis_id,
-        cursor, order,
-    ).offset(offset).limit(limit)
-    engine = _engine_for(db_path)
-    with engine.connect() as conn:
-        return [dict(r) for r in conn.execute(stmt).mappings()]
-
-
-def count_hypothesis_cards(
-    db_path: Path, *,
-    status: Optional[str] = None,
-    q: Optional[str] = None,
-) -> int:
-    """卡片真总数（过滤口径与 list_hypothesis_cards 一致——status+q
-    双过滤后的假设计数，非当页数）。"""
-    stmt = select(func.count()).select_from(ResearchHypothesis)
-    for f in _cards_filters(status, q):
-        stmt = stmt.where(f)
-    engine = _engine_for(db_path)
-    with engine.connect() as conn:
-        return conn.execute(stmt).scalar_one()
-
-
 # ============================================================ 插件（双写组合）
 
 def save_plugin_with_registry(
@@ -1473,107 +961,3 @@ def register_existing_plugin_signal(
 
 
 # ============================================================ 功能需求单
-
-def save_feature_request(
-    db_path: Path,
-    *,
-    request_id: str,
-    title: str,
-    payload: str,
-    status: str,
-    created_at: str,
-) -> None:
-    """功能需求单落库（慢通道——只保证持久化与可查，不自动实现）。"""
-    engine = _engine_for(db_path)
-    with engine.begin() as conn:
-        conn.execute(insert(FeatureRequest).values(
-            request_id=request_id, title=title, payload=payload,
-            status=status, created_at=created_at))
-
-
-def get_feature_request(
-    db_path: Path, request_id: str,
-) -> Optional[Dict[str, Any]]:
-    """单张需求单查询（回销 PATCH 的存在性先判——404 判定依据）。"""
-    engine = _engine_for(db_path)
-    with engine.connect() as conn:
-        row = conn.execute(
-            select(FeatureRequest).where(
-                FeatureRequest.request_id == request_id)
-        ).mappings().first()
-    return dict(row) if row is not None else None
-
-
-def update_feature_request(
-    db_path: Path,
-    *,
-    request_id: str,
-    status: str,
-    resolution: Optional[str] = None,
-    touch_resolution: bool = True,
-) -> Optional[Dict[str, Any]]:
-    """需求单状态回销（变更二 4.2——部分更新语义的持久层投影）。
-
-    touch_resolution=False 表示请求未携带 resolution 键——保留现值
-    （部分更新规则①）；status→open 的联动清空由调用方以
-    touch_resolution=True + resolution=None 表达（规则②）。值域与
-    resolved 必填校验在路由层（本函数只承载写入）。
-
-    Returns:
-        更新后整行（dict）；request_id 不存在返回 None（404 由调用方
-        判定）。
-    """
-    from sqlalchemy import update as sa_update
-
-    engine = _engine_for(db_path)
-    with engine.begin() as conn:
-        row = conn.execute(
-            select(FeatureRequest).where(
-                FeatureRequest.request_id == request_id)
-        ).mappings().first()
-        if row is None:
-            return None
-        values: Dict[str, Any] = {"status": status}
-        if touch_resolution:
-            values["resolution"] = resolution
-        conn.execute(sa_update(FeatureRequest).where(
-            FeatureRequest.request_id == request_id).values(**values))
-    out = dict(row)
-    out["status"] = status
-    if touch_resolution:
-        out["resolution"] = resolution
-    return out
-
-
-def list_feature_requests(
-    db_path: Path, *, status: Optional[str] = None,
-    offset: int = 0, limit: int = 50,
-    cursor: Optional[Tuple[str, str]] = None,
-    order: str = "asc",
-) -> List[Dict[str, Any]]:
-    """功能需求单列表（分页双轨：offset/limit 原样；cursor=
-    (created_at, request_id) keyset 严格比较——HTTP 列表端点 desc+
-    cursor 续页；status 精确过滤）。count 配套 count_feature_requests。"""
-    engine = _engine_for(db_path)
-    stmt = _apply_keyset(
-        select(FeatureRequest),
-        FeatureRequest.created_at, FeatureRequest.request_id,
-        cursor, order,
-    ).offset(offset).limit(limit)
-    if status is not None:
-        stmt = stmt.where(FeatureRequest.status == status)
-    with engine.connect() as conn:
-        return [dict(r) for r in conn.execute(stmt).mappings()]
-
-
-def count_feature_requests(
-    db_path: Path, *, status: Optional[str] = None,
-) -> int:
-    """功能需求单真总数（过滤口径与 list_feature_requests 一致；
-    HTTP 层 total=真总数消费，形制照 strategy.count_strategies）。"""
-    stmt = select(func.count()).select_from(FeatureRequest)
-    if status is not None:
-        stmt = stmt.where(FeatureRequest.status == status)
-    engine = _engine_for(db_path)
-    with engine.connect() as conn:
-        return conn.execute(stmt).scalar_one()

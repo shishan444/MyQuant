@@ -15,8 +15,26 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.backtest_bridge import run_backtest_on_range
-from tests.analysis.test_staged_validation import _tema_dna
 from tests.helpers.regime_factory import make_two_regime_df
+
+
+def _tema_dna(threshold: float = 1e9):
+    """TEMA 策略（内联自退役的 tests/analysis/test_staged_validation——
+    threshold=1e9 时 entry/exit 皆恒真的确定性构造）。"""
+    from core.strategy.dna import (
+        SignalGene, SignalRole, LogicGenes, RiskGenes, ExecutionGenes,
+        StrategyDNA, TimeframeLayer)
+    gene = SignalGene("TEMA", {"period": 20}, SignalRole.ENTRY_TRIGGER,
+                      "tema_20", {"type": "lt", "threshold": threshold})
+    exit_gene = SignalGene("TEMA", {"period": 20}, SignalRole.EXIT_TRIGGER,
+                           "tema_20", {"type": "lt", "threshold": threshold})
+    return StrategyDNA(
+        layers=[TimeframeLayer(timeframe="1d",
+                               signal_genes=[gene, exit_gene],
+                               logic_genes=LogicGenes())],
+        risk_genes=RiskGenes(),
+        execution_genes=ExecutionGenes(timeframe="1d"),
+        signal_sources=[])
 
 SYMBOL = "BTCUSDT"
 

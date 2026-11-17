@@ -85,18 +85,3 @@ def judged_ranges_union(db_path: Path, hypothesis_id: str) -> List[Dict[str, str
         seen.add(key)
         out.append({"start": start.isoformat(), "end": end.isoformat()})
     return out
-
-
-def overlaps_with_request(
-    judged: List[Dict[str, str]], request_start: str, request_end: str,
-) -> List[Dict[str, str]]:
-    """请求半开区间与判定并集的交（重叠段列表；空 = 干净放行）。"""
-    rs, re_ = _parse_ts(request_start), _parse_ts(request_end)
-    hits = []
-    for r in judged:
-        s, e = _parse_ts(r["start"]), _parse_ts(r["end"])
-        lo, hi = max(rs, s), min(re_, e)
-        if lo < hi:  # 半开区间相交
-            hits.append({"start": lo.isoformat(), "end": hi.isoformat(),
-                         "judged_range": r})
-    return hits

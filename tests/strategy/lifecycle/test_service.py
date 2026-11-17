@@ -244,11 +244,11 @@ class TestErrorFamily:
         assert _events(db) == 0
 
     @pytest.mark.parametrize("trigger", [
-        "credential", "qualify", "task_end", "refute"])
+        "credential", "task_end", "refute"])
     def test_required_evidence_missing_422(self, db, trigger):
-        """必填 trigger 缺 evidence→422 缺失清单点名（沿各自合法边）。"""
+        """必填 trigger 缺 evidence→422 缺失清单点名（沿各自合法边；
+        qualify 已随晋级链退役移出参数面）。"""
         edges = {"credential": ("draft", "active", "hyp_e"),
-                 "qualify": ("paper", "candidate", None),
                  "task_end": ("paper", "active", None),
                  "refute": ("draft", "archived", None)}
         f, t, parent = edges[trigger]
@@ -489,8 +489,8 @@ class TestTriggerEnumRuntimeSemantics:
         assert _status(db, "st_ne") == "active"
         assert _events(db) == 0
 
-    def test_nine_enums_pass_domain_check_on_legal_edges(self, db):
-        """九值各取一合法边全部通过值域校验（无 TRIGGER_INVALID——
+    def test_enum_values_pass_domain_check_on_legal_edges(self, db):
+        """六值各取一合法边全部通过值域校验（无 TRIGGER_INVALID——
         真迁移或正常凭证分流，枚举面不拦截合法 trigger）。"""
         from core.strategy.lifecycle.machine import (
             TRIGGERS, TRIGGER_EDGES)

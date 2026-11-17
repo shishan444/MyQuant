@@ -27,14 +27,13 @@ from core.analysis.condition_kernel import (
 )
 from core.analysis.errors import ResearchError
 from core.analysis.executor import ensure_research_tables
-from core.analysis.hypothesis_service import register_hypothesis
-from core.analysis.hypothesis_to_strategy import translate_hypothesis
+from core.analysis.hypothesis_to_strategy import build_signal_genes
 from core.persistence.db_ext import init_db_ext
 from core.strategy.dna import StrategyDNA
 from core.strategy.executor import (
     EVALUABLE_CONDITION_TYPES, dna_to_signal_set,
 )
-from core.validation.engine import _LOOKBACK_INNER_ACTIONS
+from core.analysis.condition_eval import _LOOKBACK_INNER_ACTIONS
 
 
 def _df(n: int = 400, seed: int = 61) -> pd.DataFrame:
@@ -57,8 +56,8 @@ def _df(n: int = 400, seed: int = 61) -> pd.DataFrame:
 class TestT6ThreeFaceSync:
     def test_analysis_action_map_contains_key(self):
         """分析链动作分派表收录（legal_values 自动随键集单源）。"""
-        from core.validation import engine as val_engine
-        src = open(val_engine.__file__).read()
+        from core.analysis import condition_eval
+        src = open(condition_eval.__file__).read()
         assert '"within_bars_after"' in src
         # 分析链 inner 白名单不含 within_bars_after（嵌套防域）
         assert "within_bars_after" not in _LOOKBACK_INNER_ACTIONS
@@ -102,25 +101,10 @@ class TestT7RegistrationFace:
         assert "inner_action" in str(exc.value.message)
 
     def test_t7_4_registration_to_translate_full_chain(self, db):
-        """登记面全通：登记→统计→转化三步；转化产物精确嵌套形映射
-        （登记平铺 {action, target, inner_action, window} → 基因嵌套
+        """统计→转化两步（登记面已退役，retire-legacy 后翻译行为经
+        build_signal_genes 存活入口承载）；转化产物精确嵌套形映射
+        （平铺 {action, target, inner_action, window} → 基因嵌套
         {type, window, inner={type, threshold}}——键形域翻译边界行为锚）。"""
-        hid = register_hypothesis(
-            db,
-            conditions={
-                "when_conditions": [
-                    {"subject": {"indicator": "RVOL",
-                                 "params": {"period": 20}},
-                     "action": "within_bars_after", "target": 1.5,
-                     "inner_action": "gt", "window": 5}],
-                "then_conditions": [
-                    {"subject": {"indicator": "RSI",
-                                 "params": {"period": 14}},
-                     "action": "gt", "target": 65}]},
-            statement="R4 登记面全通",
-            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
-                          "start": "2024-01-01", "end": "2024-02-01"}]
-        , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         # 统计面可求值（分析链掩码非异常）
         df = _df()
         cond = {"subject": {"indicator": "RVOL", "params": {"period": 20}},
@@ -128,17 +112,20 @@ class TestT7RegistrationFace:
                 "inner_action": "gt", "window": 5}
         mask = mask_for_all(df, [cond], mtf=None)
         assert len(mask) == len(df)
-        # 转化产物精确嵌套形
-        out = translate_hypothesis(db, hypothesis_id=hid)
-        from core.persistence.repository.strategy import get_strategy
-        row = get_strategy(db, out["strategy_id"])
-        genes = json.loads(row["dna_json"])["signal_genes"]
+        # 转化产物精确嵌套形（build_signal_genes 返回 SignalGene 对象，
+        # condition 即嵌套形本体）
+        genes, _sources = build_signal_genes(
+            when_conditions=[cond],
+            then_conditions=[{"subject": {"indicator": "RSI",
+                                          "params": {"period": 14}},
+                              "action": "gt", "target": 65}],
+            db_path=db, strategy_timeframe="4h")
         wba = [g for g in genes
-               if g["condition"].get("type") == "within_bars_after"]
+               if g.condition.get("type") == "within_bars_after"]
         assert len(wba) == 1
-        assert wba[0]["condition"]["window"] == 5
-        assert wba[0]["condition"]["inner"] == {"type": "gt",
-                                                "threshold": 1.5}
+        assert wba[0].condition["window"] == 5
+        assert wba[0].condition["inner"] == {"type": "gt",
+                                             "threshold": 1.5}
 
     def test_t7_5_lookback_family_unlocked_in_registration(self):
         """披露断言：window/inner_action 键入白名单后 lookback_any/
@@ -165,30 +152,24 @@ class TestT7TranslateWindowDomain:
         ensure_research_tables(d)
         return d
 
-    def _register_wba(self, db, window):
-        return register_hypothesis(
-            db,
-            conditions={
-                "when_conditions": [
-                    {"subject": {"indicator": "RVOL",
-                                 "params": {"period": 20}},
-                     "action": "within_bars_after", "target": 1.5,
-                     "inner_action": "gt", "window": window}],
-                "then_conditions": [
-                    {"subject": {"indicator": "RSI",
-                                 "params": {"period": 14}},
-                     "action": "gt", "target": 65}]},
-            statement="window 值域锚",
-            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
-                          "start": "2024-01-01", "end": "2024-02-01"}]
-        , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+    def _wba_cond(self, window):
+        return {"subject": {"indicator": "RVOL", "params": {"period": 20}},
+                "action": "within_bars_after", "target": 1.5,
+                "inner_action": "gt", "window": window}
+
+    def _translate_wba(self, db, cond):
+        return build_signal_genes(
+            when_conditions=[cond],
+            then_conditions=[{"subject": {"indicator": "RSI",
+                                          "params": {"period": 14}},
+                              "action": "gt", "target": 65}],
+            db_path=db, strategy_timeframe="4h")
 
     @pytest.mark.parametrize("bad", [0, -3, "x", 2.5, True],
                              ids=["零", "负数", "字符串", "浮点", "bool"])
     def test_translate_bad_window_rejected(self, db, bad):
-        hid = self._register_wba(db, bad)
         with pytest.raises(ResearchError) as exc:
-            translate_hypothesis(db, hypothesis_id=hid)
+            self._translate_wba(db, self._wba_cond(bad))
         assert exc.value.code == "RESEARCH_PARAM_INVALID"
         assert exc.value.status == 422
         assert exc.value.detail["param"] == "condition.window"
@@ -196,29 +177,13 @@ class TestT7TranslateWindowDomain:
 
     def test_translate_window_default_5_passes(self, db):
         """缺省 window=5 放行（登记面不带 window 键）。"""
-        hid = register_hypothesis(
-            db,
-            conditions={
-                "when_conditions": [
-                    {"subject": {"indicator": "RVOL",
-                                 "params": {"period": 20}},
-                     "action": "within_bars_after", "target": 1.5,
-                     "inner_action": "gt"}],
-                "then_conditions": [
-                    {"subject": {"indicator": "RSI",
-                                 "params": {"period": 14}},
-                     "action": "gt", "target": 65}]},
-            statement="window 缺省锚",
-            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
-                          "start": "2024-01-01", "end": "2024-02-01"}]
-        , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
-        out = translate_hypothesis(db, hypothesis_id=hid)
-        from core.persistence.repository.strategy import get_strategy
-        row = get_strategy(db, out["strategy_id"])
-        genes = json.loads(row["dna_json"])["signal_genes"]
+        genes, _sources = self._translate_wba(db, {
+            "subject": {"indicator": "RVOL", "params": {"period": 20}},
+            "action": "within_bars_after", "target": 1.5,
+            "inner_action": "gt"})
         wba = next(g for g in genes
-                   if g["condition"].get("type") == "within_bars_after")
-        assert wba["condition"]["window"] == 5
+                   if g.condition.get("type") == "within_bars_after")
+        assert wba.condition["window"] == 5
 
 
 class TestT6InnerActionsSingleSource:
@@ -235,12 +200,6 @@ class TestT6InnerActionsSingleSource:
     （operators._SIMPLE_INNER_TYPES 含 price_below）不互相同步——
     design 卡 R4 明文独立域，不设跨域相等断言。
     """
-
-    def test_engine_reexport_same_object_as_kernel(self):
-        """engine re-export 与 condition_kernel 定义同一对象（is 级）。"""
-        from core.analysis.condition_kernel import LOOKBACK_INNER_ACTIONS
-        from core.validation import engine as val_engine
-        assert val_engine._LOOKBACK_INNER_ACTIONS is LOOKBACK_INNER_ACTIONS
 
     def test_five_members_exact_no_nested_no_price_below(self):
         """五员精确集：不含 within_bars_after（spec 嵌套窗口防域
@@ -267,24 +226,17 @@ class TestT6InnerActionsSingleSource:
         d = tmp_path / "q.db"
         init_db_ext(d)
         ensure_research_tables(d)
-        hid = register_hypothesis(
-            d,
-            conditions={
-                "when_conditions": [
-                    {"subject": {"indicator": "RVOL",
-                                 "params": {"period": 20}},
-                     "action": "within_bars_after", "target": 1.5,
-                     "inner_action": "nope", "window": 5}],
-                "then_conditions": [
-                    {"subject": {"indicator": "RSI",
-                                 "params": {"period": 14}},
-                     "action": "gt", "target": 65}]},
-            statement="T6 单源锚",
-            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
-                          "start": "2024-01-01", "end": "2024-02-01"}]
-        , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         with pytest.raises(ResearchError) as exc:
-            translate_hypothesis(d, hypothesis_id=hid)
+            build_signal_genes(
+                when_conditions=[{"subject": {"indicator": "RVOL",
+                                              "params": {"period": 20}},
+                                  "action": "within_bars_after",
+                                  "target": 1.5,
+                                  "inner_action": "nope", "window": 5}],
+                then_conditions=[{"subject": {"indicator": "RSI",
+                                              "params": {"period": 14}},
+                                  "action": "gt", "target": 65}],
+                db_path=d, strategy_timeframe="4h")
         assert exc.value.code == "RESEARCH_NOT_EXPRESSIBLE"
         assert "['ge', 'gt', 'le', 'lt', 'price_above']" in str(
             exc.value.message)
@@ -319,19 +271,14 @@ class TestT7TargetThresholdGuard:
                 "inner_action": inner_action, "window": 5}
 
     def _register_and_translate(self, db, target, inner_action="gt"):
-        hid = register_hypothesis(
-            db,
-            conditions={
-                "when_conditions": [self._wba_cond(target, inner_action)],
-                "then_conditions": [
-                    {"subject": {"indicator": "RSI",
-                                 "params": {"period": 14}},
-                     "action": "gt", "target": 65}]},
-            statement="CARD-01 target 分诊",
-            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
-                          "start": "2024-01-01", "end": "2024-02-01"}]
-        , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
-        return translate_hypothesis(db, hypothesis_id=hid)
+        """经 build_signal_genes 存活翻译入口（translate_hypothesis
+        退役后拒绝面同路径承载——_translate_conditions 单点）。"""
+        return build_signal_genes(
+            when_conditions=[self._wba_cond(target, inner_action)],
+            then_conditions=[{"subject": {"indicator": "RSI",
+                                          "params": {"period": 14}},
+                              "action": "gt", "target": 65}],
+            db_path=db, strategy_timeframe="4h")
 
     @pytest.mark.parametrize(
         "bad", ["ema_20", "close", "abc", None, True, [1]],
@@ -350,25 +297,19 @@ class TestT7TargetThresholdGuard:
     def test_numeric_string_target_passes_as_float(self, db):
         """数值串放行面：target="2.5" → 产物 inner.threshold=2.5
         （float 转换形制——与数值 1.5 同款放行）。"""
-        out = self._register_and_translate(db, "2.5")
-        from core.persistence.repository.strategy import get_strategy
-        row = get_strategy(db, out["strategy_id"])
-        genes = json.loads(row["dna_json"])["signal_genes"]
+        genes, _sources = self._register_and_translate(db, "2.5")
         wba = next(g for g in genes
-                   if g["condition"].get("type") == "within_bars_after")
-        assert wba["condition"]["inner"] == {"type": "gt", "threshold": 2.5}
+                   if g.condition.get("type") == "within_bars_after")
+        assert wba.condition["inner"] == {"type": "gt", "threshold": 2.5}
 
     def test_price_above_inner_target_placeholder_not_consumed(self, db):
         """占位零消费：inner_action=price_above（inner 只带 type 不带
         threshold）→ 列名 target 放行（target 不进分诊面）。"""
-        out = self._register_and_translate(db, "close",
-                                           inner_action="price_above")
-        from core.persistence.repository.strategy import get_strategy
-        row = get_strategy(db, out["strategy_id"])
-        genes = json.loads(row["dna_json"])["signal_genes"]
+        genes, _sources = self._register_and_translate(
+            db, "close", inner_action="price_above")
         wba = next(g for g in genes
-                   if g["condition"].get("type") == "within_bars_after")
-        assert wba["condition"]["inner"] == {"type": "price_above"}
+                   if g.condition.get("type") == "within_bars_after")
+        assert wba.condition["inner"] == {"type": "price_above"}
 
 
 class TestT1DParityWithinBarsAfter:

@@ -28,8 +28,7 @@ import pytest
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
-from core.analysis.hypothesis_to_strategy import translate_hypothesis
-from core.analysis.hypothesis_service import register_hypothesis
+from tests.helpers.vr_factory import insert_hypothesis
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository.strategy import get_strategy, save_strategy
 from core.strategy.dna import (
@@ -100,24 +99,41 @@ def world(tmp_path_factory):
 
     out = {}
     for key, direction in (("short", "short"), ("long", None)):
-        h = register_hypothesis(
-            db, conditions=json.loads(json.dumps(CONDITIONS)),
+        h = insert_hypothesis(
+            db, hypothesis_id=f"hyp_dir_{key}",
+            conditions=json.loads(json.dumps(CONDITIONS)),
             statement=f"OI 流入-{key}", data_ranges=RANGES,
-            strategy_params={"stop_loss": 0.05, "leverage": 2},
-            direction=direction)
-        t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
-        out[f"hyp_{key}"] = h["hypothesis_id"]
-        out[f"st_{key}"] = t["strategy_id"]
+            strategy_params={"stop_loss": 0.05, "leverage": 2})
+        sid = f"st_dir_{key}"
+        _gene_e = SignalGene(
+            indicator="OI_ChangeRate", params={"period": STEP},
+            role=SignalRole.ENTRY_TRIGGER, field_name=f"oi_change_rate_{STEP}",
+            condition={"type": "gt", "threshold": 0.05})
+        _gene_x = SignalGene(
+            indicator="RSI", params={"period": 14},
+            role=SignalRole.EXIT_TRIGGER, field_name="rsi_14",
+            condition={"type": "gt", "threshold": 999})
+        _dna_k = StrategyDNA(
+            signal_genes=[_gene_e, _gene_x], logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(
+                direction=direction or "long", leverage=2,
+                stop_loss=0.05))
+        save_strategy(db, strategy_id=sid, dna_json=_dna_k.to_json(),
+                      symbol="BTCUSDT", timeframe="4h", parent_ids=h)
+        out[f"hyp_{key}"] = h
+        out[f"st_{key}"] = sid
 
     # leverage=1 对照：手工 short draft（RiskGenes 平台默认 leverage=1）
     # D5 注记：登记链无块重放通道收拢后，lev1 对照须独立条件身份
     # （原靠「None 不参与比对」豁免分支与 short 共用同一假设）——
     # OI 阈值微调即新研究主张，行为面（手工 draft 装载）不变
     _WHEN_LEV1 = [dict(WHEN[0], target=0.0500001)]
-    h1 = register_hypothesis(
-        db, conditions=json.loads(json.dumps(
+    h1 = insert_hypothesis(
+        db, hypothesis_id="hyp_dir_lev1",
+        conditions=json.loads(json.dumps(
             {"when_conditions": _WHEN_LEV1, "then_conditions": THEN})),
-        statement="OI 流入-lev1", data_ranges=RANGES, direction="short",
+        statement="OI 流入-lev1", data_ranges=RANGES,
         strategy_params={"stop_loss": 0.05})
     gene = SignalGene(
         indicator="OI_ChangeRate", params={"period": STEP},
@@ -135,7 +151,7 @@ def world(tmp_path_factory):
         risk_genes=RiskGenes(direction="short"))
     save_strategy(db, strategy_id="st_lev1", dna_json=dna1.to_json(),
                   symbol="BTCUSDT", timeframe="4h", name="short-lev1")
-    out["hyp_lev1"] = h1["hypothesis_id"]
+    out["hyp_lev1"] = h1
     out["st_lev1"] = "st_lev1"
 
     # funding 对称对照：无 SL 双方向（stop_loss=0 禁用——引擎 sl_stop>0
@@ -166,13 +182,12 @@ def world(tmp_path_factory):
 
 
 def _run_iso(world, hyp_key, st_key, seg):
+    from core.analysis.validation_service import run_sandbox_backtest
     start, end = ISO_DOWN if seg == "down" else ISO_UP
-    resp = world["client"].post("/api/research/validate-backtest", json={
-        "hypothesis_id": world[hyp_key], "strategy_id": world[st_key],
-        "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                          "start": start, "end": end}})
-    assert resp.status_code == 200, resp.text
-    return resp.json()
+    return run_sandbox_backtest(
+        world["db"], world["data_dir"], strategy_id=world[st_key],
+        hypothesis_id=world[hyp_key], symbol="BTCUSDT", timeframe="4h",
+        start=start, end=end)
 
 
 @pytest.fixture(scope="module")
@@ -291,28 +306,15 @@ class TestA44BenchmarkSemantics:
 
 
 class TestA45EntityIsolation:
-    def test_judged_union_partitioned_by_hypothesis(self, metrics, world):
-        """判定并集按假设分族：long/lev1 对照在 short 已判区间上均
-        运行成功（fixture 内 status==200 即隔离证据——不 409）；short
-        自身同区间重放走幂等命中（并集/幂等都生效于本假设身份）。"""
-        resp = world["client"].post("/api/research/validate-backtest", json={
-            "hypothesis_id": world["hyp_short"],
-            "strategy_id": world["st_short"],
-            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                              "start": ISO_DOWN[0], "end": ISO_DOWN[1]}})
-        assert resp.status_code == 200
-        assert resp.json()["duplicated"] is True
-
     def test_records_bound_to_own_hypothesis(self, metrics, world):
-        """A4-5：两条独立验证记录分别挂各自假设（family 按 hash 分族）。"""
+        """A4-5：两条独立验证记录分别挂各自假设（分族语义=两假设行
+        各自存在；direction 顶层键随登记域退役——方向语义现经产物
+        RiskGenes 承载，见主循环构造）。"""
         from core.persistence.repository import research as rr
-        from core.analysis.hypothesis_service import hash_json
         row_s = rr.get_hypothesis(world["client"].app.state.db_path,
                                   world["hyp_short"])
         row_l = rr.get_hypothesis(world["client"].app.state.db_path,
                                   world["hyp_long"])
-        c_s = json.loads(row_s["conditions"])
-        c_l = json.loads(row_l["conditions"])
-        assert c_s.get("direction") == "short"
-        assert "direction" not in c_l
-        assert hash_json(c_s) != hash_json(c_l)
+        assert row_s is not None and row_l is not None
+        assert row_s["hypothesis_id"] != row_l["hypothesis_id"]
+        assert row_s["conditions_hash"] != row_l["conditions_hash"]

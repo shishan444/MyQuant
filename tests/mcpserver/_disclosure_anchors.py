@@ -78,7 +78,7 @@ _CSEG_COMBO = ("组合条件（0.4.1起；regime_split2026-10-14起）", "区间
 _CSEG_PLUGINS = ("分析模板插件列条件（fix-research-c3起；regime_split2026-10-14起）",
                  "纯公式进场形制")
 _CSEG_COUNTER = ("反例画像（0.4.1counter_profile）", "退出参数扫描（0.4.1exit_sweep）")
-_CSEG_EXIT = ("退出参数扫描（0.4.1exit_sweep）", "分段验证")
+_CSEG_EXIT = ("退出参数扫描（0.4.1exit_sweep）", "纸盘挂载")
 _CSEG_TRIGGER = ("事件策略层（trigger_policy）", "沙盒回测纪律")
 
 # B1 清单串提取正则（与 test_contract_parity._conditions_support_list 同形制）
@@ -218,7 +218,7 @@ GROUP1_ANCHORS: tuple = (
         source="tools", seg_start=_SEG_RULER[0], seg_end=_SEG_RULER[1],
         kind="token_set",
         tokens=("mode（wave|box）", "trade_source", "rec_...",
-                "沙盒回测不落库逐笔", "隔离验证记录record_id",
+                "沙盒记录params形制无单区间", "存量隔离验证记录record_id",
                 "不静默截断", "识别率", "先到对侧比例", "edge_window",
                 "1h=240/15m=480", "±1pp"),
         covered=("ruler_compare",),
@@ -472,6 +472,47 @@ NEGATIVE_CLEAR_ANCHORS: tuple = (
     ),
 )
 
+# 退役工具名清零（CARD-06·偏差 2 处置路径 A 的 tester 侧全检锚，
+# lead 裁决 2026-11-16/17）：mcp-server 增量「能力自述资源」场景
+# 「退役工具零残留」——自述文本与工具描述文本（docstring）不得含
+# 任何 20 退役工具名（进化 8/假设 6/需求单 2/旧验证 4，清单权威=
+# 增量 MODIFIED 条）。squash 形匹配天然覆盖跨行断词形（rg 精确名
+# 扫描对「translate_↵hypothesis」形漏检——tools.py:489 实录）。
+# 「translate_hypothesis」取前缀形（兼抓全名 translate_hypothesis_
+# to_strategy 与裸前缀引用）。
+RETIRED_TOOL_NAMES: tuple = (
+    # 进化 8
+    "trigger_evolution", "pause_evolution_task", "resume_evolution_task",
+    "stop_evolution_task", "poll_evolution_task", "list_evolution_tasks",
+    "get_evolution_strategies", "batch_delete_strategies",
+    # 假设 6（translate 取前缀形）
+    "get_hypothesis", "list_hypotheses", "register_hypothesis",
+    "transition_hypothesis", "translate_hypothesis", "union_balance",
+    # 需求单 2
+    "submit_feature_request", "list_feature_requests",
+    # 旧验证 4
+    "get_validation_report", "run_isolated_validation",
+    "run_random_window_test", "run_staged_validation",
+)
+
+RETIRED_NAME_ANCHORS: tuple = (
+    DisclosureAnchor(
+        anchor_id="清零-tools声明面-退役工具名",
+        source="tools", seg_start="", seg_end="",
+        kind="negative_clear", tokens=RETIRED_TOOL_NAMES,
+        scope="tools.py 工具描述文本（docstring 全文件域）",
+        basis="mcp-server 增量「退役工具零残留」（叙述面——清单行"
+              "同源引用不在此域）",
+    ),
+    DisclosureAnchor(
+        anchor_id="清零-capability声明面-退役工具名",
+        source="capability", seg_start="", seg_end="",
+        kind="negative_clear", tokens=RETIRED_TOOL_NAMES,
+        scope="capability.py 能力自述文本（全文件域）",
+        basis="mcp-server 增量「能力自述资源·退役工具零残留」",
+    ),
+)
+
 # ---------------------------------------------------------------------------
 # 组 3：高频漂移清单句（比较动作全集/trigger_policy/模式集/枚举族）
 # ---------------------------------------------------------------------------
@@ -544,7 +585,6 @@ _DOMAIN_PRECISION_TOKENS = (
     "严格高于基准周期",      # 等基准歧义防线（排除「>=」笼统表述回潮）
     "不静默降级",           # 防线动词（显式拒绝的对面——丢了只剩错误码罗列）
     "同款放行",             # 机制来源引用（与策略翻译链同源放行）
-    "同一公共入口",          # 防线结构声明（translate_hypothesis 公共入口）
 )
 
 GROUP4_ANCHORS: tuple = (
@@ -610,7 +650,7 @@ GROUP4_ANCHORS: tuple = (
 
 # Keltner 终局句段域（tools=query_indicator docstring 指标参数修复段
 # 至 body 构造；capability=指标参数修复条目至比较动作全集条目）
-_SEG_KELTNER = ("指标参数修复（2026-10-13）", "body={")
+_SEG_KELTNER = ("指标参数修复（2026-10-13）", "body:Dict[str,Any]={")
 _CSEG_KELTNER = ("指标参数修复（2026-10-13）", "比较动作全集")
 
 GROUP5_ANCHORS: tuple = (
@@ -745,49 +785,18 @@ CAPABILITY_ENTRY_ANCHORED: tuple = (
     "反例画像",            # W2/G1-能力自述反例画像条目
     "退出参数扫描",         # W3/G1-能力自述退出参数扫描条目
     "事件策略层",           # G3-能力自述事件策略层条目
-    "进化控制与产物管理",   # G6 族级条目（CARD-07——专门锚登记）
 )
 
 CAPABILITY_ENTRY_WHITELIST: tuple = (
-    "隔离纪律", "时间参数规约", "warmup推导式", "门槛机械判定",
-    "组合策略加严", "同种子复现", "幂等", "沙盒回测纪律", "时点行情快照",
-    "案例抽查", "指标读数", "批量读数", "指标参数修复", "比较动作全集",
-    "纯公式进场形制", "区间事件摘要", "判定并集余量查询", "分段验证",
-    "纸盘挂载", "策略层参数声明块", "分批条件组", "止损模式三分派",
-    "pattern_mining为实验性",
-)
-
-# ---------------------------------------------------------------------------
-# 组 6：进化控制与产物管理族级条目（CARD-07——research-tooling-
-# data-quality P3 裁决落地物：能力自述「能力条目」从工具名在场升级为
-# 族级描述条目；锚钉六工具关键语义防文本漂移误导 AI）
-# ---------------------------------------------------------------------------
-
-# 族级条目段域（第 2 节末条——纸盘挂载条目后、第 3 节标题前）
-_CSEG_EVOLUTION_CTRL = ("进化控制与产物管理（research-tooling-data-quality）",
-                        "草稿-转正生命周期")
-
-GROUP6_ANCHORS: tuple = (
-    DisclosureAnchor(
-        anchor_id="G6-能力自述进化控制条目-六工具关键语义",
-        source="capability", seg_start=_CSEG_EVOLUTION_CTRL[0],
-        seg_end=_CSEG_EVOLUTION_CTRL[1],
-        kind="token_set",
-        tokens=("当前代完整落库后退出",     # stop/pause 协作语义
-                "重新排队",                 # resume 语义（CARD-06 收正）
-                "完整重跑非断点续跑",        # 非断点续跑防线（历史裁决 6）
-                "两态连续",                 # champion 快照+终态通道
-                "无第三份运行中冠军存储",    # 单一事实源
-                "字符串形制直通",            # tags 形制
-                "不可逆",                   # 批量删除
-                "confirm必须显式true",       # 确认契约
-                "score_summary",            # 分数分布摘要（CARD-05）
-                "整批拒绝"),                # 受保护策略预检
-        scope="进化控制与产物管理族级条目（六工具语义面）",
-        basis="CARD-07×P3 裁决（能力条目落地）+capability.py:173-186",
-    ),
+    "隔离纪律", "时间参数规约", "warmup推导式", "沙盒回测纪律",
+    "时点行情快照", "案例抽查", "指标读数", "批量读数", "指标参数修复",
+    "比较动作全集", "纯公式进场形制", "区间事件摘要",
+    "纸盘挂载", "pattern_mining为实验性",
+    # 门槛机械判定/组合策略加严/同种子复现/幂等/判定并集余量查询/
+    # 分段验证/进化控制与产物管理/策略层参数声明块/分批条件组/
+    # 止损模式三分派 已随 retire-legacy 退役域从能力自述删除（2026-11-16）
 )
 
 ALL_ANCHORS: tuple = (GROUP1_ANCHORS + GROUP1_TARGET_ANCHORS
-                      + NEGATIVE_CLEAR_ANCHORS + GROUP3_ANCHORS
-                      + GROUP4_ANCHORS + GROUP5_ANCHORS + GROUP6_ANCHORS)
+                      + NEGATIVE_CLEAR_ANCHORS + RETIRED_NAME_ANCHORS
+                      + GROUP3_ANCHORS + GROUP4_ANCHORS + GROUP5_ANCHORS)

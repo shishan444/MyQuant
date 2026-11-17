@@ -23,21 +23,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DELISTED = ("VWAP", "MultifactorOsc", "mf_osc")
 
 
-def test_g5_t01_no_compute_exact_keys():
-    """G5-T01 精确断言：population._NO_COMPUTE 键集恰为保留两名
-    （防豁免集残留死键——FractalEntropy 保留+VolumeProfile 不动合并；
-    _NO_COMPUTE 为函数内局部清单，取对拍④同款源码静态提取）。"""
-    import inspect
-    import re
-
-    from core.evolution import population
-    src = inspect.getsource(population)
-    m = re.search(r"_NO_COMPUTE\s*=\s*\{([^}]+)\}", src)
-    assert m, "population._NO_COMPUTE 源码提取失败"
-    keys = {x.strip().strip('"') for x in m.group(1).split(",")}
-    assert keys == {"FractalEntropy", "VolumeProfile"}, keys
-
-
 def test_g5_t02_four_dirs_zero_hits():
     """G5-T02 负向清单：core/api/mcpserver/scripts 四目录 .py 文件对
     两摘牌名零命中（capability.py 零改动一并锚定——不含 tests）。"""
@@ -82,7 +67,7 @@ def test_g5_t04_explicit_rejection_two_entries():
     import numpy as np
     import pandas as pd
     from core.analysis.column_ref import ColumnRefError, resolve_column_ref
-    from core.analysis.hypothesis_service import ResearchError
+    from core.analysis.errors import ResearchError
     from core.analysis.templates.condition_stats import condition_stats
 
     idx = pd.date_range("2024-01-01", periods=300, freq="1h", tz="UTC")
@@ -107,9 +92,9 @@ def test_g5_t04_explicit_rejection_two_entries():
 
 
 def test_g5_t06_fractal_entropy_dual_face():
-    """G5-T06 FractalEntropy 双面回归：①分析链可达（委托链
-    indicators→ml_indicators 产出非空序列）②进化剔除不变（仍驻
-    _NO_COMPUTE——lazy 语义不进种群，与实现存在性正交）。"""
+    """G5-T06 FractalEntropy 分析链可达回归（②进化剔除面已随
+    core/evolution 退役删除——retire-legacy B1）：委托链
+    indicators→ml_indicators 产出非空序列。"""
     import numpy as np
     import pandas as pd
     from core.features.indicators import _compute_indicator
@@ -126,12 +111,5 @@ def test_g5_t06_fractal_entropy_dual_face():
     assert "mfe_score_10_100" in cols
     assert int(cols["mfe_score_10_100"].dropna().shape[0]) > 0, (
         "分析链直调须产出非空序列（委托链存活）")
-    import inspect
-    import re
-
-    from core.evolution import population
-    src = inspect.getsource(population)
-    m = re.search(r"_NO_COMPUTE\s*=\s*\{([^}]+)\}", src)
-    keys = {x.strip().strip('"') for x in m.group(1).split(",")}
-    assert "FractalEntropy" in keys, (
-        "进化剔除语义不变——分析链可达不能错用到进化链")
+    # 进化剔除面已随 core/evolution 退役删除（retire-legacy B1）——
+    # 本用例仅保留①分析链可达面

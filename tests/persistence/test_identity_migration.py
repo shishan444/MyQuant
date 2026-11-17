@@ -85,28 +85,6 @@ class TestIdentityMigration:
         assert rows["explicit"] == expect_explicit
         assert rows["auto"] == "auto"
 
-    def test_dual_implementation_same_output(self):
-        from importlib.util import module_from_spec, spec_from_file_location
-        from core.analysis.validation_service import segmentation_identity
-        mig = Path("alembic/versions/"
-                   "d4e7f9a2c5b8_validation_identity_five_tuple.py")
-        spec = spec_from_file_location("mig_mod", mig)
-        mod = module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        segs = [{"label": "段一", "start": "2026-01-01T00:00:00+00:00",
-                 "end": "2026-01-05T00:00:00+00:00"},
-                {"label": "b", "start": "2026-01-05T00:00:00+00:00",
-                 "end": "2026-01-09T00:00:00+00:00"}]
-        assert (mod._segmentation_identity_copy("explicit", segs)
-                == segmentation_identity("explicit", segs))
-        assert mod._segmentation_identity_copy("auto", segs) == "auto"
-        assert mod._segmentation_identity_copy("isolated", None) == ""
-        # 兜底分支双实现同步（服务层 return ""——非 auto/explicit 模式
-        # 的空串身份，隔离/随机窗五元第五维落此）：两实现同输出
-        assert (segmentation_identity("isolated", None)
-                == mod._segmentation_identity_copy("isolated", None) == "")
-
-
 class TestNonStagedBackfill:
     """特征网：非分段记录（隔离/随机窗）迁移后半边——空串回填与
     迁移索引判重（spec 场景「历史记录经迁移回填后照常可用」的隔离

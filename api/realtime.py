@@ -1,7 +1,7 @@
 """socket.io 实时服务端（B8.2：WS 通道桥接，契约=web/src/realtime/contract.md）。
 
-- namespace /evolution /trading /streams；room=task_id（streams 的
-  room=session_id 由 11.3 流式批接入时启用）
+- namespace /trading；room=task_id（/evolution 与 /streams 已随对应
+  域退役——retire-legacy B1/任务 11）
 - 连接参数形制（前端 connection.ts 已冻结）：io('/{channel}',
   { query: { task_id } })——connect 时按 query.task_id 入 room
 - 业务事件经 `broadcast()` 桥接（manager.push 单点旁路），payload 与
@@ -58,14 +58,6 @@ def _join_by_query(sid: str, environ: dict, namespace: str) -> None:
             return
 
 
-@sio.on("connect", namespace="/evolution")
-async def _connect_evolution(sid: str, environ: dict) -> bool | None:
-    if not check_socket_auth(environ):
-        return False  # A2：设置 API key 时 connect 须带同值 token
-    _join_by_query(sid, environ, "/evolution")
-    await _emit_task_snapshot(sid, environ, "/evolution")
-
-
 @sio.on("connect", namespace="/trading")
 async def _connect_trading(sid: str, environ: dict) -> bool | None:
     if not check_socket_auth(environ):
@@ -88,19 +80,7 @@ async def _emit_task_snapshot(sid: str, environ: dict, namespace: str) -> None:
         return  # 测试上下文无库——跳过快照
 
     def _read() -> dict | None:
-        from core.persistence.repository import evolution as evo
         from core.persistence.repository import paper
-        if namespace == "/evolution":
-            row = evo.get_task(db_path, room)
-            if row is None or row.get("status") not in ("running", "paused", "pending", "stopped"):
-                return None
-            return {
-                "type": "task_snapshot", "task_id": room, "status": row.get("status"),
-                "current_generation": row.get("current_generation", 0),
-                "best_score": row.get("best_score"), "target_score": row.get("target_score"),
-                "max_generations": row.get("max_generations"),
-                "current_phase": row.get("current_phase"),
-            }
         # /trading：纸盘新域快照（rebuild-paper-trading 5.2，design §7.2
         # 新 schema——旧 paper_trading 表读取面切换，旧仓库已随旧域
         # 退役移除，frontend-switch-and-retire R.1）。
@@ -127,25 +107,6 @@ async def _emit_task_snapshot(sid: str, environ: dict, namespace: str) -> None:
     snapshot = await asyncio.to_thread(_read)
     if snapshot is not None:
         await sio.emit("task_snapshot", snapshot, namespace=namespace, room=room)
-
-
-@sio.on("connect", namespace="/streams")
-async def _connect_streams(sid: str, environ: dict) -> bool | None:
-    if not check_socket_auth(environ):
-        return False
-    _join_by_query(sid, environ, "/streams")
-
-
-@sio.on("cancel", namespace="/streams")
-async def _cancel_stream(sid: str, data: dict) -> None:
-    """B8.0 语义点①：C→S cancel（payload {session_id}，协作取消）。
-
-    11.3 流式批接入时接流式任务注册表；端点先就位（无注册表时 no-op）。
-    连接级认证已在 connect 把关；session 归属校验在单用户本地形态下
-    无判据（S-7 第二面为记录项，待多用户化时补）。
-    """
-    from api import stream_control
-    stream_control.request_cancel((data or {}).get("session_id"))
 
 
 # 断开时 room 成员随 sid 自动清理——无需显式 handler

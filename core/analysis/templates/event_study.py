@@ -15,7 +15,7 @@ from typing import Any, Dict
 import numpy as np
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.result import AnalysisResult, build_result
 from core.analysis.templates.column_guard import require_column
 from core.analysis.templates.param_guard import _require_int_range

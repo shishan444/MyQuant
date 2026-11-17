@@ -27,63 +27,6 @@ from tests.helpers.data_factory import make_dna
 # ── 3.3 并发模型（卡 B）────────────────────────────────────────────
 
 
-class TestConcurrencyModel:
-    def _mk_runner(self, tmp_path, max_workers=2):
-        from api.runner import EvolutionRunner
-        db = tmp_path / "q.db"
-        init_db_ext(db)
-        return EvolutionRunner(db_path=db, data_dir=tmp_path,
-                               poll_interval=0.05, max_workers=max_workers)
-
-    def test_status_three_keys(self, tmp_path):
-        """⑤披露三键：max_workers/active_count/queued_count。"""
-        r = self._mk_runner(tmp_path)
-        s = r.get_status()
-        assert s["max_workers"] == 2
-        assert s["active_count"] == 0 and s["queued_count"] == 0
-
-    def test_max_workers_cap(self, tmp_path):
-        """上限 4 钳制：越界配置收顶。"""
-        r = self._mk_runner(tmp_path, max_workers=10)
-        assert r.max_workers == 4
-        r2 = self._mk_runner(tmp_path, max_workers=0)
-        assert r2.max_workers == 1
-
-    def test_pool_submission_and_slots(self, tmp_path):
-        """①占槽与上限：池内 2 任务占满——active_count=2 观察。"""
-        r = self._mk_runner(tmp_path, max_workers=2)
-        r._pool = __import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).ThreadPoolExecutor(max_workers=2)
-        # 人为挂起两任务占满槽
-        gate = threading.Event()
-        def _hang(task_row):
-            gate.wait(timeout=5)
-        for tid in ("t1", "t2"):
-            fut = r._pool.submit(_hang, {"task_id": tid})
-            with r._lock:
-                r._futures[tid] = fut
-        try:
-            s = r.get_status()
-            assert s["active_count"] == 2, "两任务在飞占满槽"
-            assert s["max_workers"] == 2
-        finally:
-            gate.set()
-            r._pool.shutdown(wait=True)
-
-    def test_tick_cleans_done_futures(self, tmp_path):
-        """终态释放：done future 被 _tick 清理。"""
-        import concurrent.futures as cf
-        r = self._mk_runner(tmp_path)
-        r._pool = cf.ThreadPoolExecutor(max_workers=2)
-        fut = r._pool.submit(lambda: None)
-        fut.result()
-        with r._lock:
-            r._futures["done-task"] = fut
-        r._tick()
-        with r._lock:
-            assert "done-task" not in r._futures
-        r._pool.shutdown(wait=True)
-
-
 def _mk_task_row(task_id: str, status: str) -> str:
     """evolution_task 最小合法行（NOT NULL 无默认列全供给）。"""
     return (
@@ -162,63 +105,10 @@ class TestMCPTools:
         tools_mod.register_research_tools(fake, _HttpApi(env["client"]))
         return fake.registry[name]
 
-    def test_stop_task_not_found_404(self, env):
-        """③错误通道：stop 不存在任务→结构化 {"error":...}（404 透传）。"""
-        fn = self._mcp_fn(env, "stop_evolution_task")
-        out = fn(task_id="no_such_task")
-        assert "error" in out, out
-        # ApiError 经 _raise_api_error：detail 非结构化 dict（FastAPI
-        # 纯文本 detail）→ API_INTERNAL_ERROR 形制但 message 含 404
-        assert "404" in str(out["error"].get("message", "")) or \
-            out["error"].get("detail") == "Task not found", out
 
-    def test_stop_terminal_409(self, env):
-        """③状态不允许 409：completed 任务 stop→409 透传。"""
-        c = env["client"]
-        conn = sqlite3.connect(env["db"])
-        conn.execute(_mk_task_row("et_done", "completed"))
-        conn.commit(); conn.close()
-        fn = self._mcp_fn(env, "stop_evolution_task")
-        out = fn(task_id="et_done")
-        assert "error" in out, out
-        assert "409" in str(out["error"].get("message", "")), out
 
-    def test_pause_not_running_409(self, env):
-        fn = self._mcp_fn(env, "pause_evolution_task")
-        out = fn(task_id="et_never")
-        assert "error" in out, out
 
-    def test_resume_not_paused_400(self, env):
-        """③resume 端点既有码 400（与 stop/pause 的 409 分立）。"""
-        c = env["client"]
-        conn = sqlite3.connect(env["db"])
-        conn.execute(_mk_task_row("et_run", "running"))
-        conn.commit(); conn.close()
-        fn = self._mcp_fn(env, "resume_evolution_task")
-        out = fn(task_id="et_run")
-        assert "error" in out, out
-        assert "400" in str(out["error"].get("message", "")) or \
-            "resume" in str(out["error"].get("message", "")).lower(), out
 
-    def test_get_strategies_snapshot_channel(self, env):
-        """④champion 经快照通道：running 任务快照 top10 可取（无 champion
-        条目=运行中两态正确）。"""
-        conn = sqlite3.connect(env["db"])
-        conn.execute(_mk_task_row("et_run2", "running"))
-        dna = make_dna().to_json()
-        conn.execute(
-            "INSERT INTO generation_snapshot (task_id, generation, "
-            "best_score, avg_score, best_dna, population_json, "
-            "created_at) VALUES ('et_run2', 1, 3.5, 3.5, ?, '{}', "
-            "'2026-01-01T01:00:00')", (dna,))
-        conn.commit(); conn.close()
-        fn = self._mcp_fn(env, "get_evolution_strategies")
-        out = fn(task_id="et_run2")
-        assert out["task_id"] == "et_run2"
-        snaps = [s for s in out["strategies"] if s["source"] == "snapshot"]
-        assert len(snaps) == 1 and snaps[0]["score"] == 3.5
-        # 运行中无 champion 条目（终态兜底通道空——两态正确）
-        assert not [s for s in out["strategies"] if s["source"] == "champion"]
 
     def test_update_metadata_tags_string_passthrough(self, env):
         """⑥tags 字符串直通：REST 形态是什么 MCP 暴露什么。"""
@@ -331,41 +221,6 @@ class TestBatchManagement:
         assert {x["strategy_id"] for x in g.json()["items"]} == \
             {"st_b1", "st_b2"}
 
-    def test_mcp_batch_delete_mirror(self, seeded):
-        """④MCP 面同形制。"""
-        from mcpserver import tools as tools_mod
-
-        class _HttpApi:
-            def __init__(self, c):
-                self._c = c
-            def get(self, url, params=None):
-                return self._c.get(url, params=params).json()
-            def post(self, url, body):
-                r = self._c.post(url, json=body)
-                if r.is_error:
-                    from mcpserver.api_client import _raise_api_error
-                    _raise_api_error(r)
-                return r.json()
-            def put(self, url, body):
-                return self._c.put(url, json=body).json()
-
-        class _FakeMCP:
-            def __init__(self):
-                self.registry = {}
-            def tool(self):
-                def deco(fn):
-                    self.registry[fn.__name__] = fn
-                    return fn
-                return deco
-
-        fake = _FakeMCP()
-        tools_mod.register_research_tools(fake, _HttpApi(seeded["client"]))
-        out = fake.registry["batch_delete_strategies"](
-            source_task_id="taskB", confirm=False)
-        assert out["error"]["code"] == "BATCH_DELETE_CONFIRM_REQUIRED"
-        out2 = fake.registry["batch_delete_strategies"](
-            source_task_id="taskB", confirm=True)
-        assert out2["deleted_count"] == 2
 
     def test_source_task_id_required(self, seeded):
         """⑤source_task_id 必填（无圈定不提供批量删除）。"""
@@ -484,147 +339,10 @@ class TestBatchContractExtras:
         preview = r.json()["detail"]["detail"]["matched_count"]
         assert preview == listed["total"], "预览数与导出数量对称"
 
-    def test_mcp_batch_tightening_params(self, seeded):
-        """MCP 面收紧参数分支（闸门盲区消解——generation_gt/best_score_
-        lt 的 body 组装此前仅 REST 面走过）：经 MCP 工具传收紧参数，
-        预览与执行同判据。"""
-        from mcpserver import tools as tools_mod
-
-        class _HttpApi:
-            def __init__(self, c):
-                self._c = c
-
-            def get(self, url, params=None):
-                r = self._c.get(url, params=params)
-                if r.is_error:
-                    from mcpserver.api_client import _raise_api_error
-                    _raise_api_error(r)
-                return r.json()
-
-            def post(self, url, body):
-                r = self._c.post(url, json=body)
-                if r.is_error:
-                    from mcpserver.api_client import _raise_api_error
-                    _raise_api_error(r)
-                return r.json()
-
-            def put(self, url, body):
-                return self._c.put(url, json=body).json()
-
-        class _FakeMCP:
-            def __init__(self):
-                self.registry = {}
-
-            def tool(self):
-                def deco(fn):
-                    self.registry[fn.__name__] = fn
-                    return fn
-                return deco
-
-        fake = _FakeMCP()
-        tools_mod.register_research_tools(fake, _HttpApi(seeded["client"]))
-        fn = fake.registry["batch_delete_strategies"]
-        # 预览：generation_gt=3 收紧 → 命中 gen4/gen5（matched_count=2）
-        out = fn(source_task_id="taskC", confirm=False, generation_gt=3)
-        assert out["error"]["code"] == "BATCH_DELETE_CONFIRM_REQUIRED"
-        assert out["error"]["detail"]["matched_count"] == 2
-        # 执行：best_score_lt=1.5 收紧 → 恰命中 1.0 行（严格小于）
-        out2 = fn(source_task_id="taskC", confirm=True, best_score_lt=1.5)
-        assert out2["deleted_count"] == 1
-        g = seeded["client"].get("/api/strategies",
-                                 params={"source_task_id": "taskC"})
-        assert {x["strategy_id"] for x in g.json()["items"]} == \
-            {"st_c1", "st_c2", "st_c3", "st_c4"}
 
 
 # ── C3-D4/S11 披露面（六工具 docstring 明示语义与错误面+能力自述
 #    新工具条目在场——「docstring 未披露=AI 视角不存在」纪律）──────
-
-
-class TestDisclosureAndCapability:
-    @pytest.fixture()
-    def registry(self, tmp_path):
-        from fastapi.testclient import TestClient
-        from api.app import create_app
-        from mcpserver import tools as tools_mod
-
-        class _HttpApi:
-            def __init__(self, c):
-                self._c = c
-
-            def get(self, url, params=None):
-                return self._c.get(url, params=params).json()
-
-            def post(self, url, body):
-                return self._c.post(url, json=body).json()
-
-            def put(self, url, body):
-                return self._c.put(url, json=body).json()
-
-        class _FakeMCP:
-            def __init__(self):
-                self.registry = {}
-
-            def tool(self):
-                def deco(fn):
-                    self.registry[fn.__name__] = fn
-                    return fn
-                return deco
-
-        db = tmp_path / "q3.db"
-        init_db_ext(db)
-        d = tmp_path / "market"
-        d.mkdir()
-        app = create_app(db_path=db, data_dir=d)
-        with TestClient(app) as c:
-            fake = _FakeMCP()
-            tools_mod.register_research_tools(fake, _HttpApi(c))
-            yield fake.registry
-
-    def test_six_tools_docstring_disclosure(self, registry):
-        """D4：六工具 docstring 明示语义与错误面（batch_delete 不可逆
-        语义点名）——tool_safe 经 functools.wraps 保留原文。"""
-        expect = {
-            "stop_evolution_task": ("404", "409"),
-            "pause_evolution_task": ("404", "409"),
-            # CARD-06 文实对齐：resume 语义=paused→pending 重新排队+
-            # initial_dna 完整重跑（非断点续跑——历史裁决 6）
-            "resume_evolution_task": ("404", "400", "重新排队",
-                                      "完整重跑"),
-            "get_evolution_strategies": ("404", "top10", "champion"),
-            "update_strategy_metadata": ("404", "字符串形制直通"),
-            "batch_delete_strategies": ("不可逆", "matched_count",
-                                        "幂等"),
-        }
-        for name, tokens in expect.items():
-            doc = registry[name].__doc__ or ""
-            for tok in tokens:
-                assert tok in doc, f"{name} docstring 未披露 {tok!r}"
-        # 负锚：旧「断点续跑」语义措辞不得回潮（教 AI 错误预期）
-        resume_doc = registry["resume_evolution_task"].__doc__ or ""
-        assert "从暂停代继续" not in resume_doc, (
-            "resume docstring 不得残留断点续跑旧措辞")
-
-    def test_capability_doc_includes_new_tools(self, registry):
-        """S11：能力自述工具清单含六新工具条目（运行时从注册集生成）
-        ——与 mcp-server 域工具清单一致由 _expected_tools 三处集合
-        断言承载（D1）。CARD-07 扩展：族级描述条目在场+关键语义
-        token（P3 裁决「能力条目」落地——文本漂移守护另由披露锚
-        G6 承载，此处行为断言）。"""
-        from mcpserver.tools import TOOL_TIERS
-        from mcpserver.capability import build_capability_doc
-
-        six = {"stop_evolution_task", "pause_evolution_task",
-               "resume_evolution_task", "get_evolution_strategies",
-               "update_strategy_metadata", "batch_delete_strategies"}
-        assert six <= TOOL_TIERS["research"], "六新工具须入 research 档"
-        doc = build_capability_doc(sorted(TOOL_TIERS["research"]))
-        for n in sorted(six):
-            assert f"- {n}" in doc, f"能力自述缺新工具条目 {n}"
-        # CARD-07：族级能力条目（描述性条目非仅工具名）
-        assert "进化控制与产物管理" in doc, "族级条目标题在场"
-        for tok in ("不可逆", "confirm", "完整重跑"):
-            assert tok in doc, f"族级条目缺关键语义 token {tok!r}"
 
 
 # ── CARD-05 batch 端点四合一锚（review4_cards.md CARD-05——score_

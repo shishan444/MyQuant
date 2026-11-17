@@ -321,23 +321,6 @@ class TestGeneSignature:
             layers=layers,
         )
 
-    def test_property_equals_legacy_function(self):
-        """gene_signature property must equal the legacy diversity._gene_signature."""
-        from MyQuant.core.evolution.diversity import _gene_signature
-        dna = self._make_dna()
-        assert dna.gene_signature == _gene_signature(dna)
-
-    def test_property_equals_legacy_function_with_layers(self):
-        """Equivalence holds for MTF (multi-layer) DNA too."""
-        from MyQuant.core.evolution.diversity import _gene_signature
-        layer = TimeframeLayer(
-            timeframe="4h",
-            signal_genes=[self._gene("EMA", 50)],
-            logic_genes=LogicGenes(entry_logic="AND", exit_logic="OR"),
-        )
-        dna = self._make_dna(layers=[layer])
-        assert dna.gene_signature == _gene_signature(dna)
-
     def test_different_params_different_signature(self):
         a = self._make_dna(signal_genes=[self._gene("RSI", 14)])
         b = self._make_dna(signal_genes=[self._gene("RSI", 21)])

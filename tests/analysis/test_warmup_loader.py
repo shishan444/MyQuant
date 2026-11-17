@@ -11,7 +11,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup
 from tests.helpers.data_factory import make_ohlcv
 

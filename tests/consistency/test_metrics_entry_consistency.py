@@ -14,6 +14,12 @@
   预声明）。
 - forward_stats 的 win_rate 是触发点前向窗口统计（非交易绩效），
   属展示统计口径；域差异在此登记，处置随 6.1 前置调查裁决。
+
+retire-legacy 10.4 分拣：rule_engine 两用例（零交易缺失语义、小数
+口径）与 forward_stats 口径登记用例已随 core/validation 壳退役删除
+（守护对象消失）；compute_metrics 用例保留——计算层口径仍由
+core/scoring/metrics.py 存活承载。上文病根注记为历史普查记录，
+rule_engine/forward_stats 两入口已不存在。
 """
 
 from __future__ import annotations
@@ -23,8 +29,6 @@ import pandas as pd
 import pytest
 
 pytestmark = [pytest.mark.integration]
-
-from tests.helpers.data_factory import make_ohlcv
 
 
 def _flat_equity(n: int = 100, cash: float = 10_000.0) -> pd.Series:
@@ -48,80 +52,3 @@ class TestZeroTradeMissingSemantics:
         )
         assert metrics["win_rate"] is None or np.isnan(metrics["win_rate"])
 
-    def test_rule_engine_zero_trades_win_rate_missing(self, tmp_path):
-        from core.validation.rule_engine import evaluate_rules
-
-        df = make_ohlcv(n=120, freq="1h", base_price=40_000.0, seed=7)
-        df.to_parquet(tmp_path / "BTCUSDT_1h.parquet")
-        # 恒假条件：rsi_14 < -1 永不成立 -> 零交易（{subject, action, target} 形制）
-        impossible = {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": -1.0}
-        result = evaluate_rules(
-            symbol="BTCUSDT",
-            timeframe="1h",
-            start="",
-            end="",
-            entry_conditions=[impossible],
-            exit_conditions=[impossible],
-            data_dir=str(tmp_path),
-        )
-        assert result.total_trades == 0
-        assert result.win_rate is None
-
-
-# ---------------------------------------------------------------------------
-# 口径统一：计算层绩效指标统一小数，百分比仅限展示边界
-# ---------------------------------------------------------------------------
-
-
-class TestDecimalScaleUniformity:
-    def test_rule_engine_win_rate_decimal_scale(self, tmp_path):
-        from core.validation.rule_engine import evaluate_rules
-
-        df = make_ohlcv(n=120, freq="1h", base_price=40_000.0, seed=7)
-        df.to_parquet(tmp_path / "BTCUSDT_1h.parquet")
-        # 恒真条件（{subject, action, target} 形制）：rsi_14 < 101 与
-        # rsi_14 > -1 恒成立 -> 每根 bar 产生进出场信号
-        always_true_lt = {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 101.0}
-        always_true_gt = {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "gt", "target": -1.0}
-        result = evaluate_rules(
-            symbol="BTCUSDT",
-            timeframe="1h",
-            start="",
-            end="",
-            entry_conditions=[always_true_lt],
-            exit_conditions=[always_true_gt],
-            data_dir=str(tmp_path),
-        )
-        assert result.total_trades > 0
-        # 计算层应统一小数口径
-        assert 0.0 <= result.win_rate <= 1.0
-
-
-# ---------------------------------------------------------------------------
-# forward_stats 口径登记：触发点前向统计（非交易绩效），展示百分比
-# ---------------------------------------------------------------------------
-
-
-class TestForwardStatsScaleRegistered:
-    def test_forward_stats_win_rate_is_percent_scale(self):
-        """登记现状：forward_stats.win_rate 为百分比展示统计。
-
-        域差异：其分母是触发点数、分子是前向 close_pct>0 的占比，
-        不是交易绩效胜率；是否改小数/改名 win_rate_pct 随 6.1
-        前置调查（前端消费点）裁决，本用例锁定当前口径不被静默改变。
-        """
-        from core.validation.scene.forward_stats import (
-            aggregate_by_horizon,
-            compute_forward_stats,
-        )
-
-        df = make_ohlcv(n=80, freq="1h", base_price=100.0, seed=9)
-        triggers = [30, 40, 50, 60]
-        all_stats: dict[int, list] = {}
-        for t in triggers:
-            for h, stats in compute_forward_stats(df, t, float(df["close"].iloc[t]), [5]).items():
-                all_stats.setdefault(h, []).append(stats)
-        agg = aggregate_by_horizon(all_stats)
-        assert len(agg) == 1
-        # 现状锁定：百分比口径（0-100）
-        assert 0.0 <= agg[0].win_rate <= 100.0

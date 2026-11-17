@@ -84,7 +84,7 @@ class MtfEvalContext:
         """
         if tf in self._raw:
             return self._raw[tf]
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.data.mtf_loader import find_parquet, safe_symbol
         from core.data.storage import load_parquet
 
@@ -135,7 +135,7 @@ def mask_for(
     bounce_pct/role/lookback 及扩展键）随 condition 全量透传、不再
     三键丢弃——两条路径同适用。
     """
-    from core.analysis.hypothesis_service import ResearchError
+    from core.analysis.errors import ResearchError
 
     tf_key = condition.get("timeframe")
     if tf_key is None or (mtf is not None and tf_key == mtf.base_tf):
@@ -231,7 +231,7 @@ def _reject_unresolvable_target(target: str) -> None:
     Raises:
         ResearchError: 不可解码且非基础列的 target（strict 消费方调用）。
     """
-    from core.analysis.hypothesis_service import ResearchError
+    from core.analysis.errors import ResearchError
 
     raise ResearchError(
         "RESEARCH_CONDITION_INVALID",
@@ -267,7 +267,7 @@ def collect_condition_refs(
     from core.analysis.column_ref import (
         ColumnRefError, resolve_column_ref, try_decode_column_ref,
     )
-    from core.analysis.hypothesis_service import ResearchError
+    from core.analysis.errors import ResearchError
 
     refs: List[tuple] = []
     subject = condition.get("subject")
@@ -330,7 +330,7 @@ def validate_conditions_array(conditions: Any) -> None:
     而非合法零结果；交集触发频率随条数指数衰减，5 条以上在既有数据
     规模上几乎必然零样本）。每条形制沿单条件链（subject/action/target
     三键结构，hypothesis_service 登记链同款）。"""
-    from core.analysis.hypothesis_service import ResearchError
+    from core.analysis.errors import ResearchError
 
     if not isinstance(conditions, list) or not (1 <= len(conditions) <= 5):
         actual = (len(conditions) if isinstance(conditions, list)
@@ -439,7 +439,7 @@ def _mask_base(work: pd.DataFrame, condition: Dict[str, Any]) -> pd.Series:
     _ensure_target_column(work, condition.get("target"), strict=True)
     eval_cond = dict(condition)
     eval_cond["subject"] = col   # subject 解析替换；其余键全量透传（D-r2）
-    from core.validation.engine import _evaluate_single_condition
+    from core.analysis.condition_eval import _evaluate_single_condition
     mask = _evaluate_single_condition(work, eval_cond)
     return mask.fillna(False).astype(bool)
 
@@ -482,7 +482,7 @@ def _mask_higher(
     from core.data.mtf_alignment import (
         TF_SECONDS, high_tf_warmup_span, project_completed_bool,
     )
-    from core.analysis.hypothesis_service import ResearchError
+    from core.analysis.errors import ResearchError
 
     # 守卫先于一切（含幂等缓存——拒绝语义不因缓存短路）
     for key in ("subject", "target"):
@@ -547,7 +547,7 @@ def _mask_higher(
     _ensure_target_column(eval_df, condition.get("target"), strict=False)
     eval_cond = dict(condition)
     eval_cond["subject"] = col
-    from core.validation.engine import _evaluate_single_condition
+    from core.analysis.condition_eval import _evaluate_single_condition
     mask = _evaluate_single_condition(eval_df, eval_cond)
     mask = mask.fillna(False).astype(bool)
 

@@ -78,158 +78,46 @@ class TestDomainReject:
     def _detail_keys(self):
         return {"column", "base_tf", "domain", "hint", "ref_tf"}
 
-    def test_u7c_three_faces_same_rejection(self, tmp_path):
-        """三面：resolve 直调（分析面）/登记 canonical（登记面）/翻译面
-        ——同码同 detail 键集（ref_tf=校验所用引用周期，base_tf=回退
-        基准；D-1 修复定稿形制）。"""
+    def test_u7c_resolve_face_rejection(self):
+        """resolve 直调（分析面）拒绝形制：同码同 detail 键集（ref_tf=
+        校验所用引用周期，base_tf=回退基准；D-1 修复定稿形制）。登记/
+        翻译 canonical 面随 retire-legacy 登记链退役（字符串 subject
+        在翻译面不走 resolve）；detail 键集单源锚保留在分析面。"""
         from core.analysis.column_ref import ColumnRefError, resolve_column_ref
-        # 分析面
         with pytest.raises(ColumnRefError) as e1:
             resolve_column_ref("hour_utc", base_tf="1d")
         assert e1.value.code == "PARAM_INVALID"
         assert set(e1.value.detail) == self._detail_keys()
-        # 登记面：detail 证同源（resolve 键集经 ColumnRefError.detail
-        # 透传进 ResearchError.detail——不只 message 含列名）
-        from core.persistence.db_ext import init_db_ext
-        from core.analysis.executor import ensure_research_tables
-        from core.analysis.hypothesis_service import (
-            ResearchError, register_hypothesis)
-        db = tmp_path / "q.db"
-        init_db_ext(db); ensure_research_tables(db)
-        with pytest.raises(ResearchError) as e2:
-            register_hypothesis(
-                db,
-                conditions={"when_conditions": [
-                    {"subject": "hour_utc", "action": "gt", "target": 12}],
-                    "then_conditions": [
-                        {"subject": "close", "action": "gt", "target": 0}]},
-                statement="s",
-                data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1d",
-                              "start": "2024-01-01T00:00:00Z",
-                              "end": "2024-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
-        assert e2.value.code == "RESEARCH_CONDITION_INVALID"
-        assert e2.value.detail["code"] == "PARAM_INVALID"
-        assert {"column", "base_tf", "domain", "hint", "ref_tf"} <= \
-            set(e2.value.detail), "登记面 detail 与 resolve 同源同键集"
-
-    def test_u7c_registration_rejects_1d_ref_on_intraday_base(self, tmp_path):
-        """U7c 补（D-6② 引用周期语义）：条件自带 timeframe=1d 而基准
-        4h 日内——求值轴=1d 须拒（ref_tf 优先于 base_tf 的校验对象）。"""
-        from core.persistence.db_ext import init_db_ext
-        from core.analysis.executor import ensure_research_tables
-        from core.analysis.hypothesis_service import (
-            ResearchError, register_hypothesis)
-        db = tmp_path / "q.db"
-        init_db_ext(db); ensure_research_tables(db)
-        with pytest.raises(ResearchError) as ei:
-            register_hypothesis(
-                db,
-                conditions={"when_conditions": [
-                    {"subject": "hour_utc", "action": "gt", "target": 12,
-                     "timeframe": "1d"}],
-                    "then_conditions": [
-                        {"subject": "close", "action": "gt", "target": 0}]},
-                statement="s",
-                data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
-                              "start": "2024-01-01T00:00:00Z",
-                              "end": "2024-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
-        assert ei.value.detail["ref_tf"] == "1d", "校验对象=引用周期"
-
-    def test_u7c_translation_rejects_1d_ref(self, tmp_path):
-        """U7c 翻译面：登记面防线在先，翻译面为纵深防御（绕过登记的
-        库内/手工数据）——直调 _translate_conditions 证翻译面独立拒绝
-        （detail={condition, ref_tf, hint} 形制）。"""
-        from core.persistence.db_ext import init_db_ext
-        from core.analysis.executor import ensure_research_tables
-        from core.analysis.hypothesis_service import ResearchError
-        from core.analysis.hypothesis_to_strategy import _translate_conditions
-        from core.strategy.dna import SignalRole
-        db = tmp_path / "q.db"
-        init_db_ext(db); ensure_research_tables(db)
-        with pytest.raises(ResearchError) as ei:
-            _translate_conditions(
-                [{"subject": "hour_utc", "action": "gt", "target": 12,
-                  "timeframe": "1d"}],
-                db_path=db, label="when_conditions",
-                role=SignalRole.ENTRY_TRIGGER, base_tf="4h")
-        assert {"condition", "ref_tf", "hint"} <= set(ei.value.detail)
-        assert ei.value.detail["ref_tf"] == "1d"
-
-    def test_u7f_legacy_columns_zero_change(self):
-        """U7f 八列存量零变化（域元数据 dict 兼容——in 判定同语义）。"""
-        from core.analysis.column_ref import BASE_SUBJECT_COLUMNS, resolve_column_ref
-        legacy = ["open", "high", "low", "close", "volume", "trades",
-                  "open_interest", "funding_rate"]
-        assert all(c in BASE_SUBJECT_COLUMNS for c in legacy)
-        for c in legacy:
-            r = resolve_column_ref(c, base_tf="1d")  # 无域元数据不拒
-            assert r.kind == "base"
-
-    def test_c4_target_domain_hard_validation(self, tmp_path):
-        """C4：hour_utc target 须 [0,24)（与列值域一致半开）——25/24/
-        -0.5 拒（RESEARCH_NOT_EXPRESSIBLE）、23.9833/0 放行（期望
-        人工核算：23:59→23.9833 为域上确界内值、24 归次日 0:00 出域）。"""
-        from core.persistence.db_ext import init_db_ext
-        from core.analysis.executor import ensure_research_tables
-        from core.analysis.hypothesis_service import ResearchError
-        from core.analysis.hypothesis_to_strategy import _translate_conditions
-        from core.strategy.dna import SignalRole
-        db = tmp_path / "q.db"
-        init_db_ext(db); ensure_research_tables(db)
-        for bad in (25, 24, -0.5):
-            with pytest.raises(ResearchError) as ei:
-                _translate_conditions(
-                    [{"subject": "hour_utc", "action": "gt", "target": bad}],
-                    db_path=db, label="when_conditions",
-                    role=SignalRole.ENTRY_TRIGGER, base_tf="4h")
-            assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE", \
-                f"target={bad} 应拒"
-        for ok in (23.9833, 0):
-            genes, _ = _translate_conditions(
-                [{"subject": "hour_utc", "action": "gt", "target": ok}],
-                db_path=db, label="when_conditions",
-                role=SignalRole.ENTRY_TRIGGER, base_tf="4h")
-            assert len(genes) == 1, f"target={ok} 应放行承载"
 
     def test_u7g_cross_actions_rejected(self, tmp_path):
-        """U7g action 域锁反面：cross_above/price_above 拒。"""
+        """U7g action 域锁反面：cross_above/price_above 拒（翻译面
+        _translate_conditions 直断——登记链退役后值域层唯一存活面）。"""
         from core.persistence.db_ext import init_db_ext
         from core.analysis.executor import ensure_research_tables
-        from core.analysis.hypothesis_service import (
-            ResearchError, register_hypothesis)
+        from core.analysis.errors import ResearchError
+        from core.analysis.hypothesis_to_strategy import _translate_conditions
+        from core.strategy.dna import SignalRole
         db = tmp_path / "q.db"
         init_db_ext(db); ensure_research_tables(db)
-        # 登记面不校验 base 列 action（值域层归翻译面）——action 域锁
-        # 经翻译面断言（登记过、翻译拒）
-        conds = lambda act: {"when_conditions": [
-            {"subject": "hour_utc", "action": act, "target": 12}],
-            "then_conditions": [
-                {"subject": {"indicator": "RSI", "params": {"period": 14}},
-                 "action": "gt", "target": 70}]}
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        rng = [{"symbol": "BTCUSDT", "timeframe": "4h",
-                "start": "2024-01-01T00:00:00Z",
-                "end": "2024-02-01T00:00:00Z"}]
         for act in ("cross_above", "price_above"):
-            hid = register_hypothesis(db, conditions=conds(act),
-                                      statement="s", data_ranges=rng, strategy_params={"stop_loss": 0.05}
-                                      )["hypothesis_id"]
             with pytest.raises(ResearchError):
-                translate_hypothesis(db, data_dir=tmp_path,
-                                     hypothesis_id=hid)
+                _translate_conditions(
+                    [{"subject": "hour_utc", "action": act, "target": 12}],
+                    db_path=db, label="when_conditions",
+                    role=SignalRole.ENTRY_TRIGGER, base_tf="4h")
 
 
 class TestFullChain:
     """U7e：全链四层——登记/翻译/执行直读白名单。"""
 
     def test_u7e_full_chain_gene_and_eval(self, tmp_path):
-        """登记→翻译（基因三元组）→执行（直读白名单求值）。"""
+        """翻译（基因三元组）→执行（直读白名单求值）——登记链退役后
+        经 _translate_conditions 翻译面承载全链。"""
         from core.persistence.db_ext import init_db_ext
         from core.analysis.executor import ensure_research_tables
-        from core.analysis.hypothesis_service import register_hypothesis
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        from core.persistence.repository.strategy import get_strategy
-        from core.strategy.dna import StrategyDNA
+        from core.analysis.hypothesis_to_strategy import _translate_conditions
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA)
         from core.strategy.executor import dna_to_signal_set, clear_indicator_cache
 
         db = tmp_path / "q.db"
@@ -237,42 +125,23 @@ class TestFullChain:
         d = tmp_path / "market"; d.mkdir()
         make_ohlcv(n=300, freq="1h", start="2024-01-01").to_parquet(
             d / "BTCUSDT_1h.parquet")
-        hid = register_hypothesis(
-            db,
-            conditions={"when_conditions": [
-                {"subject": "hour_utc", "action": "gt", "target": 12}],
-                "then_conditions": [
-                    {"subject": {"indicator": "RSI",
-                                 "params": {"period": 30}},
-                     "action": "gt", "target": 70}]},
-            statement="s",
-            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1h",
-                          "start": "2024-01-01T00:00:00Z",
-                          "end": "2024-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
-        out = translate_hypothesis(db, hypothesis_id=hid, data_dir=d,
-                                   strategy_timeframe="1h")
-        genes = _json.loads(
-            get_strategy(db, out["strategy_id"])["dna_json"])["signal_genes"]
+        genes, sources = _translate_conditions(
+            [{"subject": "hour_utc", "action": "gt", "target": 12}],
+            db_path=db, label="when_conditions",
+            role=__import__("core.strategy.dna", fromlist=["SignalRole"]).SignalRole.ENTRY_TRIGGER,
+            base_tf="1h")
         g = genes[0]
-        assert (g["indicator"], g["params"], g["field"]) == \
+        assert (g.indicator, g.params, g.field_name) == \
             ("hour_utc", {}, None), "基因三元组"
         # 执行直读（装载注入列在场）
         from core.data.mtf_loader import load_and_prepare_df
         df = load_and_prepare_df(d, "BTCUSDT", "1h")
-        # dataclass 直构（dict 形构造会 auto-wrap layers 触发 MTF
-        # 分支；单周期直调语义等价直构）
-        from core.strategy.dna import (
-            ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole)
-        dna_genes = _json.loads(
-            get_strategy(db, out["strategy_id"])["dna_json"])["signal_genes"]
         dna = StrategyDNA(
-            signal_genes=[
-                SignalGene(g["indicator"], g["params"],
-                           SignalRole(g["role"]), g.get("field"),
-                           g["condition"]) for g in dna_genes],
-            logic_genes=LogicGenes(),
+            signal_genes=list(genes), logic_genes=LogicGenes(),
             execution_genes=ExecutionGenes(timeframe="1h"),
-            risk_genes=RiskGenes())
+            risk_genes=RiskGenes(sl_mode="pct", stop_loss=0.05),
+            signal_sources=[{"type": "rule"},
+                            *(dict(s) for s in (sources or []))])
         clear_indicator_cache()
         sig = dna_to_signal_set(dna, df)
         # 13:00-23:00 的 bar 触发（hour>12）

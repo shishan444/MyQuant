@@ -110,35 +110,31 @@ class TestSignalCountsParity:
                 f"{key}: replay={n} engine={metrics['signal_counts'][key]}")
 
 
-class TestQualifyRace:
-    """多任务竞态（spec Scenario「qualify 凭证签发与解耦」）：同策略两
-    任务先后达标——先到完成 paper→candidate 迁移，后到 already_in_status
-    如实记录；同任务重复终判不重复迁移（状态机单源裁决）。"""
+class TestQualifyNoMigration:
+    """多任务达标不迁移（retire-legacy Q2=A——晋级边退役）：同策略两
+    任务先后到达终态且三维判达标，策略状态恒 paper；qualify 边已从
+    状态机删除（transit 409 负向锚）。"""
 
-    def test_second_qualify_records_already_in_status(self, tmp_path: Path):
+    def test_two_qualified_tasks_strategy_stays_paper(self, tmp_path: Path):
         from core.persistence.db_ext import init_db_ext
-        from core.persistence.repository.strategy import save_strategy
+        from core.persistence.repository import paper
+        from core.persistence.repository.strategy import (
+            get_strategy, save_strategy)
+        from core.strategy.lifecycle.machine import LifecycleError
         from core.strategy.lifecycle.service import transit
 
-        from core.paper_trading.qualification import _maybe_transit_candidate
-
-        db = tmp_path / "qualify_race.db"
+        db = tmp_path / "qualify_no_mig.db"
         init_db_ext(db)
-        save_strategy(db, strategy_id="st-race", dna_json=make_dna().to_json(),
+        save_strategy(db, strategy_id="st-nm", dna_json=make_dna().to_json(),
                       symbol="BTCUSDT", timeframe="4h", status="active",
-                      gene_signature="sig_race")
-        # active→paper（mount 边——qualify 的合法前态；竞态构造走真
-        # 状态机通道，不 ORM 直写前态）
-        assert transit(db, "st-race", target="paper", trigger="mount",
-                       evidence={"note": "qualify-race-fixture"})["migrated"]
+                      gene_signature="sig_nm")
+        assert transit(db, "st-nm", target="paper", trigger="mount",
+                       evidence={"note": "fixture"})["migrated"]
 
-        section = {"qualified": True, "judged_at": "2026-11-01T00:00:00+00:00",
-                   "pnl_positive": True, "trades_enough": True}
-
-        def _terminal_task(i: int) -> dict:
-            tid = f"pt_race{i}"
+        for i in (1, 2):
+            tid = f"pt_nm{i}"
             paper.create_task(
-                db, task_id=tid, strategy_id="st-race",
+                db, task_id=tid, strategy_id="st-nm",
                 dna_snapshot_json=make_dna().to_json(),
                 symbol="BTCUSDT", timeframe="4h",
                 research_status_snapshot="unverified", initial_cash=10_000.0)
@@ -146,32 +142,17 @@ class TestQualifyRace:
                               started_at="2026-11-01T00:00:00+00:00")
             paper.update_task(db, tid, status="completed",
                               stopped_at="2026-11-01T01:00:00+00:00")
-            return paper.get_task(db, tid)
 
-        t1, t2 = _terminal_task(1), _terminal_task(2)
-        first = _maybe_transit_candidate(db, t1, section)
-        second = _maybe_transit_candidate(db, t2, section)
-        repeat = _maybe_transit_candidate(db, t1, section)
+        # 两任务终态达标（qualified 语义成立）后策略状态恒 paper
+        assert get_strategy(db, "st-nm")["status"] == "paper"
 
-        # 先到：完成迁移；后到：not_migrated（already_in_status）如实记录
-        assert first == {"attempted": True, "migrated": True,
-                         "not_migrated_reason": None}
-        assert second["attempted"] is True
-        assert second["migrated"] is False
-        assert "already_in_status" in str(second["not_migrated_reason"])
-        # 同任务重复终判：不重复产生迁移副作用（幂等）
-        assert repeat["migrated"] is False
-        assert "already_in_status" in str(repeat["not_migrated_reason"])
-        # 策略终态：一次迁移（candidate），三连调用后不重不漏
-        from sqlalchemy import select
-
-        from core.persistence.orm.engine import engine_for
-        from core.persistence.orm.models import Strategy
-
-        with engine_for(db).connect() as conn:
-            status = conn.execute(select(Strategy.status).where(
-                Strategy.strategy_id == "st-race")).scalar()
-        assert status == "candidate"
+        # qualify 边已删：直调迁移通道 409（防迁移通道静默复活）
+        with pytest.raises(LifecycleError) as ei:
+            transit(db, "st-nm", target="candidate", trigger="qualify",
+                    evidence={"task_id": "pt_nm1"})
+        assert ei.value.status == 409
+        assert ei.value.code == "STRATEGY_ILLEGAL_TRANSITION"
+        assert get_strategy(db, "st-nm")["status"] == "paper"
 
 
 class TestExemptionAccounting:

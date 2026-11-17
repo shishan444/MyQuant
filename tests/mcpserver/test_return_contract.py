@@ -32,25 +32,25 @@ def _all_tools() -> dict[str, Any]:
 
 
 class TestToolInventory:
-    """全集在场锚：readonly 13 + research 工具全部注册。"""
+    """全集在场锚：readonly 13 + research 9（22 工具，retire-legacy
+    任务 9 后——进化 8/需求单 2/旧验证 4/union_balance/translate/
+    假设 4 已退役；清单权威 _expected_tools.EXPECTED_RESEARCH_TOOLS）。"""
 
     def test_full_inventory_registered(self):
         tools = _all_tools()
         readonly_expected = {
             "list_data_sources", "list_strategies", "get_strategy",
-            "list_evolution_tasks", "list_indicators", "list_signal_columns",
-            "union_balance", "get_market_snapshot", "list_hypotheses",
-            "get_hypothesis", "get_research_log", "get_analysis_task",
-            "get_validation_report", "list_feature_requests",
+            "list_indicators", "list_signal_columns",
+            "get_market_snapshot", "get_research_log", "get_analysis_task",
+            "list_paper_tasks", "get_paper_task", "get_paper_history",
+            "get_paper_report", "query_paper_signals",
         }
         research_expected = {
             "run_analysis", "inspect_cases", "query_indicator",
-            "register_hypothesis", "transition_hypothesis",
-            "run_isolated_validation", "run_random_window_test",
-            "run_staged_validation", "run_backtest",
+            "run_backtest",
             "register_formula_plugin", "register_model_plugin",
-            "translate_hypothesis_to_strategy", "submit_feature_request",
-            "trigger_evolution", "poll_evolution_task",
+            "mount_paper_task", "unmount_paper_task",
+            "update_strategy_metadata",
         }
         for name in readonly_expected | research_expected:
             assert name in tools, f"工具 {name} 未注册"
@@ -68,14 +68,7 @@ class TestListArrayShape:
          [{"column": "rsi_14"}]),
         ("list_data_sources", "/api/data/available-sources",
          {"sources": [{"symbol": "BTCUSDT"}]}),
-        ("list_hypotheses", "/api/research/hypotheses",
-         {"items": [{"hypothesis_id": "h1"}], "total": 1}),
-        ("list_evolution_tasks", "/api/evolution/tasks",
-         {"items": [{"task_id": "t1"}], "total": 1}),
-        ("list_feature_requests", "/api/research/feature-requests",
-         {"items": [{"request_id": "f1"}], "total": 1}),
-    ], ids=["indicators", "signals", "data_sources",
-            "hypotheses", "evolution_tasks", "feature_requests"])
+    ], ids=["indicators", "signals", "data_sources"])
     def test_list_tools_pass_through_array(self, tool_name, url, fixed):
         """清单工具返回体=API 层固定样本原样透传（数组/对象形制不
         在 MCP 层被包裹变形）。"""
@@ -152,24 +145,3 @@ class TestCountAndParityReentry:
         assert TOOL_TIERS["research"], "research 档工具集非空"
         assert TOOL_TIERS["readonly"], "readonly 档工具集非空"
 
-    def test_receipt_bool_not_penetrating(self):
-        """C6（security F-5）：bool 不再按 int 穿透回执——bool 是 int
-        子类，穿透会以 1/0 冒充合法 bar 数/时刻；真值 3/600 照常回显。
-        两函数多位（max_hold/time_exit_utc/risk_fraction）全验；六键
-        形制（K1 接线：position_mode/risk_fraction 进回执）。"""
-        from core.analysis.hypothesis_to_strategy import (
-            _identity_reflection, _translate_receipt)
-        r = _translate_receipt("long", True, True, "fixed", True, False)
-        assert r["max_hold"] is None and r["time_exit_utc"] is None
-        assert r["risk_fraction"] is None, "bool 冒充 1.0 比例须拒"
-        r2 = _translate_receipt(
-            "long", 3, 600, "risk_budget", 0.04, False)
-        assert r2["max_hold"] == 3 and r2["time_exit_utc"] == 600
-        assert r2["position_mode"] == "risk_budget"
-        assert r2["risk_fraction"] == 0.04
-        r3 = _translate_receipt("long", 3, 600, "bogus", 0.04, False)
-        assert r3["position_mode"] == "fixed", "非法模式收敛 fixed"
-        row = {"dna_json": '{"risk_genes": {"direction": "long", '
-                            '"max_hold": true, "time_exit_utc": true}}'}
-        ir = _identity_reflection(row)
-        assert ir["max_hold"] is None and ir["time_exit_utc"] is None

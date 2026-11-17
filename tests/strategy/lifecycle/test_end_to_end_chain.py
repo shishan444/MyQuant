@@ -33,6 +33,24 @@ _RANGES = [{"symbol": "BTCUSDT", "timeframe": "4h",
             "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"}]
 
 
+def _chain_dna_json() -> str:
+    """链路用最小合法 DNA（rule 源单周期——validate 可过形制）。"""
+    from core.strategy.dna import (
+        ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole,
+        StrategyDNA)
+    return StrategyDNA(
+        signal_genes=[
+            SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                       "rsi_14", {"type": "lt", "threshold": 35}),
+            SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                       "rsi_14", {"type": "gt", "threshold": 65}),
+        ],
+        logic_genes=LogicGenes(),
+        execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
+        risk_genes=RiskGenes(),
+        signal_sources=[{"type": "rule"}]).to_json()
+
+
 @pytest.fixture
 def chain_db(tmp_path: Path) -> Path:
     path = tmp_path / "chain.db"
@@ -62,23 +80,31 @@ def chain_client(chain_db: Path, tmp_path: Path):
 
 
 def _promote_via_research_chain(db: Path) -> str:
-    """研究链真实入口转正（入库）：假设→翻译 draft→pass 定证→
-    supported 定证→谱系 draft→active（trigger=credential）。"""
-    from core.analysis.hypothesis_service import (
-        register_hypothesis, transition_hypothesis)
-    from core.analysis.hypothesis_to_strategy import translate_hypothesis
+    """研究链等价构造转正（入库）：retire-legacy 后 register/translate/
+    transition_hypothesis 退役——假设经 vr_factory SQL 直插、draft 经
+    save_strategy 落库、转正走 lifecycle service.transit 唯一合法通道
+    （trigger=credential，evidence 引 pass 记录；pass 判定链
+    has_own_pass 同源）。"""
+    from core.strategy.lifecycle.service import transit
+    from core.persistence.repository.strategy import save_strategy
+    from tests.helpers.vr_factory import (
+        insert_hypothesis, insert_validation_record)
 
-    hid = register_hypothesis(
-        db, conditions=_CONDS, statement="s", data_ranges=_RANGES, strategy_params={"stop_loss": 0.05})[
-        "hypothesis_id"]
-    sid = translate_hypothesis(db, hypothesis_id=hid)["strategy_id"]
-    rr.save_validation_with_log(
+    hid = insert_hypothesis(
+        db, conditions=_CONDS, statement="s", data_ranges=_RANGES,
+        strategy_params={"stop_loss": 0.05})
+    sid = "st_chain_promoted"
+    save_strategy(
+        db, strategy_id=sid, dna_json=_chain_dna_json(), symbol="BTCUSDT",
+        timeframe="4h", parent_ids=hid, status="draft")
+    insert_validation_record(
         db, record_id="rec_chain_pass", hypothesis_id=hid, strategy_id=sid,
-        level="isolated_backtest", params="{}", result=None, verdict="pass",
+        level="isolated_backtest", params={}, result=None, verdict="pass",
         range_hash="rh_chain_pass")
-    out = transition_hypothesis(
-        db, hid, target_status="supported", evidence_ref="rec_chain_pass")
-    assert out["promoted"] is True
+    out = transit(
+        db, sid, target="active", trigger="credential",
+        evidence={"record_id": "rec_chain_pass", "hypothesis_id": hid})
+    assert out["migrated"] is True
     assert get_strategy(db, sid)["status"] == "active"
     return sid
 

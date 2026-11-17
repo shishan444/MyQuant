@@ -24,22 +24,11 @@ READONLY_ENDPOINTS = frozenset({
     "/api/data/available-sources",
     "/api/strategies",
     "/api/strategies/{strategy_id}",
-    "/api/evolution/tasks",
-    "/api/evolution/tasks/{task_id}",
-    # champion/快照策略集只读通道（research-tooling-data-quality 卡 C：
-    # get_evolution_strategies 薄封装——运行中提取经既有快照端点）
-    "/api/evolution/tasks/{task_id}/strategies",
-    "/api/evolution/runner-status",
     "/api/research/indicators",
     "/api/research/signals",
     "/api/research/market-snapshot",
-    "/api/research/union-balance",  # 判定并集余量查询（0.4.1 R4）
-    "/api/research/hypotheses",
-    "/api/research/hypotheses/{hypothesis_id}",
     "/api/research/log",
-    "/api/research/validation/{strategy_id}/report",
     "/api/research/analysis/tasks/{task_id}",
-    "/api/research/feature-requests",
     "/api/research/plugins/formula",
     "/api/research/plugins/model",
     # 纸盘只读五件的 GET 端点族（rebuild-paper-trading 5.3+
@@ -55,30 +44,16 @@ READONLY_ENDPOINTS = frozenset({
     "/api/paper-trading/runner-status",
 })
 
-# 研究执行档 POST 允许集（登记/验证/分析/需求单/进化触发）
+# 研究执行档 POST 允许集（验证/分析/插件注册/纸盘挂载）
 RESEARCH_POST_ENDPOINTS = frozenset({
-    "/api/research/hypotheses",                             # 登记假设
-    "/api/research/hypotheses/{hypothesis_id}/transition",  # 状态迁移
-    "/api/research/validate-backtest",                      # 隔离回测
-    "/api/research/random-window-test",                     # 随机窗口
     "/api/research/backtest-sandbox",                       # 沙盒回测（M6 快速试错）
     "/api/research/analysis",                               # 分析模板
     "/api/research/inspect-cases",                          # 案例抽查（0.2.8 检查③）
     "/api/research/query-indicator",                        # 指标读数（0.2.9 检查④）
-    "/api/research/staged-validation",                     # 分段验证（0.2.10 考试完整）
-    "/api/research/feature-requests",                       # 需求单
     "/api/research/plugins/formula",                        # 公式插件注册
     "/api/research/plugins/model",                          # 模型插件配置
-    "/api/research/translate/{hypothesis_id}",              # 假设→策略转化
-    "/api/evolution/tasks",                                 # 触发进化
     "/api/paper-trading/tasks",                             # mount 上盘（rebuild-paper-trading 5.3）
     "/api/paper-trading/tasks/{task_id}/stop",              # unmount 撤盘（stop 语义）
-    # 进化控制三工具+批量删除（research-tooling-data-quality 卡 A/D：
-    # REST 既有端点的 MCP 薄封装——停止/暂停/恢复是任务管理非触金）
-    "/api/evolution/tasks/{task_id}/stop",
-    "/api/evolution/tasks/{task_id}/pause",
-    "/api/evolution/tasks/{task_id}/resume",
-    "/api/strategies/batch",
 })
 
 # research 档 PUT 白名单（research-tooling-data-quality 卡 A：策略标注

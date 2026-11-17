@@ -21,7 +21,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 import core.signals.model as signals_model
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.plugin_service import (
     enrich_with_plugin_columns,
     register_formula_plugin,

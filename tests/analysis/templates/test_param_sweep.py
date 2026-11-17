@@ -17,7 +17,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.condition_stats import condition_stats
 from core.analysis.templates.param_sweep import param_sweep
 from core.data.fapi.rest import default_data_dir

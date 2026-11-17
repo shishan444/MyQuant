@@ -31,8 +31,8 @@ def client(tmp_path: Path):
 
 
 def _add_hypothesis(db):
-    from core.analysis.hypothesis_service import register_hypothesis
-    return register_hypothesis(
+    from tests.helpers.vr_factory import insert_hypothesis
+    return insert_hypothesis(
         db,
         conditions={"when_conditions": [
             {"subject": {"indicator": "RSI", "params": {"period": 14}},
@@ -42,15 +42,15 @@ def _add_hypothesis(db):
         strategy_params={"stop_loss": 0.05},
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2026-01-01T00:00:00Z",
-                      "end": "2026-02-01T00:00:00Z"}])["hypothesis_id"]
+                      "end": "2026-02-01T00:00:00Z"}])
 
 
 def _add_hypothesis_variant(db, i):
     """then target 变体假设（同 conditions 注册幂等返回同 id——变体保证
     互异；period 变体不可行：RSI.period 参数域 [2,50] 上限 49 个不够；
     CARD-01 全量扫/CARD-02 缓存用例的批量种子）。"""
-    from core.analysis.hypothesis_service import register_hypothesis
-    return register_hypothesis(
+    from tests.helpers.vr_factory import insert_hypothesis
+    return insert_hypothesis(
         db,
         conditions={"when_conditions": [
             {"subject": {"indicator": "RSI", "params": {"period": 14}},
@@ -59,7 +59,7 @@ def _add_hypothesis_variant(db, i):
         statement=f"wb 变体 {i}", strategy_params={"stop_loss": 0.05},
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2026-01-01T00:00:00Z",
-                      "end": "2026-02-01T00:00:00Z"}])["hypothesis_id"]
+                      "end": "2026-02-01T00:00:00Z"}])
 
 
 

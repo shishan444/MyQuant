@@ -1,6 +1,6 @@
-"""live 链兼容性拒绝面测试（0.4.2 R2/D3，stop-loss-modes 规格交易链
-Requirement，B3-17 判据面——评估问题 5 a1 收敛；frontend-switch-and-
-retire R.1 值域收敛 ("live",)——回放/模拟旧链退役）。
+"""live 链兼容性拒绝面测试（0.4.2 R2/D3——validator 纯函数面；live
+运行链已随 B2 退役删除，TestLiveInstrumentation 随删——retire-legacy
+2026-11-16；live 值仍为合法枚举，拒绝规则单点锚由本文件继续承载）。
 
 双判据×live 链：判据一模式矩阵（trail live 链拒/atr live 链拒/pct
 放行）；判据二分批角色（手工构造 DNA 预验，不依赖翻译生产者——
@@ -97,27 +97,3 @@ class TestMatrixValidator:
         纸盘双层插桩承载）。"""
         with pytest.raises(ValueError):
             validate_trading_compatibility(mk_dna(), link)
-
-
-class TestLiveInstrumentation:
-    """live 链插桩：LiveTradingExecutor 装载即拒（挂 SL/TP 单之前）。"""
-
-    def _mk_executor(self, dna):
-        from core.live_trading.executor import LiveTradingExecutor
-        # 组件占位（装载即拒——组件不会被触碰）
-        return LiveTradingExecutor(
-            pipeline=None, gateway=None, risk=None, oms=None, dna=dna,
-            symbol="BTCUSDT", state=None)
-
-    def test_trail_live_rejected_before_sl_tp(self):
-        with pytest.raises(ValueError) as ei:
-            self._mk_executor(mk_dna(sl_mode="trail"))
-        assert "实盘链不支持" in str(ei.value)
-
-    def test_atr_live_rejected_with_danger_form(self):
-        with pytest.raises(ValueError) as ei:
-            self._mk_executor(mk_dna(sl_mode="atr", stop_loss=2.0))
-        assert "负价" in str(ei.value)  # 危险形态披露
-
-    def test_pct_live_loads(self):
-        assert self._mk_executor(mk_dna(sl_mode="pct")) is not None

@@ -1,10 +1,6 @@
-"""价格比较动作共用求值路径特征网（fix-research-c2-price-actions · tester 组）。
+"""价格比较动作声明域-执行键集对拍特征网（fix-research-c2-price-actions · tester 组）。
 
 从 change delta 契约推导（不从实现反推）：
-- Scenario「未识别动作结构化拒绝」要求拒绝覆盖全部求值入口——契约
-  （design §2/tasks C2.2）声称拒绝经共用 _evaluate_conditions
-  （rule_engine 进出场、validate_hypothesis WHEN 链）自动获得，本文件
-  逐路径证明（拒绝冒泡 + price_above 正向经共用路径产真实信号）；
 - Requirement 首句「指标目录声明的每个比较动作在执行层必须有实现」
   ——声明域（INDICATOR_REGISTRY.supported_conditions 并集 + 全谱扫描器
   _PRICE_REL_ACTIONS 第二清单）对拍执行键集（422 detail.legal_values，
@@ -15,109 +11,21 @@
 显式 422（缺口显性化而非缺口引入）；处置（补实现或修声明域）上报
 team-lead 裁决，哨兵断言锁定缺口集合：扩大即红、修复后红（逼同步
 改为全绿断言）。
-"""
 
-from pathlib import Path
+retire-legacy 10.4 分拣：原 TestSharedEvalPathReject（拒绝冒泡经
+_evaluate_conditions / rule_engine / validate_hypothesis 逐路径证明）
+已随 core/validation 壳整体退役删除——三个消费方守护对象均不存在；
+求值内核 _evaluate_single_condition 存活于 core.analysis.condition_eval
+（D-1 纯搬家），本文件对拍面改指该处，断言零改动。
+"""
 
 import pandas as pd
 import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.analysis.hypothesis_service import ResearchError
-from core.validation.engine import _evaluate_conditions, _evaluate_single_condition
-from tests.helpers.data_factory import make_ohlcv
-
-
-@pytest.fixture()
-def df() -> pd.DataFrame:
-    """300 bar 确定性数据，带已知指标列（ema_20 与 close 有交叉）。"""
-    d = make_ohlcv(n=300, freq="1h", start="2024-01-01", seed=11)
-    d["ema_20"] = d["close"].rolling(20).mean().shift(1)  # 下移使两向都非空
-    return d
-
-
-class TestSharedEvalPathReject:
-    """拒绝冒泡：契约声称的「共用路径自动获得」逐路径证明。"""
-
-    def test_conditions_array_unknown_action_bubbles(self, df):
-        """条件数组（AND 组合）中间条件未知 action → 整组求值 raise，
-        不被组合逻辑吞成部分结果。"""
-        conds = [
-            {"subject": "ema_20", "action": "gt", "target": 0},
-            {"subject": "ema_20", "action": "nope", "target": 1},
-        ]
-        with pytest.raises(ResearchError) as ei:
-            _evaluate_conditions(df, conds, None)
-        assert ei.value.code == "RESEARCH_PARAM_INVALID"
-        assert ei.value.detail["param"] == "condition.action"
-
-    def test_or_branch_reject_not_swallowed(self, df):
-        """OR 分支同样冒泡：拒绝语义先于组合语义（半真半假的
-        「OR 右侧静默全 False」不成立）。"""
-        conds = [
-            {"subject": "ema_20", "action": "gt", "target": 0},
-            {"subject": "ema_20", "action": "nope", "target": 1,
-             "logic": "OR"},
-        ]
-        with pytest.raises(ResearchError):
-            _evaluate_conditions(df, conds, None)
-
-    def test_rule_engine_unknown_action_raises(self, tmp_path: Path, df):
-        """rule_engine 进出场链：entry 未知 action → ResearchError，
-        不再返回 0 交易的「看似正常」RuleResult（旧静默缺陷形态）。"""
-        from core.validation.rule_engine import evaluate_rules
-        data_dir = tmp_path / "market"
-        data_dir.mkdir()
-        df.to_parquet(data_dir / "BTCUSDT_1h.parquet")
-        with pytest.raises(ResearchError) as ei:
-            evaluate_rules("BTCUSDT", "1h", "2024-01-05", "2024-01-20",
-                           entry_conditions=[
-                               {"subject": "ema_20", "action": "stays_above",
-                                "target": 0}],
-                           exit_conditions=[
-                               {"subject": "ema_20", "action": "lt",
-                                "target": 0}],
-                           data_dir=str(data_dir))
-        assert ei.value.code == "RESEARCH_PARAM_INVALID"
-        assert "price_above" in ei.value.detail["legal_values"]
-
-    def test_rule_engine_price_above_positive(self, tmp_path: Path, df):
-        """rule_engine 正向：price_above 经共用路径产真实买入信号
-        （buy 与 sell 非空、且逐 bar 落在 close>ema_20 的位置上）。"""
-        from core.validation.rule_engine import evaluate_rules
-        data_dir = tmp_path / "market"
-        data_dir.mkdir()
-        df.to_parquet(data_dir / "BTCUSDT_1h.parquet")
-        result = evaluate_rules(
-            "BTCUSDT", "1h", "2024-01-05", "2024-01-20",
-            entry_conditions=[
-                {"subject": "ema_20", "action": "price_above", "target": 0}],
-            exit_conditions=[
-                {"subject": "ema_20", "action": "price_below", "target": 0}],
-            data_dir=str(data_dir))
-        assert result.buy_signals, "price_above 入场须产真实买入信号"
-        assert result.sell_signals, "price_below 出场须产真实卖出信号"
-        for sig in result.buy_signals:
-            ts = pd.Timestamp(sig.time)
-            assert df.loc[ts, "close"] > df.loc[ts, "ema_20"]
-
-    def test_validate_hypothesis_when_unknown_raises(self, tmp_path: Path, df):
-        """validate_hypothesis（WHEN 链，engine.py _evaluate_conditions
-        消费方）：when 未知 action → raise，不静默返回 0 触发。"""
-        from core.validation.engine import validate_hypothesis
-        data_dir = tmp_path / "market"
-        data_dir.mkdir()
-        df.to_parquet(data_dir / "BTCUSDT_1h.parquet")
-        with pytest.raises(ResearchError) as ei:
-            validate_hypothesis(
-                "BTCUSDT", "1h", "2024-01-05", "2024-01-20",
-                when_conditions=[
-                    {"subject": "ema_20", "action": "nope", "target": 0}],
-                then_conditions=[
-                    {"subject": "ema_20", "action": "gt", "target": 0}],
-                data_dir=str(data_dir))
-        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+from core.analysis.condition_eval import _evaluate_single_condition
+from core.analysis.errors import ResearchError
 
 
 class TestDeclaredActionsCoverage:

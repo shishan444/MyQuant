@@ -19,53 +19,6 @@ from tests.helpers.data_factory import make_dna, make_enhanced_df, make_ohlcv
 class TestDomainValidation:
     """U6a 值域族。"""
 
-    def test_u6a_out_of_range_rejected(self, tmp_path):
-        from core.persistence.db_ext import init_db_ext
-        from core.analysis.executor import ensure_research_tables
-        init_db_ext(tmp_path / "q.db")
-        ensure_research_tables(tmp_path / "q.db")
-        from core.analysis.hypothesis_service import ResearchError, register_hypothesis
-        conds = {"when_conditions": [
-            {"subject": {"indicator": "RSI", "params": {"period": 14}},
-             "action": "lt", "target": 35}],
-            "then_conditions": [
-                {"subject": {"indicator": "RSI", "params": {"period": 30}},
-                 "action": "gt", "target": 70}]}
-        ranges = [{"symbol": "BTCUSDT", "timeframe": "4h",
-                   "start": "2024-01-01T00:00:00Z",
-                   "end": "2024-02-01T00:00:00Z"}]
-        for bad in (-1, 1440, 12.5, True):
-            with pytest.raises(ResearchError) as ei:
-                register_hypothesis(
-                    tmp_path / "q.db", conditions=conds, statement="s",
-                    data_ranges=ranges,
-                    strategy_params={"stop_loss": 0.05, "time_exit_utc": bad})
-            assert ei.value.code == "RESEARCH_PARAM_INVALID"
-            assert ei.value.detail["field"] == "time_exit_utc"
-
-    def test_u6a_zero_and_boundary_pass(self, tmp_path):
-        from core.persistence.db_ext import init_db_ext
-        from core.analysis.executor import ensure_research_tables
-        from core.analysis.hypothesis_service import register_hypothesis
-        init_db_ext(tmp_path / "q.db")
-        ensure_research_tables(tmp_path / "q.db")
-        conds = {"when_conditions": [
-            {"subject": {"indicator": "RSI", "params": {"period": 14}},
-             "action": "lt", "target": 35}],
-            "then_conditions": [
-                {"subject": {"indicator": "RSI", "params": {"period": 30}},
-                 "action": "gt", "target": 70}]}
-        ranges = [{"symbol": "BTCUSDT", "timeframe": "4h",
-                   "start": "2024-01-01T00:00:00Z",
-                   "end": "2024-02-01T00:00:00Z"}]
-        for k, ok in enumerate((0, 1439, 720)):
-            rng_k = [dict(ranges[0],
-                          start=f"2024-0{k + 1}-01T00:00:00Z",
-                          end=f"2024-0{k + 1}-15T00:00:00Z")]
-            register_hypothesis(
-                tmp_path / "q.db", conditions=conds, statement=f"s{ok}",
-                data_ranges=rng_k, strategy_params={"stop_loss": 0.05, "time_exit_utc": ok})
-
     def test_c5_daily_tf_combination_rejected(self):
         """C5：validate_dna 拒 time_exit_utc×日线及以上组合（>=1440
         分钟——每 bar 覆盖全天恒触发，退化无意义）；4h/12h+600（日内

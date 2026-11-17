@@ -21,15 +21,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.persistence.db import (
-    get_task,
-    init_db,
-    list_all_tasks,
-    save_history,
-    save_task,
-    update_task,
-)
-from core.persistence.repository.backtest_result import get_backtest_result, list_backtest_results, save_backtest_result
+from core.persistence.db import init_db
 from core.persistence.repository.dataset_meta import delete_dataset, get_dataset, list_datasets, save_dataset_meta, update_dataset_stats
 from core.persistence.repository.strategy import delete_strategy, get_strategy, list_strategies, save_strategy, update_strategy
 from core.persistence.db_ext import init_db_ext
@@ -178,57 +170,6 @@ class TestInitDbExt:
 
 # ── Test: Backward Compatibility ──
 
-class TestBackwardCompatibility:
-    """Existing core db.py operations must still work after migration."""
-
-    def test_save_and_get_task_still_works(self, initialized_db: Path) -> None:
-        from core.strategy.dna import StrategyDNA
-
-        dna = StrategyDNA()
-        save_task(
-            db_path=initialized_db,
-            task_id="compat-001",
-            target_score=80.0,
-            template="profit_first",
-            symbol="BTCUSDT",
-            timeframe="4h",
-            initial_dna=dna,
-        )
-        task = get_task(initialized_db, "compat-001")
-        assert task is not None
-        assert task["task_id"] == "compat-001"
-
-    def test_update_task_still_works(self, initialized_db: Path) -> None:
-        from core.strategy.dna import StrategyDNA
-
-        dna = StrategyDNA()
-        save_task(initialized_db, "compat-002", 80.0, "profit_first",
-                  "BTCUSDT", "4h", dna)
-        update_task(initialized_db, "compat-002", status="completed",
-                    stop_reason="target_reached")
-        task = get_task(initialized_db, "compat-002")
-        assert task["status"] == "completed"
-
-    def test_list_all_tasks_still_works(self, initialized_db: Path) -> None:
-        from core.strategy.dna import StrategyDNA
-
-        dna = StrategyDNA()
-        for i in range(3):
-            save_task(initialized_db, f"compat-list-{i}", 80.0,
-                      "profit_first", "BTCUSDT", "4h", dna)
-        tasks = list_all_tasks(initialized_db)
-        assert len(tasks) == 3
-
-    def test_save_history_still_works(self, initialized_db: Path) -> None:
-        from core.persistence.db import save_history, get_history
-
-        save_history(initialized_db, "task-hist", 1, 75.0, 60.0,
-                     json.dumps([]))
-        hist = get_history(initialized_db, "task-hist")
-        assert len(hist) == 1
-
-# ── Test: Strategy CRUD ──
-
 class TestStrategyCRUD:
     def test_save_and_get_strategy(self, initialized_db: Path) -> None:
         data = _sample_strategy_data()
@@ -366,130 +307,6 @@ class TestStrategyCRUD:
         assert second["updated_at"] >= first["updated_at"]
 
 # ── Test: Backtest Result ──
-
-class TestBacktestResult:
-    def test_save_and_get_backtest_result(self, initialized_db: Path) -> None:
-        # Need a strategy first due to FK
-        save_strategy(initialized_db, **_sample_strategy_data())
-        data = _sample_backtest_data()
-        save_backtest_result(initialized_db, **data)
-        result = get_backtest_result(initialized_db, "bt-001")
-        assert result is not None
-        assert result["result_id"] == "bt-001"
-        assert result["strategy_id"] == "strat-001"
-        assert result["total_return"] == 25.3
-        assert result["sharpe_ratio"] == 1.8
-        assert result["total_trades"] == 150
-
-    def test_get_backtest_result_not_found(self, initialized_db: Path) -> None:
-        result = get_backtest_result(initialized_db, "nonexistent")
-        assert result is None
-
-    def test_list_backtest_results_by_strategy(self, initialized_db: Path) -> None:
-        save_strategy(initialized_db, **_sample_strategy_data())
-        save_strategy(initialized_db, **_sample_strategy_data(
-            strategy_id="strat-002", name="Strategy 2",
-        ))
-        save_backtest_result(initialized_db, **_sample_backtest_data(
-            result_id="bt-1", strategy_id="strat-001",
-        ))
-        save_backtest_result(initialized_db, **_sample_backtest_data(
-            result_id="bt-2", strategy_id="strat-001",
-        ))
-        save_backtest_result(initialized_db, **_sample_backtest_data(
-            result_id="bt-3", strategy_id="strat-002",
-        ))
-        results = list_backtest_results(initialized_db, strategy_id="strat-001")
-        assert len(results) == 2
-
-    def test_list_backtest_results_by_symbol(self, initialized_db: Path) -> None:
-        save_strategy(initialized_db, **_sample_strategy_data())
-        save_strategy(initialized_db, **_sample_strategy_data(
-            strategy_id="strat-002", name="Strategy 2",
-        ))
-        save_backtest_result(initialized_db, **_sample_backtest_data(
-            result_id="bt-btc", strategy_id="strat-001", symbol="BTCUSDT",
-        ))
-        save_backtest_result(initialized_db, **_sample_backtest_data(
-            result_id="bt-eth", strategy_id="strat-002", symbol="ETHUSDT",
-        ))
-        results = list_backtest_results(initialized_db, symbol="ETHUSDT")
-        assert len(results) == 1
-        assert results[0]["result_id"] == "bt-eth"
-
-    def test_list_backtest_results_ordered_by_score(self, initialized_db: Path) -> None:
-        save_strategy(initialized_db, **_sample_strategy_data())
-        save_backtest_result(initialized_db, **_sample_backtest_data(
-            result_id="bt-low", total_score=50.0,
-        ))
-        save_backtest_result(initialized_db, **_sample_backtest_data(
-            result_id="bt-high", total_score=95.0,
-        ))
-        results = list_backtest_results(
-            initialized_db, sort_by="total_score", sort_order="desc",
-        )
-        assert results[0]["result_id"] == "bt-high"
-
-    def test_list_backtest_results_with_limit(self, initialized_db: Path) -> None:
-        save_strategy(initialized_db, **_sample_strategy_data())
-        for i in range(5):
-            save_backtest_result(initialized_db, **_sample_backtest_data(
-                result_id=f"bt-{i}",
-            ))
-        results = list_backtest_results(initialized_db, limit=3)
-        assert len(results) == 3
-
-    def test_list_backtest_results_by_run_source(self, initialized_db: Path) -> None:
-        save_strategy(initialized_db, **_sample_strategy_data())
-        save_backtest_result(initialized_db, **_sample_backtest_data(
-            result_id="bt-lab", run_source="lab",
-        ))
-        save_backtest_result(initialized_db, **_sample_backtest_data(
-            result_id="bt-evo", run_source="evolution",
-        ))
-        results = list_backtest_results(initialized_db, run_source="evolution")
-        assert len(results) == 1
-        assert results[0]["result_id"] == "bt-evo"
-
-    def test_save_and_get_backtest_result_with_fitness(self, initialized_db: Path) -> None:
-        save_strategy(initialized_db, **_sample_strategy_data())
-        save_backtest_result(
-            initialized_db,
-            **_sample_backtest_data(
-                result_id="bt-fit",
-                run_source="verify",
-                fitness=1.35,
-                qualified=1,
-                satisfaction_json='{"sharpe": 0.9}',
-            ),
-        )
-        result = get_backtest_result(initialized_db, "bt-fit")
-        assert result is not None
-        assert result["fitness"] == 1.35
-        assert result["qualified"] == 1
-        assert result["satisfaction_json"] == '{"sharpe": 0.9}'
-
-    def test_save_backtest_result_defaults_fitness(self, initialized_db: Path) -> None:
-        save_strategy(initialized_db, **_sample_strategy_data())
-        save_backtest_result(initialized_db, **_sample_backtest_data(result_id="bt-def"))
-        result = get_backtest_result(initialized_db, "bt-def")
-        assert result is not None
-        assert result["fitness"] == 0.0
-        assert result["qualified"] == 0
-        assert result["satisfaction_json"] is None
-
-    def test_backtest_result_with_session_id(self, initialized_db: Path) -> None:
-        save_strategy(initialized_db, **_sample_strategy_data())
-        save_backtest_result(
-            initialized_db,
-            **_sample_backtest_data(result_id="bt-sess", session_id="sess-001"),
-        )
-        result = get_backtest_result(initialized_db, "bt-sess")
-        assert result is not None
-        assert result["session_id"] == "sess-001"
-
-
-# ── Test: Dataset Metadata CRUD ──
 
 class TestDatasetMetaCRUD:
     def test_save_and_get_dataset(self, initialized_db: Path) -> None:

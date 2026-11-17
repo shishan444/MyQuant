@@ -105,10 +105,10 @@ class TestServerAssembly:
         mcp, _ = build_server(profile="research")
         res = run_async(mcp.read_resource("quant://capabilities"))
         text = res[0].content if isinstance(res, list) else str(res)
-        for part in ("工具清单", "验证协议要点", "策略可表达边界", "假设状态机"):
+        for part in ("工具清单", "验证协议要点", "策略库与验证记录",
+                     "条件可表达边界"):
             assert part in text, f"自述缺部分: {part}"
-        assert "register_hypothesis" in text  # 工具清单已合并
-        assert "不会自动实现" in text  # 需求单预期管理
+        assert "run_backtest" in text  # 工具清单已合并（沙盒统一流）
 
 
 class TestTierMarkupParity:
@@ -139,73 +139,8 @@ class TestTierMarkupParity:
         mcp, _ = build_server(profile="research")
         res = run_async(mcp.read_resource("quant://capabilities"))
         text = res[0].content if isinstance(res, list) else str(res)
-        for n in ("inspect_cases", "query_indicator", "run_staged_validation"):
+        for n in ("inspect_cases", "query_indicator", "run_backtest"):
             assert f"- {n}" in text, f"能力自述缺工具 {n}"
-
-
-class TestToolPaginationClamp:
-    """CARD-05 修复资产：MCP 工具层分页 clamp（发出的查询参数先钳制）。
-
-    clamp 形制照 list_evolution_tasks 先例：page=max(1,page)、
-    page_size=max(1,min(ps,50))——与 HTTP 侧越界归 50 缺省不同值
-    （下限抬 1），分层裁量分别钉。
-    """
-
-    def _captured_get(self, api, captured):
-        def _fake_get(path, params=None):
-            captured["path"] = path
-            captured["params"] = params
-            return {"items": [], "total": 0}
-        api.get = _fake_get
-
-    def test_list_feature_requests_params_clamped(self, monkeypatch) -> None:
-        mcp, api = build_server(profile="readonly", base_url="http://x")
-        captured: dict = {}
-        self._captured_get(api, captured)
-
-        run_async(mcp.call_tool("list_feature_requests",
-                                {"page": 0, "page_size": 999}))
-        assert captured["params"]["page"] == 1
-        assert captured["params"]["page_size"] == 50, "超 _PAGE_MAX 收 50"
-
-        run_async(mcp.call_tool("list_feature_requests",
-                                {"page": -3, "page_size": 0}))
-        assert captured["params"]["page"] == 1
-        assert captured["params"]["page_size"] == 1, "下限抬 1（非 HTTP 侧的 50 缺省）"
-
-    def test_list_feature_requests_legal_params_passthrough(self, monkeypatch) -> None:
-        """合法参数原样透传（clamp 不改写有效值）。"""
-        mcp, api = build_server(profile="readonly", base_url="http://x")
-        captured: dict = {}
-        self._captured_get(api, captured)
-
-        run_async(mcp.call_tool("list_feature_requests",
-                                {"page": 3, "page_size": 20, "status": "open"}))
-        assert captured["params"] == {"page": 3, "page_size": 20,
-                                      "status": "open"}
-
-
-class TestPollTimeoutClamp:
-    """CARD-13 修复资产：poll_evolution_task 的 total_timeout 钳制
-    [1, 3600]s（防误传 0/负值立即超时、超长值挂死会话）。"""
-
-    def test_timeout_clamped_into_domain(self, monkeypatch) -> None:
-        import json as _json
-
-        mcp, api = build_server(profile="research", base_url="http://x")
-        captured: dict = {}
-
-        def _fake_poll(path, **kw):
-            captured.update(total_timeout=kw.get("total_timeout"))
-            return {"status": "completed"}
-
-        api.poll_until_terminal = _fake_poll
-
-        for raw, expect in [(0, 1.0), (-5, 1.0), (99999, 3600.0), (300, 300.0)]:
-            run_async(mcp.call_tool("poll_evolution_task",
-                                    {"task_id": "t", "total_timeout": raw}))
-            assert captured["total_timeout"] == expect, \
-                f"total_timeout={raw} 应钳制为 {expect}"
 
 
 class TestPathSegmentEncoding:
@@ -227,29 +162,18 @@ class TestPathSegmentEncoding:
         assert captured["path"] == "/api/strategies/a%2Fb%20c", \
             "注入形 id 编码为单段，不逃逸不多段"
 
-    def test_post_two_segment_transition_encoded(self, monkeypatch) -> None:
+    def test_post_two_segment_encoded(self, monkeypatch) -> None:
+        """POST 两段路径编码（载体：unmount 撤盘两段形——原
+        transition_hypothesis 载体随工具退役换绑，retire-legacy 任务 9）。"""
         mcp, api = build_server(profile="research", base_url="http://x")
         captured: dict = {}
         api.post = lambda path, json_body=None: (
             captured.update(path=path) or {})
 
-        run_async(mcp.call_tool("transition_hypothesis", {
-            "hypothesis_id": "hyp/../evil", "target_status": "refuted",
-            "evidence_ref": "rec_1"}))
+        run_async(mcp.call_tool("unmount_paper_task", {
+            "task_id": "pt/../evil"}))
         assert captured["path"] == (
-            "/api/research/hypotheses/hyp%2F..%2Fevil/transition")
-
-    def test_poll_path_encoded(self, monkeypatch) -> None:
-        """poll_until_terminal 路径同编码（内部走 get——白名单语义）。"""
-        mcp, api = build_server(profile="research", base_url="http://x")
-        captured: dict = {}
-        api.poll_until_terminal = lambda path, **kw: (
-            captured.update(path=path) or {"status": "completed"})
-
-        run_async(mcp.call_tool("poll_evolution_task",
-                                {"task_id": "x?y=1", "total_timeout": 0.01}))
-        assert captured["path"] == "/api/evolution/tasks/x%3Fy%3D1", \
-            "查询注入形 id 不产生查询串"
+            "/api/paper-trading/tasks/pt%2F..%2Fevil/stop")
 
     def test_legal_hex_id_passthrough(self, monkeypatch) -> None:
         """合法 hex/kebab id 编码零变化（常规路径零漂移）。"""
@@ -264,7 +188,7 @@ class TestPathSegmentEncoding:
 
 
 class TestToolBodyInvocation:
-    """闸门终验消解：28 工具体逐个经 call_tool 实调（对拍测试断言注册面，
+    """闸门终验消解：22 工具体逐个经 call_tool 实调（对拍测试断言注册面，
     此处钉「工具→端点」映射的行为面——工具体参数组装 + method/path）。
 
     L3（stdio/http 真进程）覆盖真实链路；本类补进程内工具体触达与
@@ -272,28 +196,29 @@ class TestToolBodyInvocation:
     """
 
     # (工具名, 最小参数, 期望 method, 期望归一路径)
+    # —— 22 工具集（retire-legacy 任务 9 后：进化 8/需求单 2/旧验证 4/
+    # union_balance/translate/假设 4 已退役；清单权威 _expected_tools）
     CASES = [
         ("list_data_sources", {}, "GET", "/api/data/available-sources"),
         ("list_strategies", {"limit": 5, "offset": 0}, "GET", "/api/strategies"),
         ("get_strategy", {"strategy_id": "st_1"}, "GET", "/api/strategies/{param}"),
-        ("list_evolution_tasks", {"page": 1, "page_size": 10}, "GET", "/api/evolution/tasks"),
         ("list_indicators", {}, "GET", "/api/research/indicators"),
         ("list_signal_columns", {}, "GET", "/api/research/signals"),
         ("get_market_snapshot", {"symbol": "BTCUSDT", "timeframes": "1d,4h",
                              "as_of": "2024-06-01T00:00:00Z"},
          "GET", "/api/research/market-snapshot"),
-        ("list_hypotheses", {"page": 1, "status": "active",
-                          "cursor": "2026-01-01T00:00:00|h1"},
-         "GET", "/api/research/hypotheses"),
-        ("get_hypothesis", {"hypothesis_id": "hyp_1"}, "GET", "/api/research/hypotheses/{param}"),
         ("get_research_log", {"page": 1, "hypothesis_id": "h1",
                            "entry_type": "register",
                            "cursor": "2026-01-01T00:00:00|l1"},
          "GET", "/api/research/log"),
         ("get_analysis_task", {"task_id": "ant_1"}, "GET", "/api/research/analysis/tasks/{param}"),
-        ("get_validation_report", {"strategy_id": "st_1"}, "GET", "/api/research/validation/{param}/report"),
-        ("list_feature_requests", {"page": 1, "status": "open"},
-         "GET", "/api/research/feature-requests"),
+        ("list_paper_tasks", {"limit": 10, "offset": 0, "status": "running"},
+         "GET", "/api/paper-trading/tasks"),
+        ("get_paper_task", {"task_id": "pt_1"}, "GET", "/api/paper-trading/tasks/{param}"),
+        ("get_paper_history", {"task_id": "pt_1", "type": "fills", "limit": 50},
+         "GET", "/api/paper-trading/tasks/{param}/fills"),
+        ("get_paper_report", {"task_id": "pt_1"}, "GET", "/api/paper-trading/tasks/{param}/report"),
+        ("query_paper_signals", {"task_id": "pt_1"}, "GET", "/api/paper-trading/tasks/{param}/signals"),
         ("run_analysis", {"template": "condition_stats", "params": {},
                           "symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2024-01-01", "end": "2024-02-01",
@@ -309,34 +234,6 @@ class TestToolBodyInvocation:
                               "reductions": ["latest"], "start": "2024-01-01",
                               "end": "2024-02-01"},
          "POST", "/api/research/query-indicator"),
-        ("register_hypothesis", {"when_conditions": [{"subject": "close", "action": "gt", "target": 0}],
-                                 "then_conditions": [{"subject": "close", "action": "gt", "target": -1}],
-                                 "statement": "s",
-                                 "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
-                                                  "start": "2024-01-01", "end": "2024-02-01"}],
-                                 "provenance": {"task_id": "ant_1",
-                                                "candidate_fingerprint": "fp"},
-                                 "strategy_params": {"stop_loss": 0.05}},
-         "POST", "/api/research/hypotheses"),
-        ("transition_hypothesis", {"hypothesis_id": "hyp_1", "target_status": "refuted",
-                                   "evidence_ref": "rec_1"},
-         "POST", "/api/research/hypotheses/{param}/transition"),
-        ("run_isolated_validation", {"hypothesis_id": "hyp_1", "strategy_id": "st_1",
-                                     "symbol": "BTCUSDT", "timeframe": "4h",
-                                     "start": "2024-01-01", "end": "2024-02-01"},
-         "POST", "/api/research/validate-backtest"),
-        ("run_random_window_test", {"strategy_id": "st_1", "symbol": "BTCUSDT",
-                                    "timeframe": "4h", "data_start": "2024-01-01",
-                                    "data_end": "2024-03-01",
-                                    "hypothesis_id": "h1"},
-         "POST", "/api/research/random-window-test"),
-        ("run_staged_validation", {"strategy_id": "st_1", "symbol": "BTCUSDT",
-                                   "timeframe": "4h", "start": "2024-01-01",
-                                   "end": "2024-02-01",
-                                   "segments": [{"label": "a", "start": "2024-01-01",
-                                                 "end": "2024-02-01"}],
-                                   "hypothesis_id": "h1"},
-         "POST", "/api/research/staged-validation"),
         ("run_backtest", {"strategy_id": "st_1", "symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2024-01-01", "end": "2024-02-01",
                           "hypothesis_id": "h1"},
@@ -346,22 +243,16 @@ class TestToolBodyInvocation:
         ("register_model_plugin", {"name": "m", "features": ["close"],
                                    "data_start": "2024-01-01", "data_end": "2024-02-01"},
          "POST", "/api/research/plugins/model"),
-        ("translate_hypothesis_to_strategy", {"hypothesis_id": "hyp_1",
-                                              "strategy_symbol": "BTCUSDT",
-                                              "strategy_timeframe": "4h"},
-         "POST", "/api/research/translate/{param}"),
-        ("submit_feature_request", {"title": "t", "payload": {}},
-         "POST", "/api/research/feature-requests"),
-        ("trigger_evolution", {"config": {}}, "POST", "/api/evolution/tasks"),
-        ("poll_evolution_task", {"task_id": "evo_1"},
-         "POLL", "/api/evolution/tasks/{param}"),
+        ("mount_paper_task", {"strategy_id": "st_1"}, "POST", "/api/paper-trading/tasks"),
+        ("unmount_paper_task", {"task_id": "pt_1"},
+         "POST", "/api/paper-trading/tasks/{param}/stop"),
     ]
 
     # 全工具均安全的可选键（缺省轮剔除走 false 侧；hypothesis_id/
     # start/end/indicator/params 在部分工具必填，由专项用例覆盖）
     SAFE_OPTIONAL_KEYS = frozenset({
         "timeframes", "as_of", "status", "cursor", "reductions",
-        "provenance", "segments", "strategy_symbol", "strategy_timeframe",
+        "segments", "type", "offset",
     })
 
     def test_every_tool_invokes_expected_endpoint(self) -> None:
@@ -405,12 +296,6 @@ class TestToolBodyInvocation:
             "template": "condition_stats", "params": {},
             "symbol": "BTCUSDT", "timeframe": "4h",
             "start": "2024-01-01", "end": "2024-02-01"}))
-        run_async(mcp.call_tool("run_random_window_test", {
-            "strategy_id": "st_1", "symbol": "BTCUSDT", "timeframe": "4h",
-            "data_start": "2024-01-01", "data_end": "2024-03-01"}))
-        run_async(mcp.call_tool("run_staged_validation", {
-            "strategy_id": "st_1", "symbol": "BTCUSDT", "timeframe": "4h",
-            "start": "2024-01-01", "end": "2024-02-01"}))
         run_async(mcp.call_tool("inspect_cases", {
             "symbol": "BTCUSDT", "timeframe": "4h",
             "selector": {"condition": {"subject": "close", "action": "gt",
@@ -418,7 +303,7 @@ class TestToolBodyInvocation:
         run_async(mcp.call_tool("query_indicator", {
             "symbol": "BTCUSDT", "timeframe": "4h", "indicator": "RSI"}))
         run_async(mcp.call_tool("get_research_log", {"page": 1}))
-        assert len(posts) == 6, "六个 POST 可选场合缺省调用均到达"
+        assert len(posts) == 4, "四个 POST 可选场合缺省调用均到达"
 
     def test_query_indicator_body_passthrough_card06(self) -> None:
         """CARD-06：query_indicator body 组装——单组字段无条件透传。
@@ -576,7 +461,7 @@ class TestServerEntryGaps:
         monkeypatch.setattr(httpx, "Client", _spy_client)
         try:
             api = QuantApiClient(base_url="http://x", profile="research")
-            api._request("GET", "/api/research/hypotheses", timeout=5.0)
+            api._request("GET", "/api/research/log", timeout=5.0)
         finally:
             monkeypatch.setattr(httpx, "Client", orig_client)
         assert captured["timeout"] == 5.0, "显式 timeout 不被缺省取档改写"
@@ -651,10 +536,11 @@ class TestCallSemantics:
         """写操作失败不自动重试（幂等性未知；失败语义原样返回）。"""
         base, db = live_api
         api = QuantApiClient(base_url=base, profile="research")
-        # 非法 payload（结构化条件缺失）→ 422 pydantic 校验失败（无工程码）
+        # 非法 payload（模板必填键缺失）→ 422 pydantic 校验失败（无工程码）
         # → 降级 API_INTERNAL_ERROR 形式（detail 保留原始校验信息）
+        # （hypotheses POST 已退役——retire-legacy 任务 9，换 analysis 载体）
         with pytest.raises(ApiError) as ei:
-            api.post("/api/research/hypotheses", {"bad": 1})
+            api.post("/api/research/analysis", {"bad": 1})
         assert ei.value.status == 422
         assert ei.value.code == "API_INTERNAL_ERROR"
         # 仅一次 POST，无重试

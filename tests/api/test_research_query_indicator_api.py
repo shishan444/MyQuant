@@ -186,7 +186,7 @@ class TestNonResearchErrorPassthrough:
     def test_research_error_channel_unchanged(self, api_client, q_env, monkeypatch):
         """对照组：ResearchError 仍走结构化 422（收窄未放跑正主）。"""
         from core.analysis import indicator_query as iq
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
 
         def _re(*args, **kwargs):
             raise ResearchError("RESEARCH_PARAM_INVALID", "测试注入")

@@ -16,9 +16,10 @@ from sqlalchemy import Connection, select
 
 from core.persistence.orm.models import PtTask, Strategy, ValidationRecord
 
-# 必填 evidence 的 trigger 集（credential/qualify/task_end/refute）
+# 必填 evidence 的 trigger 集（credential/task_end/refute——qualify 已
+# 随晋级链退役，retire-legacy-subsystems 任务 4.2）
 EVIDENCE_REQUIRED_TRIGGERS: frozenset = frozenset({
-    "credential", "qualify", "task_end", "refute"})
+    "credential", "task_end", "refute"})
 
 # task_end 凭证必填键（task_id+终态）
 _TASK_END_REQUIRED_KEYS: Tuple[str, ...] = ("task_id", "final_status")

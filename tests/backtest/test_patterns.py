@@ -6,7 +6,7 @@ pytestmark = [pytest.mark.unit]
 import numpy as np
 import pandas as pd
 
-from core.validation.patterns import (
+from core.analysis.patterns import (
     detect_divergence_top,
     detect_divergence_bottom,
     detect_consecutive_up,

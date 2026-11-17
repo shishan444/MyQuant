@@ -15,7 +15,7 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.counter_profile import (
     _cohens_d, counter_profile, feature_matrix_names)
 from core.features.indicators import _compute_indicator

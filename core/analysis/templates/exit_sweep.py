@@ -37,7 +37,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.result import build_result
 
 # 组数异步阈值（6.6——资源参数可调：FAST_PATH_THRESHOLD_S=1.0s ÷ 保守

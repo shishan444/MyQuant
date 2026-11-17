@@ -109,12 +109,6 @@ class TestPolicyShapeRejection:
         assert got.json()["dna"]["entry_trigger_policy"] == \
             {"mode": "suppress_bars", "bars": 48}
 
-    def test_evolution_initial_dna_非法策略_422(self, api_client) -> None:
-        resp = api_client.post("/api/evolution/tasks", json={
-            "symbol": "BTCUSDT", "timeframe": "4h",
-            "initial_dna": _BAD_POLICY_DNA})
-        assert resp.status_code == 422, resp.text
-        assert resp.json()["detail"]["code"] == "RESEARCH_PARAM_INVALID"
 
 
 class TestPolicyNormalizationWriteback:

@@ -17,7 +17,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 import core.analysis.backtest_bridge as bb
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.isolation import judged_ranges_union
 from core.analysis.templates.exit_sweep import exit_sweep
 from core.persistence.db_ext import init_db_ext
@@ -850,14 +850,14 @@ class TestCapabilityDomainAndLog:
     def test_log_entry_not_in_judged_union(self, api_client):
         """留痕不进并集：成功执行后 judged_ranges_union 不含扫描区间；
         entry_type=exit_sweep、hypothesis_id 空、summary 四键。"""
-        from core.analysis.hypothesis_service import register_hypothesis
-        hyp = register_hypothesis(
+        from tests.helpers.vr_factory import insert_hypothesis
+        hyp = insert_hypothesis(
             self.db,
             conditions={"when_conditions": [_COND],
                         "then_conditions": [dict(_COND)]},
             statement="s",
             data_ranges=[dict(RNG_DEF)],
-            strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+            strategy_params={"stop_loss": 0.05})
         api_client.app.state.db_path = self.db
         api_client.app.state.data_dir = self.d
         resp = api_client.post("/api/research/analysis", json={
