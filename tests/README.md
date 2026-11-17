@@ -1,5 +1,10 @@
 # MyQuant 测试地图
 
+> 【退役同步 2026-11-16（retire-legacy-subsystems）】旧验证编排（isolated/random/staged）、
+> 假设强制流程（登记/迁移/翻译端点）、进化/实盘/预测/场景规则/批跑/单回测对比/需求单/静态分池
+> 域已退役，相关守护行已删或改指；验证记录唯一生产通道=run_sandbox_backtest（K1：新记录三明细
+> 原子落库）；MCP 注册面 42→22。历史细节见 openspec/changes/retire-legacy-subsystems/。
+
 `ai-rules/python/TESTING_V3.md` 蓝图载体（0.4.1 起 V2→V3）：测试需求 → 所属能力 → 证据与测试位置 →
 未覆盖或未验证范围，四向可追溯。维护义务：研究域每个版本交付新能力时同步登记
 对应行；共享机制消费关系变化时更新守护清单（`research-test-evidence` spec 约束）。
@@ -25,12 +30,9 @@
 | 能力 | 验证责任摘要 | 证据位置 | 缺口 |
 |---|---|---|---|
 | condition_stats 前向收益语义（0.2.1） | 前向收益=信号后 N 根；same_bar_return 改名诊断；去重叠 p 值；尾部丢弃声明；手算锚定 | `analysis/templates/test_condition_stats.py` | — |
-| 前向收益跨引擎互证（0.2.1） | 模板 vs 假设验证引擎 change_pct 逐点/均值/触发点/尾部四线一致 | `analysis/test_cross_engine_parity.py` | — |
 | warmup 路由透传（0.2.1） | 前扩加载、422 结构化拒绝、forward_bars 合法透传 | `api/test_analysis_warmup_route.py` | — |
-| 插件列翻译（0.2.2） | 插件列作策略信号源：翻译产物、操作符映射、拒绝族、基因签名覆盖 | `analysis/test_plugin_translation.py` | — |
 | 基准对照数值（0.2.3） | benchmark_return / excess_return 已知序列手工对照；缺失/过短 None | `scoring/test_metrics.py` | — |
-| 验证档案基准透出（0.2.3） | 隔离验证指标五键提取、恒开自洽（excess = total − benchmark） | `analysis/test_validation_execution.py` | — |
-| 回测响应基准透出（0.2.3） | BacktestResponse 基准五键 | `api/test_api.py` | — |
+| sandbox 指标透出（0.2.3·K1 后） | sandbox 响应/记录 result_json 指标五键恒开自洽 | `analysis/test_sandbox_backtest.py` | — |
 | 前端策略vs买入持有对照区（0.2.3） | BacktestMetricsPanel 对照区呈现 | — | **验证受限**：需前后端服务+浏览器，随 e2e 批次承接 |
 
 ## 二区 · 能发现（0.2.4-0.2.5）
@@ -56,8 +58,6 @@
 | 行情分段核心（0.2.7） | 切段正确（两段构造类型与意图一致）、分位双实现互钉（向量化 vs 快照单点）、高波动覆盖优先、快照同源、确定性、短段吸收与上限合并守恒、gates 披露 | `analysis/test_regime_segments.py` | — |
 | 行情分段模板与路由（0.2.7） | auto/explicit、逐段统计与 condition_stats 独立复核一致（U3 warmup 前缀口径）、短段 insufficient、参数拒绝面、通用 analysis 留痕 | `analysis/templates/test_regime_split.py`、`api/test_research_regime_split_api.py` | — |
 | 案例抽查（0.2.8） | 取数正确性三断言（位置独立推导/口径独立对照/bar 守恒）、等距取样首尾保底、双路径有效域、留痕指纹、拒绝零副作用 | `analysis/test_case_inspection.py`、`api/test_research_inspect_cases_api.py` | — |
-| 分段验证（0.2.10） | 双模切段（auto 机械/explicit 四类非法+互斥）、段级门槛三态（pass/fail/insufficient——judge 前置预判锚：短段不误判 fail）、汇总与 verdict 三态、写入双路径（挂假设三件齐/adhoc 仅日志）、同区间幂等（isolated 同族——验证区间不入并集，实施期修正）、T1 跨工具互钉（explicit 单段 vs isolated 一致）、TEMA 验收锚（恒真 entry 确定性构造——最差段=震荡失效归因）、T5 字段映射（type→label） | `analysis/test_staged_validation.py`、`api/test_research_staged_validation_api.py` | — |
-| inconclusive 第三判定值（0.2.11） | 三段闸门五出口（样本不足/CI 跨零→inconclusive；序列缺失/长度不匹配→fail 工程错误；缺键→fail 零回归）、CI 数值锚（独立对照——统计表常数 t_{0.975,5}=2.5706 手拼公式，不用被测实现生成期望）、R3 组合 tighten 闸门线（n=5×tighten→inconclusive）、`_aggregate_verdicts` 最差聚合（fail>inconclusive>pass；空列表防御=inconclusive）、random_window/staged 汇总三态、staged None 特例退役（全段 inconclusive 落记录）、isolated 极短区间→inconclusive（规划验收①）、inconclusive 迁移 422（验收②·_REQUIRED_VERDICT 天然拒）、R5 零重判（幂等原样返回）、sandbox 四元组冒烟（trade_returns 不进响应）、分量证据收紧（D3 非 pass 不算数）、report 三档人话 | `analysis/test_thresholds.py`（judge 三段闸门+CI 锚+聚合）、`analysis/test_validation_execution.py`（isolated/random_window 三态）、`analysis/test_staged_validation.py`（段级/汇总/双路径/全段 inconclusive）、`analysis/test_draft_lifecycle.py`（状态机交互）、`scoring/test_metrics.py`（出口闸门 _safe_*）、`api/test_research_staged_validation_api.py`、`api/test_research_routes.py`（report 三档） | — |
 | DSL 白名单扩充（0.2.12） | 21 词白名单计数锚、crossover/crossunder 时序锚（先跌后涨分段序列恰穿越 bar 触发+首元素 NaN 不误触发）、max/min 逐元素与 rolling_max 不混同锚、R1 窗口校验双向锚（gt(a,0.5)/max(a,0) 放行 + rolling(0)/shift(-1) 仍拒）、R6 三态语法锚（logical_* 合法 / and(a,b) 语法错 / not(a) UnaryOp 拒）、_FIXED_LOOKBACK 推导（crossover=1/嵌套 ema 取 max）、NaN 保守锚（缺口列逻辑族不触发——_to_bool fillna 语义）、布尔三消费点一线穿（假设 gt 0.5→翻译→组装）、金叉验收锚全链（crossover(ema,ema) 注册→求值独立对照→引用→翻译→回测） | `signals/test_formula.py`（T1/T2）、`analysis/test_validation_assembly.py`（T3/T4） | — |
 | 指标读数（0.2.9） | pandas_ta/numpy 独立直算对照（latest/quantiles/slope/参数敏感性 38 vs 14）、warmup 段排除敏感构造（含冷启动差非零）、regime 四态分组 count、多余参数键拒绝（防内核静默忽略）、多输出列独立归约与 null 键保留（B 裁决）、体积 2048、零留痕（调用前后 log 计数不变）；cross_params 钩子同判（CARD-02：SessionRange 倒序/等值/字符串形拒绝＋float 归一单元锚＋EMA 无钩子零行为＋BoxChannel 面域校验路径零变化＋API 透传 422 钩子整组 detail 形制） | `analysis/test_indicator_query.py`、`api/test_research_query_indicator_api.py` | — |
 
@@ -74,25 +74,19 @@
 | threshold_grids（条件阈值刻度表，0.2.6 自 screen_patterns 私有常量提升） | `analysis/templates/test_screen_patterns.py`（搬家等价性——既有回归绿即证明）+ `analysis/templates/test_param_sweep.py`（auto 网格用例） | screen_patterns、param_sweep（两域网格同源，改动须回归两消费者） |
 | condition_kernel（掩码求值 mask_for + mask_for_all 组合交集，0.4.1 R2） | `analysis/test_condition_kernel.py`（S1：交集独立对照/内核自洽锚/高周期混合）+ `analysis/templates/` 既有测试（搬家等价性=回归绿） | screen_patterns、param_sweep、regime_split、inspect_cases、condition_stats、event_study、counter_profile（mask_for_all 三模板消费者——改动须回归全消费者） |
 | 行情判读规则（adx_state，0.2.7 自 market_snapshot 提升；快照与分段同一把尺） | `analysis/test_market_snapshot.py`（快照回归绿证提升零变化）+ `analysis/test_regime_segments.py`（同源与分位互钉） | market_snapshot、regime_segments/regime_split（0.2.10 分段考试预留） |
-| 逐段回测原语（run_backtest_on_range，0.4.1 S3 自 validation_service._run_backtest_on_range 提升至 backtest_bridge） | `analysis/test_validation_execution.py`（isolated 回归绿证零变化）+ `analysis/test_staged_validation.py`（T1 互钉）+ `analysis/templates/test_exit_sweep.py`（S3 搬家后四路径回归） | run_isolated_backtest、run_staged_validation、random_window、sandbox、exit_sweep（双消费方=validation_service 四路径+exit_sweep——改动须回归全消费者） |
-| build_signal_genes（S4 不落库纯翻译入口，0.4.1 自 translate_hypothesis 提取——timeframe 防线原形同点权威单源） | `analysis/test_draft_lifecycle.py`、`analysis/test_plugin_translation.py`（翻译链回归绿证零变化）+ `analysis/templates/test_exit_sweep.py`（timeframe 拒绝锚：field=when_conditions[i].timeframe 逐字） | translate_hypothesis、exit_sweep（两消费方同一防线同源同码——禁止第二套条件→信号基因逻辑） |
+| build_signal_genes（S4 纯翻译入口——宿主 translate_hypothesis 已退役，exit_sweep 为唯一生产消费方） | `analysis/templates/test_exit_sweep.py`（timeframe 拒绝锚） | exit_sweep（唯一消费方——禁止第二套条件→信号基因逻辑） |
 | ENGINE_SUPPORTED_SL_MODES（S5 引擎真实分派域常量，0.4.1） | `analysis/templates/test_exit_sweep.py`（S5 双向守护：pct/atr 双注入逐位一致→引擎不消费 sl_mode→atr 必在合法集外；0.4.2 扩分派后语义自动翻转——同步遗漏必红） | exit_sweep（消费面纪律：只 import 此常量、禁引声明域 SL_MODES）；0.4.2 扩展注记见其 tasks 3.2 增补行 |
 | 策略层参数约束常量（0.4.2 责任面矩阵：SL_MODES/分叉域 SL_PCT_*/SL_ATR_*/MAX_LEVERAGE 单源） | `strategy/test_param_domain_matrix.py`（B1-33 字段×责任面双向守护：✔ 格拒越界不放宽+裸 float 格不得拒不越权+leverage 三面一致+同值异判锚 1.5；八字段全矩阵含 validator 三字段联动上界） | dna.py SL_MODES、validator 分叉域与 MAX_LEVERAGE、api/schemas 三处 Field、hypothesis_service 声明块校验、exit_sweep 各档取域（第四消费方）——改值单点生效，逐格断言必红 |
-| validate_trading_compatibility（0.4.2 交易链兼容独立入口——与 validate_dna 严格分层；frontend-switch-and-retire 值域收敛 ("live",)） | `trading/test_trading_link_compatibility.py`（双判据×live 链矩阵+detail 危险形态+分层锚+值域收敛锚 replay/paper raises） | live 插桩点（live_trading/executor.py 与 api/routes/live_trading.py——装载即拒；判据扩容必配 pct 放行锚） |
 | order_func_nb 签名（0.4.2 增 sl_modes/atr_arr/exit_fractions/add_fractions/max_exposures） | `backtest/test_sl_modes.py`（三分派手工核算+batch 一致性）+`backtest/test_scaling_execution.py`（分批执行面）+`backtest/` 全量（pct 存量逐位特征网） | _build_portfolio 与 batch_run 两调用方同步装配（漏装=该列按缺省执行=与单路径静默分叉）；run/run_with_portfolio 经 _build_portfolio 零改动 |
 | _gates_verdict 双消费者（S6 连续门游程判定器，0.4.1 exit_sweep 直接复用——同包 import 零改动） | `analysis/templates/test_param_sweep.py`（存量回归：纯 import 零行为变化）+ `analysis/templates/test_exit_sweep.py`（四值+矩阵最差聚合+人工游程对照） | param_sweep、exit_sweep（第三消费者出现时再议符号提升——condition_kernel 演进先例） |
 | 指标现算内核（_compute_indicator，0.2.9 第五消费者 query_indicator；0.4.1 counter_profile 特征矩阵第六消费者） | `features/` 既有指标输出契约测试 + `analysis/test_indicator_query.py`（独立直算对照） | condition_kernel、case_inspection、模板族、indicator_query（改动须回归全消费者） |
-| 执行配置全量披露（research-execution-config-alignment 卡 A：risk_genes_disclosure 单一组装双消费——translate 四返回点+验证记录五组装点） | `analysis/test_translate_receipt.py`（A1 库内行回读同源/A2 新登记与存量双路径/A4 幂等回读/A5 边界两态/A7 钻石锚/active 分流披露/坏块 null/CARD-04 三态+差集恒等式性质）+`analysis/test_validation_disclosure.py`（A3 双消费点四面断言+adhoc null 两态+直建物化披露）+`api/test_schema_boundary_symmetry.py`（A9 双默认结构对照） | _risk_genes_disclosure 组装单点（hypothesis_to_strategy.py）——default_filled 三态语义（差集列表/无谱系 null/损坏 null）；改披露形制两文件必红 |
-| 止损显式声明强制（卡 D'/裁决一：登记面 stop_loss 必填——四态拒绝+存量 D6 界线） | `analysis/test_stop_loss_mandatory.py`（F1-F7 全锚：四态 422 参数化+legal_range 分叉+档位冒充反例+存量翻译照旧+重登记拦截+合法路径零变化）+`api/test_precheck_registration.py`（F 组路由级 422 两态——research_error_to_http 透传证据） | hypothesis_service 登记链 3.6 步唯一强制校验点（REST/MCP 同源）；translate 面「登记时拦、翻译不拦」分层——F5/A2 存量态为界线锚 |
 | POST 同签名幂等分流（卡 B：B8 500 病灶修复——200+duplicated 结构化幂等体） | `api/test_strategy_post_dedup.py`（D1 四键+零写入三分量对账/D2 未命中 201+draft 命中两用例/D3 错误通道分离）+`persistence/test_repository_strategy_ext.py`（E1 进化链三路径既有锚——save_strategy 本体零改动回归） | crud.py 预检分流+save_strategy 去重本体（改动须双文件回归）；「高分覆写透传」分支 POST 面不可达（StrategyCreate 无 best_score）——契约含糊在案 |
 | 回测资金费永续化（卡 C：时变费率×名义敞口×多空互付——三性质+连续折算+NaN 披露+口径差披露） | `backtest/test_funding_perpetual.py`（C0 两态/C2 gaps 两态 kind/C3 公式四向+方向单源结构断言/C4 引擎不二次归并/C5 退役+八周期迁移/C7 批量同源/C8 跨周期一致+五键/C9 三态+真实 parquet 对拍+8h+1ms 偏移 asof 锚+零费区⟺披露区恒等式+互斥律）+`backtest/test_funding_edge_cases.py`（13 条翻转/重写/保留映射——1x 计费/杠杆解耦/同名义敞口相等/比例折算/batch 对照）+`backtest/test_max_position_loss_exit.py`（旁路与事后层出场 bar 收敛对拍——卡 3.3 断言点） | _funding_rates_for 时序供给单点（engine.py）——费率数组唯一源；njit 段（_apply_funding_loop_nb/order_func_nb 费率段）tracer 不跟踪，行为级经 _apply_funding_costs 直调与旁路对拍锚覆盖 |
 | 止损三环境同构（裁决三：跨链触发一致性——pct 三链/atr+trail 回测纸盘放行 live 拒） | `paper_trading/test_controlled_equivalence.py`（G1 三档触发 bar 全等+触发价线值双断言）+`trading/test_trading_link_compatibility.py`（G2/G4 既有：矩阵参数化/reasons 结构化/装载即拒/全局校验不误伤）+`paper_trading/test_intents.py`（纸盘手算锚零改动回归） | 同构语义=固化既有代码事实非新增机制；spec「管线载入拒绝」场景名守恒但行为按代码现状收正（纸盘支持 trail） |
 | default_params_for（注册表默认参数，0.2.9 自 case_inspection 私有提升——0.2.8 预留边界兑现） | `analysis/test_case_inspection.py`（45 用例回归绿证提升零变化） | inspect_cases、indicator_query |
 | MCP 研究档工具清单锚（_expected_tools 单处常量，fix-hint-template-list 治理） | `mcpserver/test_server.py`、`mcpserver/test_stdio_l3.py`、`mcpserver/test_http_l3.py` 三处集合相等断言（缺/多明细直显） | 增减研究档工具只改常量一处；漏同步三测必红 |
-| evolution/validation 引擎特征网（0.3.7 H7 归位：目录/类名已去平行批次后缀） | `evolution/test_evolution_feature_net.py`、`validation/test_validation_feature_net.py`（规格契约锚——断言值真实执行钉住） | 两域主流程改动须回归（diversity/evaluation/mtf 装载/双引擎） |
+| 求值内核特征网（宿主已迁 core.analysis.condition_eval——retire-legacy D-1） | `validation/test_validation_feature_net.py`（求值原语面锚） | 求值内核与 patterns 改动须回归 |
 
-| judge 三段闸门消费者 | judge(metrics, profile, trade_returns) 三态出口——isolated(:381)/random_window(:474)/staged(:858) 三判定方 + sandbox(:554) 仅解包；改闸门顺序/闸门线须回归三消费方与 test_thresholds 五出口参数化 |
-| `_run_backtest_on_range` 四元组 | (metrics, trade_returns, warmup, bars)——trade_returns 是判定通道不落库；签名变更须同步四调用方解包（漏 sandbox 则元组错位 ValueError） |
 | `_aggregate_verdicts` 双消费方 | random_window 总判定与 staged 汇总唯一实现（fail>inconclusive>pass；空=inconclusive 防御）——改优先级两处同变 |
 | 公式白名单三表 | FORMULA_FUNCTIONS/_FORMULA_ARITY/_FIXED_LOOKBACK 同步扩充（21 词）——改词汇须三表齐动 + test_formula 计数锚；R1 窗口校验限定 `_WINDOW_PARAM_INDEX.get(fname)==1`（arity 笼统推定会误拒逐元素族常量第二参） |
 | `_to_bool` 逻辑族闸门 | logical_and/or/not 的 fillna(False) 前置——astype(bool) 会把 NaN 变 True；crossover/crossunder 的 `_shift1` 常量滞后不变（上穿阈值线合法） |

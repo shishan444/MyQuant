@@ -1,5 +1,9 @@
 # core/analysis 域文档（add-ai-research-mcp）
 
+> 【退役注记 2026-11-16（retire-legacy-subsystems）】本文为历史设计文档；文中 run_isolated_validation/
+> save_validation_with_log/save_hypothesis_with_log 等旧通道已随本 change 退役，现行权威见
+> openspec/specs/ 与各模块 docstring。
+
 > 域语义权威：设计卡（幂等/并发/事务用例深度）随代码演进；能力契约
 > （长期归档）在 openspec specs。两层互补不重复。
 
