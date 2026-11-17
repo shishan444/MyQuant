@@ -439,7 +439,7 @@ def _mask_base(work: pd.DataFrame, condition: Dict[str, Any]) -> pd.Series:
     _ensure_target_column(work, condition.get("target"), strict=True)
     eval_cond = dict(condition)
     eval_cond["subject"] = col   # subject 解析替换；其余键全量透传（D-r2）
-    from core.validation.engine import _evaluate_single_condition
+    from core.analysis.condition_eval import _evaluate_single_condition
     mask = _evaluate_single_condition(work, eval_cond)
     return mask.fillna(False).astype(bool)
 
@@ -547,7 +547,7 @@ def _mask_higher(
     _ensure_target_column(eval_df, condition.get("target"), strict=False)
     eval_cond = dict(condition)
     eval_cond["subject"] = col
-    from core.validation.engine import _evaluate_single_condition
+    from core.analysis.condition_eval import _evaluate_single_condition
     mask = _evaluate_single_condition(eval_df, eval_cond)
     mask = mask.fillna(False).astype(bool)
 

@@ -57,8 +57,8 @@ def _df(n: int = 400, seed: int = 61) -> pd.DataFrame:
 class TestT6ThreeFaceSync:
     def test_analysis_action_map_contains_key(self):
         """分析链动作分派表收录（legal_values 自动随键集单源）。"""
-        from core.validation import engine as val_engine
-        src = open(val_engine.__file__).read()
+        from core.analysis import condition_eval
+        src = open(condition_eval.__file__).read()
         assert '"within_bars_after"' in src
         # 分析链 inner 白名单不含 within_bars_after（嵌套防域）
         assert "within_bars_after" not in _LOOKBACK_INNER_ACTIONS

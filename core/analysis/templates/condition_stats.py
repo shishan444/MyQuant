@@ -111,7 +111,7 @@ def condition_stats(
     """
     from core.features.indicators import _compute_indicator
     from core.features.registry import INDICATOR_REGISTRY
-    from core.validation.engine import _evaluate_single_condition
+    from core.analysis.condition_eval import _evaluate_single_condition
 
     if (condition is None) == (conditions is None):
         raise ResearchError(

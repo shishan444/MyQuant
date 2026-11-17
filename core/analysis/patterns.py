@@ -1,6 +1,7 @@
-"""验证引擎的形态检测算法。
+"""形态检测算法（retire-legacy-subsystems D-1 自 core/validation/patterns.py
+整文件迁移——纯搬家，算法逐字节不变）。
 
-服务对象：validation.engine 的形态类动作分派（divergence/consecutive
+服务对象：condition_eval 的形态类动作分派（divergence/consecutive
 经 _resolve_pattern、touch_bounce/role_reversal 经 _resolve_snr_pattern）
 与 tests/backtest/test_patterns 直调。职责边界：纯向量形态判定
 （输入列 → 布尔掩码），不负责条件解析与列名兜底（归调用方）。
