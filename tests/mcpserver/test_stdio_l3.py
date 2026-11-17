@@ -90,8 +90,8 @@ def test_stdio_full_chain(live_api):
                 assert names == EXPECTED_RESEARCH_TOOLS, (
                     f"研究档工具集失联: 缺 "
                     f"{sorted(EXPECTED_RESEARCH_TOOLS - names)} / "
-                    f"多 {sorted(names - EXPECTED_RESEARCH_TOOLS)}")
-                assert "register_hypothesis" in names
+                    f"{sorted(names - EXPECTED_RESEARCH_TOOLS)}")
+                assert "register_formula_plugin" in names
                 assert "run_backtest" in names  # 沙盒统一流（旧验证/translate 系已退役）
 
                 # 2) 工具调用（真调用真服务）：指标元数据 45 项
@@ -102,21 +102,15 @@ def test_stdio_full_chain(live_api):
                 assert len(payload) == 55  # champion 五件入库后（2026-11-09）
                 assert payload[0]["name"]  # 元素结构完整
 
-                # 3) 写路径工具：登记假设（真落库）
-                reg = await session.call_tool("register_hypothesis", {
-                     "strategy_params": {"stop_loss": 0.05},
-                    "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
-                                         "target": 35}],
-                    "then_conditions": [{"subject": "close", "action": "gt",
-                                         "target": 0}],
-                    "statement": "stdio L3 验证",
-                    "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
-                                     "start": "2024-01-01T00:00:00Z",
-                                     "end": "2024-01-10T00:00:00Z"}],
+                # 3) 写路径工具：公式插件注册（真落库；原 register_
+                #    hypothesis 登记腿随 retire-legacy 任务 9 退役换绑）
+                reg = await session.call_tool("register_formula_plugin", {
+                    "name": "fx_stdio_l3_probe",
+                    "expression": "zscore(close, 20)",
                 })
                 reg_text = reg.content[0].text
                 reg_payload = json.loads(reg_text)
-                assert reg_payload["duplicated"] is False
+                assert reg_payload.get("name") == "fx_stdio_l3_probe"
 
                 # 4) resource 读取：能力自述四部分
                 caps = await session.read_resource("quant://capabilities")

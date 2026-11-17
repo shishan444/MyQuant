@@ -5,33 +5,66 @@ GAP-02 处置=验证性任务：team-lead 持有 2026-10-15 MCP 层实测矛盾
 （REST log.py:37-38 clamp 数学恒等、工具恒发 page 键）矛盾——本三层
 断言定位真实机制。
 
+种子链（retire-legacy 任务 9 换绑）：日志种子原经假设登记落 register
+日志，hypotheses POST 端点退役后换 run_analysis 分析调用落 analysis
+日志——三层断言语义（page=1≡无参）与种子来源无关。
+
 **升级路径（任一断言复现即触发）**：page=1 与无参响应不相等时，
 说明分页链路存在状态依赖或参数处理分支——升级行为修改任务并走
 变更传播（openspec-update-change），不得在本测试内静默放宽断言。
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from conftest import _FakeMcp  # 同目录（pytest prepend）
+from conftest import _FakeMcp  # 同目录（pytest prepend)
 
-_CONDITIONS = {
-    "when_conditions": [{"subject": "close", "action": "gt", "target": 0}],
-    "then_conditions": [{"subject": "close", "action": "gt", "target": -1}],
+
+@pytest.fixture
+def tmp_data_dir(tmp_path: Path) -> Path:
+    """400 根 BTCUSDT_4h（覆盖根 conftest 1 根形——analysis 种子需
+    RSI(14) warmup 200 根让位后仍余 ~150 根样本 ≥ min_samples 30）。"""
+    import numpy as np
+    import pandas as pd
+
+    n = 400
+    idx = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC",
+                        name="timestamp")
+    rng = np.random.default_rng(7)
+    close = 60000 + np.cumsum(rng.normal(0, 100, n))
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    pd.DataFrame({"open": close, "high": close + 50, "low": close - 50,
+                  "close": close, "volume": rng.uniform(100, 800, n),
+                  "trades": 10},
+                 index=idx).to_parquet(data_dir / "BTCUSDT_4h.parquet")
+    return data_dir
+
+
+_ANALYSIS_BODY = {
+    "template": "condition_stats",
+    "params": {"indicator": "RSI", "params": {"period": 14},
+               "condition": {"subject": {"indicator": "RSI",
+                                         "params": {"period": 14}},
+                             "action": "lt", "target": 40}},
+    "data_range": {"symbol": "BTCUSDT", "timeframe": "4h",
+                   "start": "2024-02-05T00:00:00Z",
+                   "end": "2024-03-01T00:00:00Z"},
 }
 
 
 def _seed_logs(client, n: int = 3):
-    """造 n 条研究日志（经假设登记落 register 日志）。"""
+    """造 n 条研究日志（经 run_analysis 落 analysis 日志——start 逐条
+    错开防同参去重；假设登记种子腿随任务 9 退役换绑）。"""
     for i in range(n):
-        resp = client.post("/api/research/hypotheses", json={
-            "conditions": _CONDITIONS, "statement": f"page 校验 {i}",
-            "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
-                             "start": f"2024-01-0{i + 1}T00:00:00Z",
-                             "end": "2024-03-01T00:00:00Z"}],
-            "strategy_params": {"stop_loss": 0.05}})
+        body = {**_ANALYSIS_BODY, "data_range": {
+            **_ANALYSIS_BODY["data_range"],
+            "start": f"2024-02-0{5 + i}T00:00:00Z"}}
+        resp = client.post("/api/research/analysis", json=body)
         assert resp.status_code == 200, resp.text
 
 
@@ -79,35 +112,27 @@ class TestPageOneParityRest:
         import httpx
         import threading
         from api.app import create_app
-        from api.runner import EvolutionRunner
         from core.paper_trading.runtime.scheduler import PaperScheduler
 
         # 测试独立性隔离（design v2.4 形制，零生产代码）：本测试仅测
         # REST 分页对拍（两路由 Depends→repository 依赖链），与被测面
-        # 无关的后台组件不启动。类级 setattr 遮蔽基类方法——
-        # EvolutionRunner 无 start/join override（走 threading.Thread
-        # 原生），join 必须同 patch：start no-op 后未启动线程在 lifespan
-        # 关停段（api/app.py runner.join(timeout=5.0)）join 抛
-        # RuntimeError 经 __aexit__ 传播致 error；PaperScheduler 自定义
-        # join 有 _thread None 守卫，仅 patch start 即安全。不隔离面：
-        # startup_recover/recover_stale_tasks/restart_crashed_tasks 为
-        # lifespan 同步调用先于 POST；executor watchdog 写库面=
-        # analysis_tasks 超时回写（空库无在途任务不触发）；
-        # realtime.capture_loop 无写库通道（V-2a 核验）。
-        monkeypatch.setattr(EvolutionRunner, "start", lambda self: None)
-        monkeypatch.setattr(
-            EvolutionRunner, "join",
-            lambda self, timeout=None: None)
+        # 无关的后台组件不启动。EvolutionRunner 隔离 patch 随进化域
+        # 退役（api.runner 已删——retire-legacy B1）移除；PaperScheduler
+        # 自定义 join 有 _thread None 守卫，仅 patch start 即安全。
+        # 不隔离面：startup_recover/recover_stale_tasks/
+        # restart_crashed_tasks 为 lifespan 同步调用先于 POST；
+        # executor watchdog 写库面=analysis_tasks 超时回写（空库无在途
+        # 任务不触发）；realtime.capture_loop 无写库通道（V-2a 核验）。
         monkeypatch.setattr(PaperScheduler, "start", lambda self: None)
 
         app = create_app(db_path=db_path, data_dir=tmp_data_dir)
 
         # 隔离生效自证的基线：进入 lifespan 前的线程名集合——断言面
-        # 是差集（lifespan 窗口内**新增**线程不含两名），非全局清单
-        # 绝对不含：前序测试泄漏的 evolution-runner（TD-③ 在册不修）
-        # 在全量态恒在进程清单，全局措辞会使断言在全量态恒红；差集
-        # 精确锚「s4b 自身 lifespan 未启动 runner/scheduler」——patch
-        # 若不被实际调用，lifespan 会新增同名线程，差集即红。
+        # 是差集（lifespan 窗口内**新增**线程不含 scheduler），非全局
+        # 清单绝对不含：前序测试泄漏的线程在全量态恒在进程清单，全局
+        # 措辞会使断言在全量态恒红；差集精确锚「s4b 自身 lifespan 未
+        # 启动 scheduler」——patch 若不被实际调用，lifespan 会新增同名
+        # 线程，差集即红。
         names_before_lifespan = {t.name for t in threading.enumerate()}
 
         async def _run():
@@ -119,14 +144,11 @@ class TestPageOneParityRest:
                         transport=httpx.ASGITransport(app=app),
                         base_url="http://127.0.0.1:8000") as client:
                 for i in range(3):
-                    resp = await client.post("/api/research/hypotheses", json={
-                        "conditions": _CONDITIONS,
-                        "statement": f"page 校验 {i}",
-                        "data_ranges": [{"symbol": "BTCUSDT",
-                                         "timeframe": "4h",
-                                         "start": f"2024-01-0{i + 1}T00:00:00Z",
-                                         "end": "2024-03-01T00:00:00Z"}],
-                        "strategy_params": {"stop_loss": 0.05}})
+                    body = {**_ANALYSIS_BODY, "data_range": {
+                        **_ANALYSIS_BODY["data_range"],
+                        "start": f"2024-02-0{5 + i}T00:00:00Z"}}
+                    resp = await client.post(
+                        "/api/research/analysis", json=body)
                     assert resp.status_code == 200, resp.text
                 with_page = (await client.get(
                     "/api/research/log", params={"page": 1})).json()
@@ -136,10 +158,6 @@ class TestPageOneParityRest:
 
         with_page, without, names_during_lifespan = asyncio.run(_run())
         new_threads = set(names_during_lifespan) - names_before_lifespan
-        assert "evolution-runner" not in new_threads, (
-            "隔离未生效：s4b 自身 lifespan 新增了 evolution-runner 线程"
-            f"（假隔离——patch 方法未被 lifespan 实际调用）:"
-            f" 新增={sorted(new_threads)}")
         assert "paper-scheduler" not in new_threads, (
             "隔离未生效：s4b 自身 lifespan 新增了 paper-scheduler 线程"
             f"（假隔离——patch 方法未被 lifespan 实际调用）:"
@@ -204,15 +222,21 @@ class TestPageOneParityFastmcpLive:
 
         db = tmp_path_factory.mktemp("parity_mcp") / "quant.db"
         data_dir = tmp_path_factory.mktemp("parity_mcp_data")
-        # 登记面校验 symbol 数据在场——造最小 BTCUSDT_4h parquet
-        # （同 tests/conftest.py tmp_data_dir 形制）
+        # analysis 种子链需足量数据（RSI(14) warmup 200 让位后余样本
+        # ≥30——原 1 根最小形随种子换绑加厚，同文件 tmp_data_dir 形制）
+        import numpy as np
         import pandas as pd
 
+        n = 400
+        idx = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC",
+                            name="timestamp")
+        rng = np.random.default_rng(7)
+        close = 60000 + np.cumsum(rng.normal(0, 100, n))
         pd.DataFrame(
-            {"open": [60000], "high": [61000], "low": [59000],
-             "close": [60500], "volume": [100]},
-            index=pd.DatetimeIndex(["2024-01-01"], name="timestamp"),
-        ).to_parquet(data_dir / "BTCUSDT_4h.parquet")
+            {"open": close, "high": close + 50, "low": close - 50,
+             "close": close, "volume": rng.uniform(100, 800, n),
+             "trades": 10},
+            index=idx).to_parquet(data_dir / "BTCUSDT_4h.parquet")
         app = create_app(db_path=db, data_dir=data_dir)
         server = uvicorn.Server(uvicorn.Config(
             app, host="127.0.0.1", port=0, log_level="error"))
@@ -236,15 +260,13 @@ class TestPageOneParityFastmcpLive:
         from mcpserver.server import build_server
         from tests.mcpserver.test_contract_parity import run_async
 
-        # 造 3 条研究日志（经真实 HTTP 登记面）
+        # 造 3 条研究日志（经真实 HTTP run_analysis 种子链）
         for i in range(3):
-            resp = httpx.post(f"{live_server}/api/research/hypotheses", json={
-                "conditions": _CONDITIONS,
-                "statement": f"MCP page 校验 {i}",
-                "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
-                                 "start": f"2024-01-0{i + 1}T00:00:00Z",
-                                 "end": "2024-03-01T00:00:00Z"}],
-                "strategy_params": {"stop_loss": 0.05}})
+            body = {**_ANALYSIS_BODY, "data_range": {
+                **_ANALYSIS_BODY["data_range"],
+                "start": f"2024-02-0{5 + i}T00:00:00Z"}}
+            resp = httpx.post(f"{live_server}/api/research/analysis",
+                              json=body)
             assert resp.status_code == 200, resp.text
 
         mcp, _ = build_server(profile="readonly", base_url=live_server)

@@ -120,19 +120,14 @@ def test_http_transport_full_chain(mcp_http_server):
                 payload = [json.loads(c.text) for c in res.content]
                 assert len(payload) == 55  # champion 五件入库后（2026-11-09） 47→45（2026-10-14）
 
-                reg = await session.call_tool("register_hypothesis", {
-                     "strategy_params": {"stop_loss": 0.05},
-                    "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt",
-                                         "target": 35}],
-                    "then_conditions": [{"subject": "close", "action": "gt",
-                                         "target": 0}],
-                    "statement": "http L3 验证",
-                    "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
-                                     "start": "2024-01-01T00:00:00Z",
-                                     "end": "2024-01-10T00:00:00Z"}],
+                # 写路径：公式插件注册（真落库；原 register_hypothesis
+                # 登记腿随 retire-legacy 任务 9 退役换绑）
+                reg = await session.call_tool("register_formula_plugin", {
+                    "name": "fx_http_l3_probe",
+                    "expression": "zscore(close, 20)",
                 })
                 reg_payload = json.loads(reg.content[0].text)
-                assert reg_payload["duplicated"] is False
+                assert reg_payload.get("name") == "fx_http_l3_probe"
 
                 caps = await session.read_resource("quant://capabilities")
                 text = caps.contents[0].text
