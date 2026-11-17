@@ -88,7 +88,44 @@ def backtest_replay(
         status = 404 if exc.code == "STRATEGY_NOT_FOUND" else 422
         raise ResearchError(
             exc.code, str(exc), status=status, detail=exc.detail) from exc
+    # level=replay 记录写入（add-replay-backtest-mcp 任务 3.1）：与
+    # sandbox 同构（hypothesis_id 缺省 adhoc、verdict 恒空串不参与
+    # 三态；range_hash 掺参数全集+record_id——每次执行恒新）；fail-
+    # loud（写失败整体报错，禁止记录缺而指标照常返回）
+    import hashlib
+    import json as _json
+    import uuid as _uuid
+
+    from core.persistence.repository import research as rr
+
+    record_id = f"rec_{_uuid.uuid4().hex[:12]}"
+    record_params: Dict[str, Any] = {
+        "symbol": result.symbol, "timeframe": result.timeframe,
+        "start": result.start, "end": result.end,
+        "fee": payload.fee, "slippage": payload.slippage,
+        "init_cash": payload.initial_cash, "leverage": payload.leverage}
+    rr.save_sandbox_validation_record(
+        db_path,
+        record_id=record_id,
+        hypothesis_id="adhoc",
+        strategy_id=result.strategy_id,
+        params=_json.dumps(record_params, ensure_ascii=False),
+        result=_json.dumps({
+            "replay": {
+                "task_id": result.task_id, "status": result.status,
+                "stop_reason": result.stop_reason,
+                "bars_processed": result.bars_processed,
+                "total_trades": result.total_trades,
+                "total_pnl": result.total_pnl,
+                "final_balance": result.final_balance,
+                "final_equity": result.final_equity}},
+            ensure_ascii=False),
+        range_hash=hashlib.sha256(_json.dumps(
+            {**record_params, "record_id": record_id},
+            sort_keys=True).encode()).hexdigest(),
+        level="replay")
     return {
+        "record_id": record_id,
         "task_id": result.task_id,
         "strategy_id": result.strategy_id,
         "symbol": result.symbol, "timeframe": result.timeframe,

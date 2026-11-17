@@ -55,6 +55,18 @@ class TestBacktestReplayEndpoint:
         assert body["bars_processed"] > 0
         assert body["symbol"] == "BTCUSDT"
         assert "total_pnl" in body and "final_balance" in body
+        # level=replay 记录写入（任务 3.1）：record_id 回显+表内可查
+        assert body["record_id"].startswith("rec_")
+        from core.persistence.repository import research as rr
+
+        rec = rr.get_validation_record_by_id(
+            replay_env["db"], body["record_id"])
+        assert rec["level"] == "replay"
+        assert rec["verdict"] == ""  # 不参与三态
+        import json as _json
+
+        result_json = _json.loads(rec["result"])
+        assert result_json["replay"]["task_id"] == "api-replay-01"
 
     def test_strategy_not_found_structured_4xx(self, replay_env):
         idx = replay_env["df"].index
