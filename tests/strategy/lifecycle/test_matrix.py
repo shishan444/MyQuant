@@ -1,11 +1,12 @@
 """矩阵边逐边行为测试（build-strategy-lifecycle 4.2，族 B1/B2/B6/B7）。
 
-合法 (from,to) 11 边各至少一正向用例（B1，用例表与 TRANSITION_MATRIX
-互锁——计数锚联动）；36 全网格三组封闭参数化（合法 11 迁移/异态非法
-19→409/同态 6→200 not_migrated）；计数锚五联动；paper→active 多任务
-守卫（fixture 两活跃任务场景）；预留三边接口级可调+凭证占位断言
-（真实性校验归后续 change 不虚标）；自动触发边真实链路（3.1 研究链
-转正/3.2 证伪/3.3 DELETE 归档/3.4 revalidate）。
+合法 (from,to) 8 边各至少一正向用例（B1，用例表与 TRANSITION_MATRIX
+互锁——计数锚联动）；36 全网格三组封闭参数化（合法 8 迁移/异态非法
+22→409/同态 6→200 not_migrated）；计数锚五联动；paper→active 多任务
+守卫（fixture 两活跃任务场景）；休眠态负向锚（晋级三边 409+存量
+candidate 行 manual_archive 放行——retire-legacy Q2=A 瘦身）；自动
+触发边真实链路（3.1 研究链转正/3.2 证伪/3.3 DELETE 归档/3.4
+revalidate）。
 
 先行窗中间态声明：active→paper/paper→active 生产触发方（挂盘端点/
 任务终态回调）延后窗接入——本文件经接口级注入触发（trigger 直调
@@ -49,9 +50,6 @@ _LEGAL_EDGE_TABLE = [
     ("active", "paper", "mount", {"task_id": "tk_m"}),
     ("paper", "active", "task_end",
      {"task_id": "tk_m2", "final_status": "completed"}),
-    ("paper", "candidate", "qualify", {"criterion": "placeholder"}),
-    ("candidate", "live", "manual_promote", None),
-    ("live", "archived", "retire", None),
     ("archived", "draft", "revalidate", None),
     ("draft", "archived", "manual_archive", None),
     ("active", "archived", "manual_archive", None),
@@ -180,24 +178,24 @@ class TestFullGrid36Closed:
 
 
 class TestCountAnchorsFiveWay:
-    """计数锚五联动：len==11/B1==11/B2 非法==19/同态==6/网格==36
-    ==11+19+6——常量与用例表谁错改谁。"""
+    """计数锚五联动：len==8/B1==8/B2 非法==22/同态==6/网格==36
+    ==8+22+6——常量与用例表谁错改谁（Q2=A 瘦身后形制）。"""
 
     def test_five_way_anchor(self):
         grid = {(f, t) for f in STRATEGY_STATUSES for t in STRATEGY_STATUSES}
         same = {(s, s) for s in STRATEGY_STATUSES}
         illegal = grid - TRANSITION_MATRIX - same
         table_edges = {(f, t) for f, t, _, _ in _LEGAL_EDGE_TABLE}
-        # ①矩阵 len==11
-        assert len(TRANSITION_MATRIX) == 11
-        # ②B1 合法正向用例==11 且边集与矩阵互锁（漏边/多边/重复都红）
-        assert len(_LEGAL_EDGE_TABLE) == 11
+        # ①矩阵 len==8
+        assert len(TRANSITION_MATRIX) == 8
+        # ②B1 合法正向用例==8 且边集与矩阵互锁（漏边/多边/重复都红）
+        assert len(_LEGAL_EDGE_TABLE) == 8
         assert table_edges == TRANSITION_MATRIX
-        # ③B2 异态非法==19（30−11）
-        assert len(illegal) == 19
+        # ③B2 异态非法==22（30−8）
+        assert len(illegal) == 22
         # ④同态 not_migrated==6
         assert len(same) == 6
-        # ⑤网格==36==11+19+6 完整性
+        # ⑤网格==36==8+22+6 完整性
         assert len(grid) == 36
         assert len(grid) == (len(TRANSITION_MATRIX) + len(illegal)
                              + len(same))
@@ -232,46 +230,45 @@ class TestTaskEndGuard:
         assert _events(db, sid) == [("paper", "active", "task_end")]
 
 
-class TestReservedEdges:
-    """B6：预留三边接口级可调+凭证占位断言。
+class TestDormantStateAnchors:
+    """休眠态负向锚（retire-legacy Q2=A 瘦身，F4）：晋级三边拒绝+存量
+    candidate 行 manual_archive 放行+live 行无出边冻结。"""
 
-    凭证真实性校验归 build-qualification-criteria（qualify 凭证签发）
-    与 build-lineage-and-contracts（manual_promote 创建链）——先行窗
-    只定义接口，不虚标真实性（占位实证：任意非空载荷过=占位语义）。"""
+    def test_promotion_edges_rejected_409(self, db):
+        """晋级三边（paper→candidate/candidate→live/live→archived）
+        全部 409 STRATEGY_ILLEGAL_TRANSITION，事件零落表。"""
+        cases = [("paper", "candidate", "qualify"),
+                 ("candidate", "live", "manual_promote"),
+                 ("live", "archived", "retire")]
+        for i, (frm, to, trigger) in enumerate(cases):
+            sid = f"st_dorm_{i}"
+            _add(db, sid)
+            _set_status(db, sid, frm)
+            with pytest.raises(LifecycleError) as ei:
+                transit(db, sid, target=to, trigger=trigger,
+                        evidence={"anything": True} if trigger == "qualify" else None)
+            assert ei.value.status == 409, (frm, to, trigger)
+            assert ei.value.code == "STRATEGY_ILLEGAL_TRANSITION"
+            assert _events(db, sid) == []
 
-    def test_qualify_placeholder_credential_any_nonempty_dict(self, db):
-        """qualify 占位：任意非空 dict 过（真实性校验不在本 change——
-        占位语义如实断言，非虚标「已验真」）。"""
-        sid = "st_rv_q"
-        _add(db, sid)
-        _set_status(db, sid, "paper")
-        out = transit(db, sid, target="candidate", trigger="qualify",
-                      evidence={"anything": True})
-        assert out["migrated"] is True
-
-    def test_qualify_missing_evidence_422(self, db):
-        """占位不等于免凭证：必填 trigger 缺 evidence 仍 422。"""
-        sid = "st_rv_q2"
-        _add(db, sid)
-        _set_status(db, sid, "paper")
-        with pytest.raises(LifecycleError) as ei:
-            transit(db, sid, target="candidate", trigger="qualify")
-        assert ei.value.status == 422
-        assert ei.value.detail["missing"] == ["evidence"]
-
-    def test_manual_reserved_edges_callable_without_evidence(self, db):
-        """manual_promote/retire 人工边可空载荷接口级可调（凭证=后续
-        change 的创建链回执，先行窗接口定义）。"""
-        sid = "st_rv_m"
+    def test_dormant_candidate_manual_archive_allowed(self, db):
+        """存量 candidate 行（休眠态）经 manual_archive 可归档。"""
+        sid = "st_dorm_c"
         _add(db, sid)
         _set_status(db, sid, "candidate")
-        out = transit(db, sid, target="live", trigger="manual_promote")
+        out = transit(db, sid, target="archived",
+                      trigger="manual_archive")
         assert out["migrated"] is True
-        out2 = transit(db, sid, target="archived", trigger="retire")
-        assert out2["migrated"] is True
-        assert _events(db, sid) == [
-            ("candidate", "live", "manual_promote"),
-            ("live", "archived", "retire")]
+        assert _events(db, sid) == [("candidate", "archived", "manual_archive")]
+
+    def test_dormant_live_frozen_no_out_edge(self, db):
+        """存量 live 行冻结：无任何合法出边（归档亦拒）。"""
+        sid = "st_dorm_l"
+        _add(db, sid)
+        _set_status(db, sid, "live")
+        with pytest.raises(LifecycleError) as ei:
+            transit(db, sid, target="archived", trigger="manual_archive")
+        assert ei.value.status == 409
 
 
 class TestRealTriggerPaths:

@@ -51,7 +51,7 @@ def transit(
         strategy_id: 策略 ID。
         target: 目标态（六值）。
         trigger: 触发枚举（九值）。
-        evidence: 凭证载荷 dict（credential/qualify/task_end/refute
+        evidence: 凭证载荷 dict（credential/task_end/refute
             必填；manual 边可空）。
         conn: 可选外部连接——透传则迁移与事件写入外层事务（同事务
             复合能力），否则自开单事务。

@@ -123,9 +123,9 @@ class TestReportFourthKey:
         # 三态形制：NULL≠false≠true（对照重放不可执行→None）
         passed = section["trigger_consistency"]["passed"]
         assert passed is None or isinstance(passed, bool)
-        # 凭证签发段键集（解耦披露：attempted/migrated/not_migrated_reason）
-        assert set(section["transition"]) == {
-            "attempted", "migrated", "not_migrated_reason"}
+        # 凭证签发接线已拆除（retire-legacy Q2=A）：达标不迁移，段内
+        # 无 transition 键（防迁移通道静默复活）
+        assert "transition" not in section
 
     def test_running_report_guard_skips_replay(self, tmp_path: Path):
         """running 滚动报告终态守卫（CARD-05 行为锚）：跳过对照重放——
@@ -159,5 +159,4 @@ class TestReportFourthKey:
         assert isinstance(section["pnl_positive"], bool)  # 两维仍现算
         assert isinstance(section["trades_enough"], bool)
         assert section["qualified"] is False  # 宁缺勿滥
-        assert section["transition"] == {
-            "attempted": False, "migrated": False, "not_migrated_reason": None}
+        assert "transition" not in section  # 接线拆除：无 transition 键
