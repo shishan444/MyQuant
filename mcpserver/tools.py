@@ -299,7 +299,7 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
 
 
 def register_research_tools(mcp, api: QuantApiClient) -> None:
-    """研究执行档：分析/登记/迁移/隔离验证/随机窗口/进化触发与轮询。"""
+    """研究执行档：分析与轮询。"""
 
     @mcp.tool()
     @tool_safe
@@ -376,8 +376,7 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         {name, reason} 数组（reason 封闭枚举三值：no_default_params 无默认
         参数网格/compute_failed 计算无产出（异常时附 reason_detail 首个
         异常摘要，无异常时无此键）/no_covered_actions 无覆盖动作；含候选
-        指纹，登记引用时经
-        register_hypothesis.provenance 回链；组合候选（is_combination
+        指纹；组合候选（is_combination
         产物）经 precheck_hypothesis 获得组合复核——when 条件全集 AND
         语义整体求值）；候选条目携带 direction_hint 方向分类标注
         （包四 GAP-01——short=统计量均值为负的做空候选/long=均值为正
@@ -430,21 +429,19 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         （basis: trigger_density_upper_bound）——引擎空仓进场抑制未
         计入，单向偏大于实际成交笔数。事件策略层：event_study/
         condition_stats/precheck_hypothesis 的 params 可选
-        trigger_policy（条件集整体级，形制与 register_hypothesis.
-        trigger_policy 同构——三值封闭枚举 {none, first_true,
+        trigger_policy（条件集整体级，三值封闭枚举 {none, first_true,
         suppress_bars}）：携带时事件口径=合并掩码经权威变换后的事件流
         （n_events/sample_size/触发数与外推基数均切事件数，报告声明
         生效策略与 basis 切 event_density——事件数对事件数与统计链
         /api/validate 闭环对照；不携带=逐 bar 现状口径逐字节不变）。
         事件形制整理触发不创造触发：0 事件形态照常 reject_suggestion
         ——suppress_bars 的 bars 上界在求值时点按数据长度校验（超界
-        422 附 legal_range）。双锚口径：本模板锚=拟验证区间
-        预估笔数 projected_trades；register_hypothesis 登记自动挂接的
-        锚=分析段实际触发数 analysis_segment_trades（多区间取最小值）
-        ——两锚共用阈值与映射。预算口径与隔离回测 warmup.basis 同源
+        422 附 legal_range）。锚口径：本模板锚=拟验证区间
+        预估笔数 projected_trades（分析段实际触发数锚已随假设登记链
+        退役）。预算口径与沙盒回测（run_backtest）warmup.basis 同源
         同值（derive_warmup_full 两维式）；预算不足进报告不报错。预检
         不进判定并集（entry_type=precheck 不挂假设——预检过的区间仍可
-        用于隔离验证）。segment_narrative 区间事件摘要（0.4.1 R3，快
+        用于后续验证）。segment_narrative 区间事件摘要（0.4.1 R3，快
         路径）：无必填键；可选 params.indicators 点名事件源指标清单
         （任何在册指标——缺省走默认事件源=category∈{trend,momentum,
         pattern} 全指标 default 参数+轨道族 {BB,Keltner,Donchian}，机械
@@ -488,8 +485,7 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         （键归一，显式写基准周期不构成高周期过滤）、严格高于基准
         周期经掩码投影求值（与策略翻译链同款放行）、低于基准周期
         拒绝（TIMEFRAME_NOT_HIGHER）；不可表达形制仍显式拒绝不
-        静默降级（RESEARCH_NOT_EXPRESSIBLE，与 translate_
-        hypothesis 同一公共入口防线）；
+        静默降级（RESEARCH_NOT_EXPRESSIBLE 公共防线）；
         输出每组 {mode,stop_loss,take_profit,win_rate,profit_factor
         （亏损笔数 0→null）,net_expectation（含费滑）,max_drawdown,
         total_trades,status}+三道门整体判定（连续门直接复用
@@ -523,8 +519,9 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         ruler_compare 对照指标（add-evaluation-ruler，快路径——两种
         盈利模式的验收尺子）：params 必填 mode（wave|box）+
         trade_source（唯一合法形制 {"kind":"validation","record_id":
-        "rec_..."}——kind="backtest" 即 422 附「沙盒回测不落库逐笔
-        （防污染纪律）；对照指标请引用隔离验证记录 record_id」指引；
+        "rec_..."}——kind="backtest" 即 422 附「沙盒记录 params 形制
+        无单区间（request_range），不可作对照来源；对照指标请引用存量
+        隔离验证记录 record_id」指引；
         未知 kind/引用不存在 422 附合法形制；校验顺序=kind 拦截在
         前）。区间双级校验：验证记录区间与评估区间时间戳归一后须
         全值相等（不等 422 附两侧值，不静默截断）；逐笔 entry_time/
@@ -544,7 +541,7 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         500 bar 装载，复算对账以 ±1pp 门限承载该差异面。回望性契约：
         幂等可复算、不作策略条件输入、不烧判定并集。
         ab_compare A/B 对照（sandbox-and-report-supplement，快路径——
-        两组隔离验证记录的交易级对照）：params 必填 mode（固定"ab"）+
+        两组存量隔离验证记录的交易级对照）：params 必填 mode（固定"ab"）+
         trade_source_a/trade_source_b（各为唯一合法形制
         {"kind":"validation","record_id":"rec_..."}——kind="backtest"
         即 422 附防污染指引，同 ruler_compare；校验链经公共校验件
@@ -675,8 +672,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         （validation_records level=sandbox_backtest 行，verdict 恒空串
         不参与三态——快速试错留痕；响应回显 record_id，沙盒记录不可
         作 ruler/ab 对照源）。纪律：挂 hypothesis_id 时该区间计入
-        判定并集（此后同区间的隔离验证会被拒——先偷看不获利）；超 bar
-        上限被拒，走隔离验证。
+        判定并集（此后同区间的挂假设回测会被拒——先偷看不获利）；超
+        bar 上限被拒，分多次小区间重试。
         任务级封顶两参（可选）：leverage 整数 [1,3]／margin_cap
         (0,0.60]（硬约束封顶，越界 422 附 legal_range）；两参都传时
         本次回测名义敞口 ≤ 权益×margin_cap×有效杠杆（有效杠杆=
@@ -741,9 +738,6 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             "symbol": symbol, "timeframe": timeframe,
             "data_start": data_start, "data_end": data_end})
 
-    # ── 进化控制三工具（research-tooling-data-quality 卡 A：REST 既有
-    #    端点薄封装——错误码透传 404/409（stop/pause）/400（resume）──
-
     # ── 策略标注（卡 A R4：PUT 部分更新薄封装）──
 
     @mcp.tool()
@@ -766,11 +760,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         return api.put(
             f"/api/strategies/{quote(strategy_id, safe='')}", body)
 
-    # ── 批量删除（卡 D：常设管理通道——一次性数据清理由 change-2
-    #    任务 2.9 执行，本工具为按任务圈定的常态化管理面）──
-
     # ── 纸盘挂载两件（rebuild-paper-trading 5.3；研究执行档——资源
-    #    创建语义类比触发回测/进化任务，非触金） ──
+    #    创建语义类比触发回测，非触金） ──
 
     @mcp.tool()
     @tool_safe

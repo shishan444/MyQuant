@@ -17,11 +17,11 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
 
 ## 2. 验证协议要点（必须遵守，工具与端点强制执行，不依赖你自觉）
 - **隔离纪律**：验证类工具拒绝与「判定区间」重叠的请求。判定区间 =
-  假设登记时自报的 data_ranges ∪ 该假设全部研究日志记录的区间（并集）。
-  漏报没用——日志是系统自动记的。
+  存量假设的 data_ranges（登记时自报，现冻结只读）∪ 该假设全部研究
+  日志记录的区间（并集）。漏报没用——日志是系统自动记的。
 - **时间参数规约**：验证与分析的时间参数统一按 UTC 解释；未带时区的
   naive 时间（如 2024-01-01）按 UTC 处理。
-- **warmup 推导式**：隔离回测自动前扩预热 =
+- **warmup 推导式**：沙盒回测（run_backtest）自动前扩预热 =
   max(200, 跨指标取最大的(周期类参数注册表上限之和 × 3))——单指标
   按周期类参数上限求和(保守取向)；含插件列时取
   max(内置推导, plugin_columns_lookback)（series 档止损线来源同轨
@@ -30,7 +30,7 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   42 bar = 42 天，非 42 根基准 bar；下限 20 与主公式下限 200 分属
   两式）。结果会声明实际 warmup；数据起点不足时显式拒绝（错误
   detail 携带 warmup_bars 与 rule 全文）。
-- **事件策略层（trigger_policy）**：假设登记与分析模板（event_study/
+- **事件策略层（trigger_policy）**：分析模板（event_study/
   condition_stats/precheck_hypothesis）可选携带 trigger_policy——
   条件集整体级（修饰 when 全集 AND 合并掩码如何变换为事件流），
   三值封闭枚举 {none, first_true, suppress_bars}：none=缺省等价；
@@ -125,8 +125,9 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   扫退出参数网格（Σ≤50 组；模式合法集=回测引擎真实分派集引用式
   ——现值 {pct, atr, trail}，引擎扩分派后自动跟随；stops 值域
   pct 档 [0.005,0.20]、atr 档 [0.5, 5.0]（ATR 倍数），均与
-  validator 现役域同源），逐组独立回测（含费滑、与隔离验证同一执行链——
-  条件经翻译构造内存 DNA 不落库）输出五指标+三道门平台判定
+  validator 现役域同源），逐组独立回测（含费滑、与沙盒回测
+  （run_backtest）同一执行链——条件经翻译构造内存 DNA 不落库）输出
+  五指标+三道门平台判定
   （最差聚合全序 unsupported>spike>indeterminate>plateau，标尺内建
   不可传；单轴长度 1 恒不成平台属判定语义）；校验期整批 422/执行
   期单组容错（两期分野）；条件条目可携带 timeframe 键，语义
@@ -134,15 +135,15 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   周期不构成高周期过滤）、严格高于基准周期经掩码投影求值
   （与策略翻译链同款放行）、低于基准周期拒绝
   （TIMEFRAME_NOT_HIGHER）；不可表达形制仍显式拒绝不静默降级
-  （RESEARCH_NOT_EXPRESSIBLE，与 translate_hypothesis 同一公共
-  入口防线）；**本模板不挂假设**：留痕检查型不进
+  （RESEARCH_NOT_EXPRESSIBLE——不可表达形制统一经公共入口
+  防线拒绝）；**本模板不挂假设**：留痕检查型不进
   判定并集（检查不消耗验证区间）；组数 >10 走 202+轮询。
 - **纸盘挂载（rebuild-paper-trading 5.3）**：纸盘交易（实时行情虚拟
   资金前向验证）工具族六件——只读四件（list_paper_tasks 任务状态/
   get_paper_task 详情/get_paper_report 滚动与结题报告/get_paper_
   history 成交·权益·资金费历史）+挂载两件（mount_paper_task 上盘/
-  unmount_paper_task 撤盘，研究执行档——资源创建语义，与触发回测/
-  进化任务同档非触金）。挂载参数面与 REST 任务创建完全一致：仅
+  unmount_paper_task 撤盘，研究执行档——资源创建语义，与触发回测
+  同档非触金）。挂载参数面与 REST 任务创建完全一致：仅
   验证条件参数（初始资金/杠杆/费滑/品种/验证窗口/停止条件），
   **不含策略语义参数**（方向与执行周期以策略 DNA 为准不可覆写）；
   创建恒受理（并发满载时新任务排队不拒绝）；撤盘=停止语义
