@@ -137,6 +137,42 @@ class TestHintRegistry:
         missing = raised - HINTS.keys()
         assert not missing, f"注册表缺码（hint 不可行动）: {sorted(missing)}"
 
+    def test_registry_has_no_dead_codes(self) -> None:
+        """反向对拍（CARD-04 设计③）：注册表每键须有真实抛出点——
+        HINTS ⊆ raised，死键（键在册而无任何生产抛出路径）即红。
+
+        抛出形制四模式（与正向用例的三模式口径差异如实披露）：
+        ①ResearchError 字面量；②load_stored_json 的 code= 分派与
+        缺省形参；③HTTPException detail dict 的 "code": 键
+        （crud.py:275/validation_detail.py:43 形制——经 ApiError
+        解析通道透传 MCP 面）；④mcpserver 域 ApiError/error_payload
+        构造（客户端降级码与 tool_safe 分支）。盲区方向安全：新
+        抛出形式超出四模式会误报死键（红）逼同步模式，不漏绿。
+        """
+        raised: set[str] = set()
+        for src_dir in ("core", "api"):
+            for path in (REPO_ROOT / src_dir).rglob("*.py"):
+                text = path.read_text(encoding="utf-8")
+                raised.update(re.findall(
+                    r'ResearchError\(\s*"([A-Z_]+)"', text))
+                raised.update(re.findall(
+                    r'load_stored_json\([^)]*?code\s*=\s*"([A-Z_]+)"',
+                    text))
+                raised.update(re.findall(
+                    r'def\s+load_stored_json\([^)]*?'
+                    r'code:\s*str\s*=\s*"([A-Z_]+)"', text))
+                raised.update(re.findall(
+                    r'"code":\s*"([A-Z_]+)"', text))
+        for path in (REPO_ROOT / "mcpserver").glob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            raised.update(re.findall(
+                r'ApiError\(\s*[\w.]+,\s*"([A-Z_]+)"', text))
+            raised.update(re.findall(
+                r'error_payload\(\s*"([A-Z_]+)"', text))
+        assert raised, "扫描结果为空——源码路径或提取模式失效"
+        dead = sorted(HINTS.keys() - raised)
+        assert not dead, f"注册表死键（无生产抛出点）: {dead}"
+
     def test_mcp_layer_codes_registered(self) -> None:
         """MCP 客户端侧与降级码也须有 hint。"""
         for code in ("MCP_ENDPOINT_NOT_ALLOWED", "API_UNREACHABLE",
@@ -183,23 +219,23 @@ class TestToolSafeDecorator:
     def test_api_error_becomes_payload(self) -> None:
         @tool_safe
         def probe():
-            raise ApiError(409, "RESEARCH_RANGE_OVERLAP", "区间重叠",
-                           {"overlaps": ["R"]})
+            raise ApiError(422, "RESEARCH_SANDBOX_LIMIT", "区间超限",
+                           {"max": 50000})
 
         out = probe()
         err = out["error"]
         assert set(err) == {"code", "message", "detail", "hint"}
-        assert err["code"] == "RESEARCH_RANGE_OVERLAP"
-        assert "并集" in err["hint"]  # hint 可行动（指明换区间）
+        assert err["code"] == "RESEARCH_SANDBOX_LIMIT"
+        assert "分区间" in err["hint"]  # hint 可行动（指明分区间验证）
 
     @pytest.mark.parametrize("code", [
-        "RESEARCH_HYPOTHESIS_TERMINAL",
-        "RESEARCH_EVIDENCE_NOT_FOUND",
-        "RESEARCH_TRANSITION_INVALID",
         "RESEARCH_DATA_INSUFFICIENT",
         "RESEARCH_WARMUP_INSUFFICIENT",
         "RESEARCH_NOT_EXPRESSIBLE",
         "RESEARCH_CONDITION_INVALID",
+        "RESEARCH_SYMBOL_NOT_FOUND",
+        "RESEARCH_TIMEFRAME_MISMATCH",
+        "RESEARCH_SANDBOX_LIMIT",
         "API_INTERNAL_ERROR",
     ])
     def test_eight_failure_codes_carry_hint(self, code) -> None:
