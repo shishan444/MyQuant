@@ -174,3 +174,53 @@ class TestR1ThreeActionTranslation:
             "触发计数>0 且等于形态列 True 数"
         assert bool((sig.entries == pat).all()), \
             "entries 与形态列 True 逐 bar 对齐（eq 1 语义）"
+
+
+class TestNotExpressibleBranches:
+    """不可表达拒绝三分支（阶段四②盲区消解——h2s 拆分模块的错误面
+    补强，覆盖分支 review-042 CARD-14 bool 排除/close 基础列 ge/le/
+    空 when 无插件）。"""
+
+    _BB = {"indicator": "BB", "params": {"period": 20, "std": 2},
+           "field": "lower"}
+
+    def test_bool_target_rejected(self, db):
+        """bool target 排除（CARD-14）：True/False 是布尔断言非阈值，
+        列名 target 通道拒绝（与 list/None 非法形同拒绝面）。"""
+        from core.analysis.errors import ResearchError
+        with pytest.raises(ResearchError) as ei:
+            build_signal_genes(
+                when_conditions=[{"subject": self._BB, "action": "gt",
+                                  "target": True}],
+                then_conditions=[{"subject": self._BB, "action": "gt",
+                                  "target": 2}],
+                db_path=db, strategy_timeframe="4h")
+        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        assert "须为数值" in ei.value.message
+
+    def test_close_subject_ge_le_rejected(self, db):
+        """close 基础列×编码列名 target 组合仅支持 lt/gt——ge/le 含
+        等号形态显式拒绝（价格与指标线的严格比较约束）。"""
+        from core.analysis.errors import ResearchError
+        with pytest.raises(ResearchError) as ei:
+            build_signal_genes(
+                when_conditions=[{"subject": "close", "action": "ge",
+                                  "target": "ema_20"}],
+                then_conditions=[{"subject": self._BB, "action": "gt",
+                                  "target": 2}],
+                db_path=db, strategy_timeframe="4h")
+        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        assert "lt/gt" in ei.value.message
+
+    def test_empty_when_no_plugin_rejected(self, db):
+        """空 when 且无插件源：无可表达条件整组拒绝（纯插件列最小形态
+        when=[插件]/then=[] 放行语义的对面——when 侧不能空手）。"""
+        from core.analysis.errors import ResearchError
+        with pytest.raises(ResearchError) as ei:
+            build_signal_genes(
+                when_conditions=[],
+                then_conditions=[{"subject": self._BB, "action": "gt",
+                                  "target": 2}],
+                db_path=db, strategy_timeframe="4h")
+        assert ei.value.code == "RESEARCH_NOT_EXPRESSIBLE"
+        assert "无可表达条件" in ei.value.message

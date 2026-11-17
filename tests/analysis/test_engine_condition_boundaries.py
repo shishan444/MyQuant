@@ -259,3 +259,48 @@ class TestEngineResolveHelperBoundaries:
                 df, {"subject": "close", "action": "nope_action", "target": 1},
                 warnings=None)
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
+
+
+class TestWickTouchStatFace:
+    """影线触碰统计面（阶段四②盲区消解——_wick_touch_condition 整函数
+    零覆盖补强；语义与回测面 executor._eval_wick_touch 对齐锚）。
+    line=subject 列解析序列（action_map 分派传 subject_series）。"""
+
+    def test_above_branch(self, df):
+        """direction=above：最高价近线（|high−line|≤|line|×1%）+收盘
+        在线下——固定线列构造全覆盖触发。"""
+        import pandas as pd
+        line_val = 100.0
+        staged = df.assign(
+            bb_lower=pd.Series(line_val, index=df.index),
+            high=line_val * 1.005,   # 距线 0.5%（1% 带内）
+            close=line_val * 0.99)   # 收盘在线下
+        out = _evaluate_single_condition(staged, {
+            "subject": "bb_lower", "action": "wick_touch",
+            "target": 0, "direction": "above"})
+        assert int(out.sum()) == len(df), "above 全 bar 触发（带内+线下）"
+
+    def test_below_branch(self, df):
+        """direction=below：最低价近线+收盘在线上。"""
+        import pandas as pd
+        line_val = 100.0
+        staged = df.assign(
+            bb_lower=pd.Series(line_val, index=df.index),
+            low=line_val * 0.995,
+            close=line_val * 1.01)
+        out = _evaluate_single_condition(staged, {
+            "subject": "bb_lower", "action": "wick_touch",
+            "target": 0, "direction": "below"})
+        assert int(out.sum()) == len(df), "below 全 bar 触发（带内+线上）"
+
+    def test_above_off_band_no_touch(self, df):
+        """负向：高价距线超 1% 带（0.5%→2%）——触碰带外零触发。"""
+        import pandas as pd
+        line_val = 100.0
+        staged = df.assign(
+            bb_lower=pd.Series(line_val, index=df.index),
+            high=line_val * 1.02, close=line_val * 0.99)
+        out = _evaluate_single_condition(staged, {
+            "subject": "bb_lower", "action": "wick_touch",
+            "target": 0, "direction": "above"})
+        assert int(out.sum()) == 0, "带外零触发（proximity 判定有效）"

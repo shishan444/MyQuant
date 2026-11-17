@@ -291,6 +291,61 @@ class TestHypothesisUnionRemains:
         assert body["degraded"] >= 1
         assert body["items"] == []
 
+    def _seed_local_market(self, client) -> str:
+        """本地 parquet 市场（阶段四②盲区消解——真实现链路前提）：
+        现有三用例双 patch 规避外网（缺失 parquet 走远端降级触发
+        币安拉取，零外网红线），代价是 load_data_bounds/
+        query_union_balance 真实现零覆盖——本组造本地数据走本地
+        命中路径，两函数真实链路入覆盖。返回假设 id。"""
+        import pandas as pd
+        from tests.helpers.data_factory import make_ohlcv
+        # 数据覆盖假设 data_ranges（2026-01-01 起 4h×200 根 ≈ 33 天）
+        make_ohlcv(n=200, freq="4h", start="2025-12-20").to_parquet(
+            client._data_dir / "BTCUSDT_4h.parquet")
+        return _add_hypothesis(client._db)
+
+    def test_local_data_real_chain_computed(self, client):
+        """存量 active 假设现算（spec「对历史冻结数据的现算视图」场景
+        ）：本地 parquet 命中→load_data_bounds 真装载→
+        query_union_balance 真现算。judged=「自报区间 ∪ 关联日志区间」
+        （developer 对质勘正：无日志≠judged 空——自报 data_ranges
+        即入并集）；remaining=数据范围 [2025-12-20, ~01-22) − 自报
+        [2026-01-01, 2026-02-01)=前段 12 天=4h×72 根。"""
+        hid = self._seed_local_market(client)
+        r = client.get("/api/workbench/hypothesis-union-remains")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["degraded"] == 0, "本地数据链路不得降级"
+        assert len(body["items"]) == 1
+        it = body["items"][0]
+        assert it["hypothesis_id"] == hid
+        assert it["remaining_bars"] == 72, \
+            "余量=数据前段 12 天（自报区间已入 judged）"
+
+    def test_sandbox_log_absorbed_into_judged(self, client):
+        """judged 吸收（K1 记账语义）：挂该假设的 sandbox_backtest
+        研究日志落账**自报区间之外**的区间（[2025-12-20,12-25)——
+        自报区间子集会被并集吞掉观察不到差值，developer 对质勘正）
+        后余量相应减少——D9 端点经 query_union_balance 直读并集
+        账本的场景级实证。"""
+        hid = self._seed_local_market(client)
+        before = client.get(
+            "/api/workbench/hypothesis-union-remains").json()["items"][0]
+        assert before["remaining_bars"] == 72
+        from core.persistence.repository import research as rr
+        import json as _json
+        rr.append_research_log(
+            client._db, hypothesis_id=hid, entry_type="sandbox_backtest",
+            data_ranges=_json.dumps([{
+                "symbol": "BTCUSDT", "timeframe": "4h",
+                "start": "2025-12-20T00:00:00Z",
+                "end": "2025-12-25T00:00:00Z"}]))
+        after = client.get(
+            "/api/workbench/hypothesis-union-remains").json()["items"][0]
+        assert after["remaining_bars"] == 42, \
+            "吸收 5 天（30 根）：72−30=42——落账区间并入 judged"
+        assert after["remaining_bars"] < before["remaining_bars"]
+
 
 # ══════════ D11 fleet-summary ══════════
 

@@ -346,3 +346,33 @@ class TestZeroChangeFaces:
         hit_adhoc = [x for x in hit["records"]
                      if x["hypothesis_id"] == "adhoc"]
         assert not hit_adhoc, "adhoc 沙盒行（statement NULL）不命中 q"
+
+
+class TestDataRangeItemTimestampValidation:
+    """DataRangeItem 时间串可解析校验（阶段四②盲区消解——
+    _require_parseable_timestamp 坏串分支零覆盖补强）。"""
+
+    def test_unparseable_start_rejected(self):
+        """坏时间串 422 形：pydantic 包装 ValueError（错误码+合法形
+        hint 文案在场）。"""
+        from pydantic import ValidationError
+        from api.schemas import DataRangeItem
+        with pytest.raises(ValidationError) as ei:
+            DataRangeItem(symbol="BTCUSDT", timeframe="4h",
+                          start="not-a-date", end="2024-02-01")
+        msg = str(ei.value)
+        assert "RESEARCH_PARAM_INVALID" in msg
+        assert "UTC ISO8601" in msg
+
+    def test_unparseable_end_rejected(self):
+        from pydantic import ValidationError
+        from api.schemas import DataRangeItem
+        with pytest.raises(ValidationError):
+            DataRangeItem(symbol="BTCUSDT", timeframe="4h",
+                          start="2024-01-01", end="@@@")
+
+    def test_parseable_forms_accepted(self):
+        from api.schemas import DataRangeItem
+        it = DataRangeItem(symbol="BTCUSDT", timeframe="4h",
+                           start="2024-01-01", end="2024-01-02T00:00:00Z")
+        assert it.start == "2024-01-01"
