@@ -28,7 +28,7 @@ import random
 
 from core.analysis.hypothesis_to_strategy import build_signal_genes
 from core.analysis.errors import ResearchError
-from core.analysis.validation_service import _dna_indicator_names
+from core.analysis.validation_service import dna_indicator_names
 from core.features.indicators import INDICATOR_REGISTRY
 from core.persistence.db_ext import init_db_ext
 from core.analysis.executor import ensure_research_tables
@@ -182,7 +182,7 @@ class TestWarmupUnion:
                        condition={"type": "gt", "target_indicator": "ADX",
                                   "target_params": {"period": 14},
                                   "target_field": "adx"})])
-        names = _dna_indicator_names(dna)
+        names = dna_indicator_names(dna)
         assert "EMA" in names and "ADX" in names
 
     def test_prefix_signals_not_all_false(self, db, df):

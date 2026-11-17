@@ -152,7 +152,7 @@ class TestFullChain:
     def test_u7h_warmup_guard(self, tmp_path):
         """U7h 预热防炸：_dna_indicator_names 跳过白名单（derive_warmup
         对 hour_utc 不抛 KeyError——漏跳过必红）。"""
-        from core.analysis.validation_service import _dna_indicator_names
+        from core.analysis.validation_service import dna_indicator_names
         from core.strategy.dna import (
             ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole,
             StrategyDNA)
@@ -162,7 +162,7 @@ class TestFullChain:
             logic_genes=LogicGenes(),
             execution_genes=ExecutionGenes(timeframe="1h"),
             risk_genes=RiskGenes())
-        names = _dna_indicator_names(dna)
+        names = dna_indicator_names(dna)
         assert "hour_utc" not in names, "白名单成员不进 warmup 引用集"
 
 

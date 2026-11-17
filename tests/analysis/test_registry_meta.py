@@ -190,7 +190,7 @@ class TestGeneTfAxisRefsTargetUnion:
     须在高周期轴收敛，缺则高周期轴 warmup 虚低）。"""
 
     def test_t5_target_indicator_joins_axis_refs(self, tmp_path):
-        from core.analysis.validation_service import _gene_tf_axis_refs
+        from core.analysis.validation_service import gene_tf_axis_refs
         from core.strategy.dna import (
             ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA,
         )
@@ -204,7 +204,7 @@ class TestGeneTfAxisRefsTargetUnion:
             signal_genes=[g], logic_genes=LogicGenes(),
             execution_genes=ExecutionGenes(timeframe="4h"),
             risk_genes=RiskGenes())
-        axis = _gene_tf_axis_refs(dna)
+        axis = gene_tf_axis_refs(dna)
         assert axis["1d"][0] == ("RSI", {"period": 14}), "主指标在轴清单"
         assert ("EMA", {"period": 100}) in axis["1d"], \
             "target_indicator 并入轴引用（高周期轴目标列同收敛）"
