@@ -93,15 +93,6 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
-    def list_evolution_tasks(page: int = 1, page_size: int = 10) -> Dict[str, Any]:
-        """进化任务列表与状态（绩效查询入口；分页 page/page_size≤50）。"""
-        page = max(1, page)
-        page_size = max(1, min(page_size, _PAGE_MAX))
-        return api.get("/api/evolution/tasks",
-                       params={"page": page, "page_size": page_size})
-
-    @mcp.tool()
-    @tool_safe
     def list_indicators() -> Any:
         """内置指标元数据（55 项：参数空间、输出列、lookback——warmup 推导
         依据；预算规则：主公式 max(200, 跨指标取最大的(周期类参数注册表
@@ -159,29 +150,6 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
-    def list_hypotheses(status: Optional[str] = None, page: int = 1,
-                        cursor: Optional[str] = None) -> Dict[str, Any]:
-        """研究假设列表（含状态与区间；conditions 为结构化混合形制——
-        0.2.13 起参数化指标 subject 为 {indicator, params, field} 对象，
-        历史留痕可能仍含字符串编码形）。缺省最新在前；total 为真总数；
-        cursor=上一响应 next_cursor 续页（keyset 深翻页无漂移）。"""
-        params: Dict[str, Any] = {"page": page}
-        if status:
-            params["status"] = status
-        if cursor is not None:
-            params["cursor"] = cursor
-        return api.get("/api/research/hypotheses", params=params)
-
-    @mcp.tool()
-    @tool_safe
-    def get_hypothesis(hypothesis_id: str) -> Dict[str, Any]:
-        """单个假设详情（结构化条件、状态、区间；subject 混合形制——
-        结构化指标对象或字符串精确名）。"""
-        return api.get(
-            f"/api/research/hypotheses/{quote(hypothesis_id, safe='')}")
-
-    @mcp.tool()
-    @tool_safe
     def get_research_log(hypothesis_id: Optional[str] = None,
                          entry_type: Optional[str] = None,
                          page: int = 1,
@@ -206,19 +174,6 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
         """分析长任务轮询（status: pending|running|succeeded|failed）。"""
         return api.get(
             f"/api/research/analysis/tasks/{quote(task_id, safe='')}")
-
-    @mcp.tool()
-    @tool_safe
-    def list_feature_requests(status: Optional[str] = None, page: int = 1,
-                              page_size: int = 50) -> Dict[str, Any]:
-        """慢通道功能需求单列表（只持久化与可查，不会自动实现；
-        分页 page/page_size≤50）。"""
-        page = max(1, page)
-        page_size = max(1, min(page_size, _PAGE_MAX))
-        params: Dict[str, Any] = {"page": page, "page_size": page_size}
-        if status:
-            params["status"] = status
-        return api.get("/api/research/feature-requests", params=params)
 
     # ── 纸盘只读四件（rebuild-paper-trading 5.3） ──
 
@@ -334,11 +289,10 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
             params=params)
 
     for fn in (list_data_sources, list_strategies, get_strategy,
-               list_evolution_tasks, list_indicators, list_signal_columns,
+               list_indicators, list_signal_columns,
                get_market_snapshot,
-               list_hypotheses, get_hypothesis, get_research_log,
+               get_research_log,
                get_analysis_task,
-               list_feature_requests,
                list_paper_tasks, get_paper_task, get_paper_report,
                get_paper_history, query_paper_signals):
         TOOL_TIERS["readonly"].add(fn.__name__)
@@ -708,215 +662,6 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
-    def register_hypothesis(
-            when_conditions: list[dict[str, Any]],
-            then_conditions: list[dict[str, Any]],
-            statement: str,
-            data_ranges: list[dict[str, Any]],
-            provenance: Optional[dict[str, Any]] = None,
-            trigger_policy: Optional[dict[str, Any]] = None,
-            strategy_params: Optional[dict[str, Any]] = None,
-            exit_partial_conditions: Optional[list[dict[str, Any]]] = None,
-            add_trigger_conditions: Optional[list[dict[str, Any]]] = None,
-            add_suppress_conditions: Optional[list[dict[str, Any]]] = None,
-            direction: Optional[str] = None,
-            exit_logic: Optional[str] = None,
-            partial_exit_logic: Optional[str] = None) -> Dict[str, Any]:
-        """登记研究假设（取得隔离验证资格）。when/then 为 {subject,action,target}
-        对象列表；subject 混合形制（0.2.13）：参数化指标用结构化
-        {indicator, params, field}（多输出指标 field 必填，参数空间经
-        list_indicators 查询）、基础列/插件列用字符串精确名（经
-        list_signal_columns 校验）；字符串编码形（如 rsi_14）已关闭。
-        条件条目 MAY 携带可选顶层 timeframe 键：支持组=when 与
-        add_trigger_conditions（Q1 裁决加仓触发组跟随 when 侧）；
-        值须合法周期且 >= 基准周期（data_ranges 统一周期）——timeframe
-        修饰整条件（掩码投影：subject/action/target 在高周期轴求值、
-        布尔掩码按 asof_completed 投影回基准索引——仅已收盘高周期
-        K 线可见）；低周期/未知周期/then 与减仓抑制组携带键结构化
-        拒绝；显式写基准周期=缺省同身份（canonical 归一）；高周期须
-        数据目录可达（登记时校验）。
-        条目另 MAY 携带动作族可选参数键（值域校验在登记链，坏值 422
-        RESEARCH_CONDITION_INVALID）：action=touch_bounce（触碰反弹）
-        携带 direction∈{support,resistance}（支撑/阻力侧，缺省
-        support）与 proximity_pct（近线距离比例 >0，如 0.02=2%，缺省
-        0.01）；action=role_reversal（角色反转）携带 role∈
-        {support,resistance}（反转后角色，缺省 resistance）与
-        lookback（回看根数 >=1 整数，缺省 10）——不写键即用求值层
-        缺省；参数键进条件指纹（带参与不带参=不同假设）。
-        data_ranges 为 {symbol,timeframe,start,end} 对象列表（半开区间，
-        0.2.14 起须全条目同 symbol 同 timeframe——该周期即基准周期）。
-        同条件集+区间集
-        重复登记返回既有 id（duplicated=true）。provenance={task_id,
-        candidate_fingerprint} 可选——引用扫描候选来源（screen_patterns
-        输出的候选指纹），登记后该扫描区间自动进入判定并集（同区间
-        验证会被拒）；不改变假设身份。登记时自动执行假设预检
-        （precheck_hypothesis 能力）：返回体附加可选 precheck_warnings
-        键（三态结论 verdict + 判定锚 analysis_segment_trades——data_ranges
-        多区间时取逐区间触发数最小值，附 per_range 逐区间明细；纯增量
-        键，预检失败降级或幂等命中时不携带该键）；预检不改变登记的
-        校验链、幂等键与假设身份，不阻断任何后续动作（裁决权在研究者
-        ——0 触发建议不送考，判定并集的机会成本可预见）。
-        登记返回体另附可选 threshold_unit_warnings 键（阈值单位可疑
-        警告——与 precheck_warnings 语义正交的纯观察面）：条件比较对象
-        属「小数比率语义」列（值域量级以 1 为界的无量纲量——CMF/
-        OI_ChangeRate/OIPriceDivergence/FundingPressure/funding_rate）
-        且阈值绝对值>1 时逐条目警示（field/column/target/hint 四要素
-        ——如 -2.33 应为 -0.0233 的百分数误写）。警告不阻断登记（个别
-        指标大阈值可能合法，自行核对）；五组条件（when/then/分批三组）
-        全覆盖；幂等命中不携带。
-        登记返回体另附可选 exit_coverage_warnings 键（出场条件覆盖率
-        警告——then_conditions 高覆盖纯观察面）：then 组 AND 交集逐
-        区间覆盖率（判定锚=最差区间）≥0.9 时警示（field/min_coverage/
-        threshold/per_range/hint 五要素单条目——hint 提示接近恒真，
-        若非有意设计请核对 then 条件语义；实录形制：空头版误写
-        close price_above BB lower——close 永远在下轨上方）。警告
-        不阻断登记（高覆盖出场可能是有意设计，裁决权归研究者）；
-        恒真出场（登记区间内全 bar 触发）不走本键而硬拒绝
-        RESEARCH_EXIT_ALWAYS_TRUE；幂等命中与预检降级不携带。
-        trigger_policy 可选（事件策略层，条件集整体级——修饰 when
-        全集 AND 合并掩码如何变换为事件流，非单条件修饰）：封闭枚举
-        {"mode": "none"|"first_true"|"suppress_bars", "bars": <正整数>}
-        ——none=缺省等价（显式与缺省同身份）；first_true=每个极大连续
-        True 段仅首根计一次事件（连续段计一次）；suppress_bars 必带
-        bars=事件后 N bar 内的后续触发抑制（跨段生效，间隔恰 N 产生
-        新事件）。trigger_policy 参与假设指纹与幂等身份（同条件集+
-        同区间集+不同策略=不同假设——事件密度语义是研究主张的组成
-        部分）；带策略假设按事件流验证与外推（统计链与预检外推同为
-        事件数口径闭环），翻译为策略时直接映射进入场信号组装（信号
-        层同口径；实际成交笔数另受空仓进场抑制影响）。事件形制整理
-        触发不创造触发：0 事件形态照常 reject_suggestion。bars 数据
-        长度上界在求值时点校验（登记时点仅形制——短区间实跑超界即
-        422）。
-        strategy_params 必填（0.4.2 策略层参数声明块——与假设身份
-        正交的风险参数；缺失或不带 stop_loss 键一律 422——止损为
-        强制风控组件）：键集 stop_loss/take_profit/sl_mode/
-        position_size/leverage/exit_fraction/add_fraction/max_exposure/
-        max_hold/time_exit_utc/position_mode/risk_fraction/
-        initial_fraction/max_position_loss
-        （值域按 sl_mode 分叉：pct/trail 档 [0.005,0.20] 比例值、
-        atr 档 [0.5,5.0] ATR 倍数；sl_mode∈{pct,atr,trail}；
-        take_profit>stop_loss，trail 档豁免；position_size∈
-        [0.10,1.0]；leverage∈[1,10]；exit_fraction∈(0,1]/
-        add_fraction∈(0,1] 须伴随宿主组分批声明；max_exposure∈
-        (0,生效杠杆]（未声明 leverage 时上界 1——声明更大上限须同
-        时声明 leverage）；三键有宿主组而声明块内缺值时，登记归一化
-        字面化 0.5/0.1/1.0）；max_hold∈[1,200] 正整数 bar 数——最长持有 N 根 K 线的
-        时间出场（到期无条件平仓，与条件出场/止损止盈并行的第三出场
-        机制；不声明=无时间离场；N=1 行为等价 N=2——入场 bar 的出场
-        时点被入场单占据，最早平仓在入场次 bar；仅回测域生效——live
-        链路当前不承载，实盘化前统一处理）；time_exit_utc∈[0,1439]
-        整数（UTC 分钟时刻——固定时刻出场，持仓 bar 区间覆盖该时刻
-        即平仓；跨日持仓逐日生效；与 max_hold 并存先到者先触发；无
-        宿主组依赖；不声明=无固定时刻出场）；position_mode∈
-        {fixed,risk_budget}（complete-research-tooling 动态定仓——
-        缺省 fixed 固定比例路径；risk_budget=风险预算制定仓：入场
-        size=当时权益×risk_fraction÷实际生效止损距离（pct 档距离=
-        价格×比例、atr/trail 档=倍数×当根 ATR），名义敞口上限=
-        当时权益×min(leverage,max_exposure) 超限截断+orders_capped
-        计数披露；risk_budget 须同时声明 risk_fraction 与 stop_loss
-        ——止损距离是仓位公式分母；回测报告 metrics 携带 position_
-        sizing 七子键（mode/risk_fraction/leverage_cap/replay_
-        status/orders_capped/avg_entry_size/max_entry_size）；
-        组间配对对照表：
-        risk_budget 只管首仓，加仓仍按 add_fraction 固定比例、
-        max_exposure 全局取严、exit_fraction 比例语义不变）；
-        risk_fraction∈(0,0.5]（每笔风险预算占当时权益比例）；
-        initial_fraction∈(0,1]（add-position-sizing-params 首笔
-        动用资金比例——声明时首笔定仓 margin=当时权益×initial_
-        fraction（fixed 路径内替换 position_size 消费点），加仓仍走
-        add_fraction、position_size 仍必填仍校验；与 position_mode=
-        risk_budget 互斥——同笔首仓不可两个指挥）；max_position_
-        loss>0 金额无上界（持仓金额防线——单一合并持仓总浮亏=
-        价格浮亏+该持仓累计资金费净支出，每根已闭合 K 线按收盘价
-        判定，达线强制全部平仓；与价格止损各自独立判定、
-        归因序在止损止盈后时间出场前；fixed 与 risk_budget 档均
-        生效；两键回测与纸盘同语义执行——判定机制/归因序一致
-        （收盘判定、位次、reason 可辨识；成交时点为环境形制差——
-        回测当根收盘扣滑点、纸盘 pending 次根开盘））；不声明两键=
-        存量行为逐位不变（首笔用 position_size、无金额防线）。翻译时
-        逐参数映射进产物 risk_genes（返回体 risk_genes="declared"；
-        无声明=平台默认 "platform_default"）。声明块不进条件指纹与
-        幂等身份（同条件集+同区间集=同一假设——参数
-        变体经终态后带新声明重登记产生）；幂等两分支（声明块必填后
-        请求恒带块——无「不带键」态，空块 {} 亦被 stop_loss 在场
-        判据 422）：与既有声明归一形全等→duplicated 返回既有（附
-        existing_strategy_params 摘要键）；不等→422（防静默丢弃
-        既有声明，detail 附变体路径指引——存量假设列 NULL 归一 {}
-        与任何合法块必不等，同条件集重登记走本 422）。坏值 422
-        RESEARCH_PARAM_INVALID（detail 含 field/legal_range；
-        strategy_params.stop_loss 场景附强制声明 hint）。
-        exit_partial_conditions/add_trigger_conditions/add_suppress_conditions
-        可选（0.4.2 R3 分批条件组，对象数组——组内 {subject,action,target}
-        与 when/then 同构）：部分离场触发/加仓触发/加仓抑制三组，进
-        conditions 参与条件指纹与幂等身份（不同分批条件组=不同假设——
-        触发条件属研究主张）；组条目不带 timeframe 键；组存在须非空。
-        翻译映射 REDUCE_TRIGGER/ADD_TRIGGER/ADD_INHIBIT；分批数值参数
-        （exit_fraction 0.5/add_fraction 0.1/max_exposure 1.0 缺省）经
-        strategy_params 声明块承载（宿主组在场而块内缺数值键时自动
-        归一化字面值）。
-        direction 可选（交易方向 {long,short}——做空假设通道）：缺省与
-        显式 "long" 语义相同（同指纹同实体）；"short" 为做空假设——
-        方向参与假设身份指纹与幂等身份（同条件集+同区间集+异方向=
-        两条独立假设，各自独立幂等/判定并集/谱系族）；翻译直通产物
-        risk_genes.direction（做空策略价格下跌产生正收益）；登记响应
-        回显 direction 键（新建/幂等命中均携带）；非法值 422
-        RESEARCH_PARAM_INVALID（detail 含 field/legal_range）。
-        exit_logic/partial_exit_logic 可选（出场组内逻辑——add-exit-
-        group-or）：值域 {"and","or"} 小写封闭枚举（大写同值 422）；exit_
-        logic 作用于 then_conditions 全部离场组（桶内任一内置出场条件
-        触发即离场）、partial_exit_logic 作用于 exit_partial_conditions
-        部分离场组；缺省与显式 "and" 语义相同（同指纹同实体——归一形
-        「or」才入条件指纹，同条件集 and/or=两条独立假设）；
-        partial_exit_logic 传值而 exit_partial_conditions 组缺失
-        422（逻辑键无作用组）；翻译映射产物 logic_genes.exit_logic/
-        reduce_logic（"or"→"OR"，缺省 AND 产物逐位不变），
-        gene_signature 追加 xlor:or/rlor:or 段（缺省签名逐位不变）；
-        插件列与内置条件混组时组内 OR 仅作用于内置条件子集
-        （插件源维持独立 AND 通道后跨源 AND 并入——合成语义
-        (内置1 OR 内置2) AND (插件A AND 插件B)）；add_trigger/
-        add_suppress 组不设逻辑键（加仓语义维持合取——加仓产物
-        add_logic 恒 AND）；翻译回执回显 logic_genes 键（实际生效值）。"""
-        body: Dict[str, Any] = {
-            "conditions": {"when_conditions": when_conditions,
-                           "then_conditions": then_conditions},
-            "statement": statement, "data_ranges": data_ranges}
-        if provenance:
-            body["provenance"] = provenance
-        if trigger_policy is not None:
-            body["trigger_policy"] = trigger_policy
-        if strategy_params is not None:
-            body["strategy_params"] = strategy_params
-        if exit_partial_conditions is not None:
-            body["exit_partial_conditions"] = exit_partial_conditions
-        if add_trigger_conditions is not None:
-            body["add_trigger_conditions"] = add_trigger_conditions
-        if add_suppress_conditions is not None:
-            body["add_suppress_conditions"] = add_suppress_conditions
-        if direction is not None:
-            body["direction"] = direction
-        if exit_logic is not None:
-            body["exit_logic"] = exit_logic
-        if partial_exit_logic is not None:
-            body["partial_exit_logic"] = partial_exit_logic
-        return api.post("/api/research/hypotheses", body)
-
-    @mcp.tool()
-    @tool_safe
-    def transition_hypothesis(hypothesis_id: str, target_status: str,
-                              evidence_ref: str) -> Dict[str, Any]:
-        """假设状态迁移：active→supported|refuted（证据=验证 record_id，
-        verdict 须匹配：supported 须 pass、refuted 须 fail）、→superseded
-        （证据=接替假设 id）或→abandoned（免证据，evidence_ref 填放弃说明）。
-        inconclusive 记录不可作迁移证据（证据不足不可定论——样本不足的
-        验证不能否定假设；假设保持 active 可换区间再验证）。
-        supported 时谱系 draft 若有自身 pass 记录则同事务转正（draft→active）。"""
-        return api.post(
-            f"/api/research/hypotheses/"
-            f"{quote(hypothesis_id, safe='')}/transition",
-            {"target_status": target_status, "evidence_ref": evidence_ref})
-
-    @mcp.tool()
-    @tool_safe
     def run_backtest(strategy_id: str, symbol: str, timeframe: str,
                      start: str, end: str, fee: float = 0.001,
                      slippage: float = 0.0005, init_cash: float = 100000.0,
@@ -996,75 +741,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             "symbol": symbol, "timeframe": timeframe,
             "data_start": data_start, "data_end": data_end})
 
-    @mcp.tool()
-    @tool_safe
-    def submit_feature_request(title: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """慢通道功能需求单（只持久化与可查，不会自动实现）。"""
-        return api.post("/api/research/feature-requests",
-                        {"title": title, "payload": payload})
-
-    @mcp.tool()
-    @tool_safe
-    def trigger_evolution(config: Dict[str, Any]) -> Dict[str, Any]:
-        """触发进化任务（返回 task_id，用 poll_evolution_task 轮询）。"""
-        return api.post("/api/evolution/tasks", config)
-
-    @mcp.tool()
-    @tool_safe
-    def poll_evolution_task(task_id: str, total_timeout: float = 600.0) -> Dict[str, Any]:
-        """轮询进化任务到终态（退避 5s×1.5 上限 60s；保留最后已知状态；
-        total_timeout 钳制 [1,3600]s）。"""
-        total_timeout = max(1.0, min(total_timeout, _TOTAL_TIMEOUT_MAX))
-        return api.poll_until_terminal(
-            f"/api/evolution/tasks/{quote(task_id, safe='')}",
-            terminal=("completed", "failed", "stopped", "cancelled"),
-            total_timeout=total_timeout)
-
     # ── 进化控制三工具（research-tooling-data-quality 卡 A：REST 既有
     #    端点薄封装——错误码透传 404/409（stop/pause）/400（resume）──
-
-    @mcp.tool()
-    @tool_safe
-    def stop_evolution_task(task_id: str) -> Dict[str, Any]:
-        """停止进化任务（协作停止：当前代完整落库后退出——数据保留可查）。
-        适用：长跑 continuous 任务释放并发槽、放弃研究方向。
-        错误面（透传 REST 既有码）：404 任务不存在；409 状态不允许
-        （如已 completed/failed——终态任务不可再停）。返回终态 task 摘要。"""
-        return api.post(
-            f"/api/evolution/tasks/{quote(task_id, safe='')}/stop", {})
-
-    @mcp.tool()
-    @tool_safe
-    def pause_evolution_task(task_id: str) -> Dict[str, Any]:
-        """暂停进化任务（running→paused：执行链在当前代完整落库后暂停；
-        经 resume_evolution_task 恢复（paused→pending 重新排队、从
-        initial_dna 完整重跑））。
-        错误面（透传）：404 任务不存在；409 状态不允许（非 running）。"""
-        return api.post(
-            f"/api/evolution/tasks/{quote(task_id, safe='')}/pause", {})
-
-    @mcp.tool()
-    @tool_safe
-    def resume_evolution_task(task_id: str) -> Dict[str, Any]:
-        """恢复已暂停的进化任务（paused→pending 重新排队，runner 拾取后
-        从 initial_dna 完整重跑——非断点续跑，历史裁决已移除 checkpoint
-        resume）。
-        错误面（透传）：404 任务不存在；400 状态不允许（非 paused——
-        resume 端点既有实现码，与 stop/pause 的 409 分立）。"""
-        return api.post(
-            f"/api/evolution/tasks/{quote(task_id, safe='')}/resume", {})
-
-    @mcp.tool()
-    @tool_safe
-    def get_evolution_strategies(task_id: str) -> Dict[str, Any]:
-        """取进化任务的策略集（运行中即可取——卡 C：经既有快照通道）。
-        返回 strategies 列表：champion 源条目（终态 champion_dna 权威
-        冠军；运行中为空）+snapshot 源条目（逐代快照 top10，按
-        best_score 排序——运行中当代最优完整 DNA=快照 top1）。
-        单一事实源：运行中读快照表、终态读 tasks.champion_dna 两态
-        连续，无第三份运行中冠军存储。404 任务不存在。"""
-        return api.get(
-            f"/api/evolution/tasks/{quote(task_id, safe='')}/strategies")
 
     # ── 策略标注（卡 A R4：PUT 部分更新薄封装）──
 
@@ -1090,33 +768,6 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
 
     # ── 批量删除（卡 D：常设管理通道——一次性数据清理由 change-2
     #    任务 2.9 执行，本工具为按任务圈定的常态化管理面）──
-
-    @mcp.tool()
-    @tool_safe
-    def batch_delete_strategies(
-            source_task_id: str, confirm: bool,
-            generation_gt: int | None = None,
-            best_score_lt: float | None = None) -> Dict[str, Any]:
-        """按进化任务批量删除其产物策略（**物理删除不可逆**）。
-        source_task_id 必填（无圈定的全库批量删除不提供）；confirm
-        必须显式 true 才执行（false/缺省 → 422 拒绝，detail 附
-        matched_count 预览数+criteria 回显+score_summary（best_score
-        五数概括分布摘要：count 为非 NULL 参与分布数、null_count 单独
-        披露；1 行退化五数全同值、空集五数全 None）——先看将删多少
-        及其分数分布再确认）。
-        挂盘预检（预览与执行共用）：删除域含受保护策略（paper/candidate/
-        live——在验/达标候选/实盘在役）或被非终态纸盘任务引用 → 422
-        BATCH_DELETE_PAPER_REFERENCED（先撤盘/归档后再清理）。
-        generation_gt/best_score_lt 可选收紧（只删某代以上/分数以下）。
-        幂等：重复调用 deleted_count=0 不报错。与单策略 DELETE 的
-        归档语义不同（批量是物理删除）——端点分离承载语义差异。"""
-        body: Dict[str, Any] = {
-            "source_task_id": source_task_id, "confirm": confirm}
-        if generation_gt is not None:
-            body["generation_gt"] = generation_gt
-        if best_score_lt is not None:
-            body["best_score_lt"] = best_score_lt
-        return api.post("/api/strategies/batch", body)
 
     # ── 纸盘挂载两件（rebuild-paper-trading 5.3；研究执行档——资源
     #    创建语义类比触发回测/进化任务，非触金） ──
@@ -1185,13 +836,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             f"/api/paper-trading/tasks/{quote(task_id, safe='')}/stop", {})
 
     for fn in (run_analysis, inspect_cases, query_indicator,
-               register_hypothesis, transition_hypothesis,
                run_backtest,
                register_formula_plugin, register_model_plugin,
-               submit_feature_request, trigger_evolution,
-               poll_evolution_task,
-               stop_evolution_task, pause_evolution_task,
-               resume_evolution_task, get_evolution_strategies,
-               update_strategy_metadata, batch_delete_strategies,
+               update_strategy_metadata,
                mount_paper_task, unmount_paper_task):
         TOOL_TIERS["research"].add(fn.__name__)

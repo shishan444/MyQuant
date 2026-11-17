@@ -79,7 +79,6 @@ def create_model_plugin(
     return out
 
 
-@router.get("/plugins/pools")
 def get_plugin_pools() -> Dict[str, Any]:
     """四层池名单（be-plugin-pool-authority D10）：core/strategy/pools.py
     单源直出（快照权威自需求文档升格入工程）；纯 GET 幂等零副作用。"""
