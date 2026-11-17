@@ -42,12 +42,18 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   空仓进场抑制影响，不作对照）。翻译直接映射进策略声明（不静默
   降级）。事件形制整理触发不创造触发：0 事件形态照常
   reject_suggestion；bars 上界按求值数据长度校验（超界 422）。
-- **沙盒回测纪律**：run_backtest 是快速试错通道（可调手续费/滑点，
-  直返指标、不构成验证证据）；每次执行同步写入验证记录统一流
-  （validation_records level=sandbox_backtest 行，verdict 恒空串；响应
-  回显 record_id；沙盒记录不可作 ruler_compare/ab_compare 对照源）；
-  挂 hypothesis_id 的沙盒区间**计入判定并集**——此后同区间的隔离
-  验证会被拒（先偷看不获利）。
+- **回测入口（P2 起）**：run_replay_backtest 是现役回测主入口——
+  逐根回放引擎（纸盘执行核心同一套执行逻辑，修复条款内嵌两域同
+  效）；symbol/timeframe 从策略 DNA 抄录不可覆写；装载失败结构化
+  拒绝（series 档不支持——回放沿纸盘链能力集 pct/atr/trail，62 条
+  hypothesis 历史存量 series 策略失去现役回测入口，只读保留）。
+- **沙盒回测纪律（legacy）**：run_backtest 已下线（legacy VBT 链路，
+  保留代码为回退后门，不再是推荐链路）——原快速试错语义不变：
+  可调手续费/滑点直返指标、不构成验证证据；每次执行同步写入验证
+  记录统一流（validation_records level=sandbox_backtest 行，verdict
+  恒空串；响应回显 record_id；沙盒记录不可作 ruler_compare/
+  ab_compare 对照源）；挂 hypothesis_id 的沙盒区间**计入判定并集**
+  ——此后同区间的隔离验证会被拒（先偷看不获利）。
 - **时点行情快照**：get_market_snapshot 返回 as_of 时点多周期五维
   行情卡（trend/momentum/volatility/volume/derivatives——读数+90 日
   分位+三态判读；六步研究第①步固定入口）。读数与分位闭端截至

@@ -101,22 +101,39 @@ class ReplayRunner:
         stop_loss_pct: Optional[float] = None,
         halt_drawdown_pct: Optional[float] = None,
         task_id: Optional[str] = None,
+        _dna_override: Optional[StrategyDNA] = None,
     ) -> ReplayResult:
         """跑一次完整回放（装载失败即抛 ReplayError，行不建）。"""
         db_path = Path(db_path)
         # ── 装载链 1-5（策略域校验；6-10 归 feeder.load()）──
-        strategy_row = get_strategy(db_path, strategy_id)
-        if strategy_row is None:
-            raise ReplayError(
-                "STRATEGY_NOT_FOUND", f"策略不存在: {strategy_id}")
-        try:
-            dna = StrategyDNA.from_json(strategy_row["dna_json"])
-        except Exception as exc:  # noqa: BLE001 —— 坏值统一拒绝
-            raise ReplayError(
-                "RESEARCH_STORED_DATA_INVALID",
-                f"策略 DNA 快照解析失败: {exc}") from exc
-        result = validate_dna(dna)
-        if not result.is_valid:
+        # _dna_override：内存 DNA 直传入口（run_from_dna 进——exit_sweep
+        # 等研究模板构造的内存策略不落库直跑；校验段照走）
+        if _dna_override is not None:
+            strategy_row = {
+                "strategy_id": strategy_id,
+                "dna_json": _dna_override.to_json()}
+        else:
+            strategy_row = get_strategy(db_path, strategy_id)
+            if strategy_row is None:
+                raise ReplayError(
+                    "STRATEGY_NOT_FOUND", f"策略不存在: {strategy_id}")
+            try:
+                dna = StrategyDNA.from_json(strategy_row["dna_json"])
+            except Exception as exc:  # noqa: BLE001 —— 坏值统一拒绝
+                raise ReplayError(
+                    "RESEARCH_STORED_DATA_INVALID",
+                    f"策略 DNA 快照解析失败: {exc}") from exc
+        if _dna_override is not None:
+            dna = _dna_override
+        # validate_dna 仅对库策略跑（入库完整性校验——值域+交叉）；
+        # 研究模板内存 dna（run_from_dna）跳过：模板校验期自成体系
+        # （模式×双量纲值域在 exit_sweep 等模板内单点校验），库校验
+        # 的 tp>sl 交叉不分量纲与实验网格双量纲合法形制冲突
+        # （add-replay-backtest-mcp 任务 2.2 适配）。
+        else:
+            pass  # dna 已在上方解析；此处维持原校验位（见下）
+        result = validate_dna(dna) if _dna_override is None else None
+        if result is not None and not result.is_valid:
             raise ReplayError(
                 "INVALID_DNA", "DNA 值域校验未过",
                 detail="; ".join(result.errors))
@@ -151,8 +168,9 @@ class ReplayRunner:
         # 网络拉取——表值属环境输入；app 进程=lifespan 已装载值，
         # 裸进程=内置副本缺省或 env 注入后本地装配）
         # ── 装载完成，建行驱动（A2：落库=执行行为一部分）──
-        research_status = paper_repo.resolve_research_status(
-            db_path, strategy_row)
+        research_status = (
+            "unverified" if _dna_override is not None else
+            paper_repo.resolve_research_status(db_path, strategy_row))
         tid = task_id or uuid.uuid4().hex[:12]
         paper_repo.create_task(
             db_path,
@@ -182,9 +200,12 @@ class ReplayRunner:
             db_path, task_row, registry=registry,
             start_after=feeder.main_start.isoformat(),
             funding_lookup=feeder.funding_lookup)
-        if not executor.prepare():
-            # prepare 在回放装载面已前置校验（1-5+6-10），此处 False
-            # 属意外（数据在装载后驱动前被外部改变等）——如实转错误
+        if _dna_override is None and not executor.prepare():
+            # prepare=纸盘上盘纵深防线（库 dna 被改后重启场景），回放
+            # 库策略路径沿用（防库行被外部篡改）；研究模板 override 场
+            # 景跳过——其职能（数据可行性/compat/指标可算/atr）已由
+            # 回放装载链 3/4/8/9 覆盖，纵深校验的库值域交叉与实验
+            # dna 双量纲合法形制冲突（任务 2.2 适配）
             raise ReplayError(
                 "REPLAY_PREPARE_FAILED", "执行器装载校验意外未过")
         paper_repo.update_task(db_path, tid, status="running")
@@ -204,6 +225,21 @@ class ReplayRunner:
             executor._finalize("completed")  # 区间自然耗尽
         return self._collect(db_path, tid, strategy_id, start, end,
                              symbol, timeframe)
+
+    def run_from_dna(
+        self, db_path: Path, dna, start: str, end: str, *,
+        strategy_id: Optional[str] = None, task_id: Optional[str] = None,
+        **run_kwargs,
+    ) -> ReplayResult:
+        """内存 DNA 直跑（研究模板入口——exit_sweep 逐组等构造的
+        内存策略不落库直跑；校验段照走：series 档/插件源装载拒绝面
+        与库策略一致）。strategy_id 缺省 memory-<uuid> 占位。"""
+        import uuid as _uuid
+
+        return self.run(
+            db_path, strategy_id or f"memory-{_uuid.uuid4().hex[:8]}",
+            start, end, task_id=task_id,
+            _dna_override=dna, **run_kwargs)
 
     def _segment_end(self, feeder: ReplayFeeder, seg_start: int,
                      aux_frames: Dict[str, Any]) -> int:

@@ -192,6 +192,18 @@ def count_research_log(
 
 # ============================================================ 验证记录（双写组合）
 
+_RECORD_LEVELS = frozenset({"sandbox_backtest", "replay"})
+
+
+def _record_level(level: str) -> str:
+    """记录档位白名单（防误用语义保持：sandbox_backtest=沙盒身份、
+    replay=逐根回放身份〔add-replay-backtest-mcp〕；其余值拒绝）。"""
+    if level not in _RECORD_LEVELS:
+        raise ValueError(
+            f"level 白名单外取值: {level!r}（合法: {sorted(_RECORD_LEVELS)}）")
+    return level
+
+
 def save_sandbox_validation_record(
     db_path: Path,
     *,
@@ -203,6 +215,7 @@ def save_sandbox_validation_record(
     range_hash: str,
     detail: Optional[List[Dict[str, Any]]] = None,
     trace: Optional[List[Dict[str, Any]]] = None,
+    level: str = "sandbox_backtest",
 ) -> None:
     """沙盒回测留痕写入（add-sandbox-records-unified-flow C1；K1 扩展
     retire-legacy D-3.7 ⑤）：validation_records 独立成行（level=
@@ -233,7 +246,7 @@ def save_sandbox_validation_record(
             record_id=record_id,
             hypothesis_id=hypothesis_id,
             strategy_id=strategy_id,
-            level="sandbox_backtest",
+            level=_record_level(level),
             segmentation="",
             params=params,
             result=result,

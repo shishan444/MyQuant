@@ -46,7 +46,8 @@ READONLY_ENDPOINTS = frozenset({
 
 # 研究执行档 POST 允许集（验证/分析/插件注册/纸盘挂载）
 RESEARCH_POST_ENDPOINTS = frozenset({
-    "/api/research/backtest-sandbox",                       # 沙盒回测（M6 快速试错）
+    "/api/research/backtest-sandbox",                       # 沙盒回测（M6 快速试错，P2 起下线标注）
+    "/api/research/backtest-replay",                        # 逐根回放回测（P2 现役主入口）
     "/api/research/analysis",                               # 分析模板
     "/api/research/inspect-cases",                          # 案例抽查（0.2.8 检查③）
     "/api/research/query-indicator",                        # 指标读数（0.2.9 检查④）

@@ -8,10 +8,13 @@ replay 对 core/backtest（VBT）零依赖（守卫 tests/replay/
 test_no_backtest_import 双书写形制扫描）。
 """
 from core.replay.feeder import ReplayFeeder
+from core.replay.pool import DEFAULT_REPLAY_WORKERS, run_replay_batch
 from core.replay.runner import (
     ReplayError,
     ReplayResult,
     ReplayRunner,
 )
 
-__all__ = ["ReplayFeeder", "ReplayError", "ReplayResult", "ReplayRunner"]
+__all__ = [
+    "ReplayFeeder", "ReplayError", "ReplayResult", "ReplayRunner",
+    "run_replay_batch", "DEFAULT_REPLAY_WORKERS"]

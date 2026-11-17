@@ -667,8 +667,11 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
                      margin_cap: Optional[float] = None,
                      halt_drawdown_pct: Optional[float] = None
                      ) -> Dict[str, Any]:
-        """沙盒回测（快速试错：可调手续费/滑点/初始资金，直返指标——
-        不判门槛、不构成验证证据）。每次执行同步写入验证记录统一流
+        """【已下线（legacy VBT 链路）——推荐 run_replay_backtest：
+        现役回测主入口（逐根回放引擎，与真实交易同一套执行逻辑）】
+        沙盒回测（快速试错：可调手续费/滑点/初始资金，直返指标——
+        不判门槛、不构成验证证据）。本工具保留代码可调用（回退
+        后门），不再是推荐链路。每次执行同步写入验证记录统一流
         （validation_records level=sandbox_backtest 行，verdict 恒空串
         不参与三态——快速试错留痕；响应回显 record_id，沙盒记录不可
         作 ruler/ab 对照源）。纪律：挂 hypothesis_id 时该区间计入
@@ -698,6 +701,42 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         if halt_drawdown_pct is not None:
             body["halt_drawdown_pct"] = halt_drawdown_pct
         return api.post("/api/research/backtest-sandbox", body)
+
+    @mcp.tool()
+    @tool_safe
+    def run_replay_backtest(strategy_id: str, start: str, end: str,
+                            fee: float = 0.001, slippage: float = 0.0005,
+                            initial_cash: float = 100000.0, leverage: int = 1,
+                            window_bars: Optional[int] = None,
+                            stop_loss_pct: Optional[float] = None,
+                            halt_drawdown_pct: Optional[float] = None,
+                            task_id: Optional[str] = None
+                            ) -> Dict[str, Any]:
+        """逐根回放回测（现役回测主入口——add-replay-backtest-mcp）：
+        底层为纸盘执行核心的逐根回放（与真实交易 100% 同一套执行
+        逻辑，修复条款已内嵌——减仓终止与最小名义钳制两域同效）；
+        symbol/timeframe 从策略 DNA 抄录（语义参数不可覆写），费滑/
+        杠杆/初始资金为任务覆写面。响应携带 summary 组（status/
+        stop_reason/total_trades/total_pnl/final_balance 等）与明细
+        引用 task_id（pt_* 明细经既有查询通道）。装载失败结构化
+        拒绝：策略不存在/数据缺/warmup 不足/series 档（回放引擎沿
+        纸盘链能力集 pct/atr/trail，不支持 series 档——62 条
+        hypothesis 历史存量失去现役回测入口，只读保留）。
+        验证条件三件（可选）：window_bars/stop_loss_pct/
+        halt_drawdown_pct 沿纸盘语义；task_id 可注入固定值。"""
+        body: Dict[str, Any] = {
+            "strategy_id": strategy_id, "start": start, "end": end,
+            "fee": fee, "slippage": slippage,
+            "initial_cash": initial_cash, "leverage": leverage}
+        if window_bars is not None:
+            body["window_bars"] = window_bars
+        if stop_loss_pct is not None:
+            body["stop_loss_pct"] = stop_loss_pct
+        if halt_drawdown_pct is not None:
+            body["halt_drawdown_pct"] = halt_drawdown_pct
+        if task_id is not None:
+            body["task_id"] = task_id
+        return api.post("/api/research/backtest-replay", body)
 
     @mcp.tool()
     @tool_safe
@@ -827,7 +866,7 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
             f"/api/paper-trading/tasks/{quote(task_id, safe='')}/stop", {})
 
     for fn in (run_analysis, inspect_cases, query_indicator,
-               run_backtest,
+               run_backtest, run_replay_backtest,
                register_formula_plugin, register_model_plugin,
                update_strategy_metadata,
                mount_paper_task, unmount_paper_task):
