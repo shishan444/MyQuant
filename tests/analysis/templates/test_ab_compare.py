@@ -191,8 +191,8 @@ class TestSharedValidationChain:
             _call(vr_db, tmp_path,
                   trade_source_a={"kind": "backtest", "record_id": "rec_a"})
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
-        assert "沙盒回测不落库逐笔（防污染纪律）" in ei.value.message
-        assert "隔离验证记录 record_id" in ei.value.message
+        assert "params 形制无单区间" in ei.value.message
+        assert "存量隔离验证记录 record_id" in ei.value.message
         assert ei.value.detail["guidance"], "指引文案随 detail 出站"
 
     def test_backtest_kind_b_rejected_with_guidance(self, vr_db, tmp_path):
@@ -201,7 +201,7 @@ class TestSharedValidationChain:
         with pytest.raises(ResearchError) as ei:
             _call(vr_db, tmp_path,
                   trade_source_b={"kind": "backtest", "record_id": "rec_b"})
-        assert "不落库逐笔" in ei.value.message
+        assert "无单区间" in ei.value.message
         assert ei.value.detail["param"] == "trade_source.kind"
 
     def test_unknown_kind_rejected(self, vr_db, tmp_path):
@@ -213,13 +213,13 @@ class TestSharedValidationChain:
 
     def test_backtest_rejection_precedes_record_resolution(
             self, vr_db, tmp_path):
-        """校验顺序（kind 拦截在前——纪律拦截优先于引用解析）：传不存在
+        """校验顺序（kind 拦截在前——形制拦截优先于引用解析）：传不存在
         record_id 的 backtest source，错误仍是 kind 拒绝。"""
         with pytest.raises(ResearchError) as ei:
             _call(vr_db, tmp_path,
                   trade_source_a={"kind": "backtest",
                                   "record_id": "rec_never"})
-        assert "不落库逐笔" in ei.value.message
+        assert "无单区间" in ei.value.message
         assert "不存在" not in ei.value.message
 
     @pytest.mark.parametrize(

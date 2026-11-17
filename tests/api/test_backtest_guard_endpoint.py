@@ -69,7 +69,10 @@ class TestBacktestEndpointTimeframeGuard:
         d = body["detail"]["detail"]
         assert d["request_timeframe"] == "1d"
         assert d["dna_execution_timeframe"] == "4h"
-        assert "基准周期" in d["need_hint"]
+        # need_hint 指引语义：缺省自洽+换轴重建策略（CARD-05——
+        # translate 退役后不指假设侧，与 test_backtest_guard t8_1 同锚）
+        assert "自洽验证" in d["need_hint"]
+        assert "重建策略" in d["need_hint"]
 
     def test_same_timeframe_not_blocked(self, api_client):
         """同轴对照：timeframe=dna 执行周期 → 正常回测不拦（200）。"""

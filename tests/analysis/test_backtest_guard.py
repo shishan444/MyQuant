@@ -1,8 +1,8 @@
 """守卫拒绝锚族 T⑧ + 交集防御锚 T④（fix-mtf-execution-consistency 组 2）。
 
 T⑧（RESEARCH_TIMEFRAME_MISMATCH——design 卡 2/守卫卡）：
-- ⑧.1 显式异轴 422：code+detail 四键逐键断言（need_hint 含回假设侧
-  修改基准周期指引语义）；
+- ⑧.1 显式异轴 422：code+detail 四键逐键断言（need_hint 含缺省自洽
+  与换轴重建策略指引语义——translate 退役后不指假设侧）；
 - ⑧.2 双挂同码：桥入口 vs 直接调守卫单源——code+detail 逐字段一致；
 - ⑧.3 四通道传导：隔离/随机/沙盒/分段参数化各一例显式异轴拒绝；
 - ⑧.4 缺省链自洽不拦（负向防呆）：不传 timeframe → 取策略行周期
@@ -130,9 +130,9 @@ class TestT8GuardRejection:
         assert d["request_timeframe"] == "1d"
         assert d["dna_execution_timeframe"] == "4h"
         assert d["strategy_id"] == "st_x"
-        # need_hint 指引语义：回假设侧修改基准周期
-        assert "基准周期" in d["need_hint"]
-        assert "data_ranges" in d["need_hint"]
+        # need_hint 指引语义：缺省自洽+换轴重建策略（不指假设侧）
+        assert "自洽验证" in d["need_hint"]
+        assert "重建策略" in d["need_hint"]
 
     def test_t8_2_bridge_entry_and_guard_same_face(self, seeded, db, data_dir):
         """⑧.2 双挂同码：桥入口拒绝与守卫单源直调逐字段一致。"""

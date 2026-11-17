@@ -109,8 +109,8 @@ class TestTradeSource:
             validate_trade_source(
                 {"kind": "backtest", "record_id": "rec_x"})
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
-        assert "沙盒回测不落库逐笔（防污染纪律）" in ei.value.message
-        assert "隔离验证记录 record_id" in ei.value.message
+        assert "params 形制无单区间" in ei.value.message
+        assert "存量隔离验证记录 record_id" in ei.value.message
         assert ei.value.detail["guidance"], "指引文案随 detail 出站"
 
     def test_backtest_rejection_precedes_record_resolution(self, vr_db):
@@ -121,7 +121,7 @@ class TestTradeSource:
                 vr_db, validate_trade_source(
                     {"kind": "backtest", "record_id": "rec_never"}),
                 RNG)
-        assert "不落库逐笔" in ei.value.message
+        assert "无单区间" in ei.value.message
         assert "不存在" not in ei.value.message
 
     @pytest.mark.parametrize("source", [
@@ -734,8 +734,8 @@ class TestRulerCompareShell:
                 vr_db, env["data_dir"], env["rng"], mode="wave",
                 trade_source={"kind": "backtest", "record_id": "rec_cmp"},
                 data_ranges=[env["rng"]])
-        assert "不落库逐笔" in ei.value.message
-        assert "隔离验证记录 record_id" in ei.value.message
+        assert "无单区间" in ei.value.message
+        assert "存量隔离验证记录 record_id" in ei.value.message
 
     def test_small_n_ci_null_with_disclosure(self, vr_db, env):
         """n<3 三档：1-2 笔指标可算 CI=null 附样本数（附着层契约）。"""

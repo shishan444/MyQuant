@@ -129,11 +129,16 @@ class TestSpecBehaviorAnchors:
 
     def test_sandbox_reference_rejection_is_spec_caliber(self):
         """沙盒引用拒绝（对照·数据来源条款 scenario）：文案锚与
-        detail 指引双在场（拒绝面细节用例在 test_ruler_compare）。"""
+        detail 指引双在场（拒绝面细节用例在 test_ruler_compare）。
+
+        锚定口径=change delta（lead 裁决 2026-11-17）：retire-legacy
+        增量 specs/evaluation-ruler「沙盒引用被拒」scenario 的指引
+        文本与实现 _BACKTEST_GUIDANCE 逐字一致；主 spec :54/:58 旧文
+        （「不落库逐笔/防污染纪律」）随归档同步，不在此锚定。"""
         from core.analysis.templates.ruler_compare import _BACKTEST_GUIDANCE
 
-        assert "沙盒回测不落库逐笔（防污染纪律）" in _BACKTEST_GUIDANCE
-        assert "隔离验证记录 record_id" in _BACKTEST_GUIDANCE
+        assert "params 形制无单区间" in _BACKTEST_GUIDANCE
+        assert "存量隔离验证记录 record_id" in _BACKTEST_GUIDANCE
 
     def test_default_t_test_anchor_unchanged(self):
         """condition_stats 缺省 t 检验存量锚（ai-research-tools MODIFIED

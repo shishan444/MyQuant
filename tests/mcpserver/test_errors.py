@@ -226,7 +226,7 @@ class TestToolSafeDecorator:
         err = out["error"]
         assert set(err) == {"code", "message", "detail", "hint"}
         assert err["code"] == "RESEARCH_SANDBOX_LIMIT"
-        assert "分区间" in err["hint"]  # hint 可行动（指明分区间验证）
+        assert "run_backtest" in err["hint"]  # hint 可行动（指明分次执行路径）
 
     @pytest.mark.parametrize("code", [
         "RESEARCH_DATA_INSUFFICIENT",
