@@ -191,9 +191,9 @@ class TestSocketTokenAuth:
         from api import realtime
         monkeypatch.setenv("MYQUANT_API_KEY", "sk-1")
         with _patch.object(realtime, "sio") as sio_mock:
-            result_no_token = asyncio.run(realtime._connect_evolution(
+            result_no_token = asyncio.run(realtime._connect_trading(
                 "sid", {"QUERY_STRING": "task_id=t1"}))
-            result_with = asyncio.run(realtime._connect_evolution(
+            result_with = asyncio.run(realtime._connect_trading(
                 "sid", {"QUERY_STRING": "task_id=t1&token=sk-1"}))
         assert result_no_token is False
         assert result_with is None  # 放行（handler 正常路径返回 None）

@@ -117,9 +117,10 @@ class TestTranslateReceiptThreeKeys:
         }
         hid_x = _hyp(db, conds=_conds_b)
         sid_x = translate_hypothesis(db, hypothesis_id=hid_x)["strategy_id"]
-        rr.save_validation_with_log(
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
             db, record_id=f"rec_s2e_{sid_x[:8]}", hypothesis_id=hid_x,
-            strategy_id=sid_x, level="isolated_backtest", params="{}",
+            strategy_id=sid_x, level="isolated_backtest", params={},
             result=None, verdict="pass", range_hash=f"rh_s2e_{sid_x[:6]}")
         transition_hypothesis(db, hid_x, target_status="supported",
                               evidence_ref=f"rec_s2e_{sid_x[:8]}")
@@ -164,10 +165,10 @@ class TestReuseNote:
         first = translate_hypothesis(db, hypothesis_id=hid)
         sid = first["strategy_id"]
         # draft 经 pass 记录+transition 官方路径转正（假设随之终态）
-        from core.persistence.repository import research as rr
-        rr.save_validation_with_log(
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
             db, record_id=f"rec_s2d_{sid[:8]}", hypothesis_id=hid,
-            strategy_id=sid, level="isolated_backtest", params="{}",
+            strategy_id=sid, level="isolated_backtest", params={},
             result=None, verdict="pass", range_hash=f"rh_s2d_{sid[:6]}")
         transition_hypothesis(db, hid, target_status="supported",
                               evidence_ref=f"rec_s2d_{sid[:8]}")

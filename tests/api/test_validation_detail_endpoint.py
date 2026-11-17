@@ -19,11 +19,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.hypothesis_service import register_hypothesis
-from core.analysis.validation_service import (
-    random_window_test,
-    run_isolated_backtest,
-    run_staged_validation,
-)
+from core.analysis.validation_service import run_sandbox_backtest
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
 from core.persistence.repository.strategy import save_strategy
@@ -116,10 +112,11 @@ class TestTwoStates:
             self, api_client, db_path, hypothesis_id):
         """记录存在而明细行不存在（历史形）→ 200 空骨架：三键 null
         如实缺失、元数据正常、不回填不重跑。"""
-        rr.save_validation_with_log(
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
             db_path, record_id="rec_hist_api", hypothesis_id=hypothesis_id,
-            strategy_id="st_x", level="isolated_backtest", params="{}",
-            result="{}", verdict="pass", range_hash="rh_api1")
+            strategy_id="st_x", level="isolated_backtest", params={},
+            result={}, verdict="pass", range_hash="rh_api1")
         r = api_client.get(
             "/api/research/validation-records/rec_hist_api/detail")
         assert r.status_code == 200
@@ -138,28 +135,30 @@ class TestTwoStates:
         r404 = api_client.get(
             "/api/research/validation-records/rec_ghost_zz/detail")
         assert r404.status_code == 404
-        rr.save_validation_with_log(
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
             db_path, record_id="rec_hist_api2", hypothesis_id=hypothesis_id,
-            strategy_id="st_x", level="isolated_backtest", params="{}",
-            result="{}", verdict="fail", range_hash="rh_api2")
+            strategy_id="st_x", level="isolated_backtest", params={},
+            result={}, verdict="fail", range_hash="rh_api2")
         r200 = api_client.get(
             "/api/research/validation-records/rec_hist_api2/detail")
         assert r200.status_code == 200
         assert r200.json()["detail_available"] is False
 
 
-class TestIsolatedPositive:
-    """B2 正向（真实落盘链路）：isolated 单份结构+幂等 GET。"""
+class TestSandboxPositive:
+    """B2 正向（真实落盘链路）：sandbox 单份结构+幂等 GET（K1 后
+    沙盒记录携带明细——retire-legacy 前该面由 isolated 链承载）。"""
 
-    def test_isolated_detail_via_real_pipeline(
+    def test_sandbox_detail_via_real_pipeline(
             self, api_client, svc_db, tmp_data_dir, hypothesis_id,
             strategy_saved):
-        out = run_isolated_backtest(
-            svc_db, tmp_data_dir, hypothesis_id=hypothesis_id,
-            strategy_id=strategy_saved,
-            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": "2023-03-01T00:00:00Z",
-                           "end": "2023-04-01T00:00:00Z"})
+        api_client.app.state.db_path = svc_db
+        api_client.app.state.data_dir = tmp_data_dir
+        out = run_sandbox_backtest(
+            svc_db, tmp_data_dir, strategy_id=strategy_saved,
+            hypothesis_id=hypothesis_id, symbol="BTCUSDT", timeframe="4h",
+            start="2023-03-01T00:00:00Z", end="2023-04-01T00:00:00Z")
         r = api_client.get(
             f"/api/research/validation-records/{out['record_id']}/detail")
         assert r.status_code == 200
@@ -189,53 +188,6 @@ class TestIsolatedPositive:
         assert r2.json() == body
 
 
-class TestRandomPositive:
-    """B2 正向：random 逐窗份数+逐窗对账（B2-9 random 面）。"""
-
-    def test_random_windows_detail(
-            self, api_client, svc_db, tmp_data_dir, hypothesis_id,
-            strategy_saved):
-        out = random_window_test(
-            svc_db, tmp_data_dir, strategy_id=strategy_saved,
-            hypothesis_id=hypothesis_id, symbol="BTCUSDT", timeframe="4h",
-            data_start="2023-01-01T00:00:00Z",
-            data_end="2023-06-01T00:00:00Z",
-            window_bars=100, n_windows=2, seed=11)
-        r = api_client.get(
-            f"/api/research/validation-records/{out['record_id']}/detail")
-        assert r.status_code == 200
-        execs = r.json()["executions"]
-        assert len(execs) == 2
-        for k, ex in enumerate(execs):
-            w = out["windows"][k]
-            assert ex["exec_ref"] == f"win_{k}"
-            assert ex["range_start"] == w["start"]
-            assert ex["range_end"] == w["end"]
-            assert len(ex["trades"]) == w["metrics"]["total_trades"]
-
-
-class TestStagedPositive:
-    """B2 正向：staged 逐段 exec_ref=段 label。"""
-
-    def test_staged_segments_detail(
-            self, api_client, svc_db, tmp_data_dir, hypothesis_id,
-            strategy_saved):
-        out = run_staged_validation(
-            svc_db, tmp_data_dir, strategy_id=strategy_saved,
-            hypothesis_id=hypothesis_id, symbol="BTCUSDT", timeframe="4h",
-            start="2023-02-01T00:00:00Z", end="2023-05-01T00:00:00Z",
-            segmentation="explicit", segments=[
-                {"label": "segA", "start": "2023-02-01T00:00:00Z",
-                 "end": "2023-03-15T00:00:00Z"},
-                {"label": "segB", "start": "2023-03-15T00:00:00Z",
-                 "end": "2023-05-01T00:00:00Z"}])
-        r = api_client.get(
-            f"/api/research/validation-records/{out['record_id']}/detail")
-        assert r.status_code == 200
-        execs = r.json()["executions"]
-        assert [e["exec_ref"] for e in execs] == ["segA", "segB"]
-
-
 class TestOrphanTradesTolerance:
     """读取面孤儿 trades 容错（equity 行缺失而 trades 行在——四写
     原子性下理论不可达，仓储层兜底分支由直插触达锚定）：孤儿份挂入
@@ -243,10 +195,11 @@ class TestOrphanTradesTolerance:
 
     def test_orphan_trade_rows_surfaced(self, api_client, db_path,
                                         hypothesis_id):
-        rr.save_validation_with_log(
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
             db_path, record_id="rec_orphan", hypothesis_id=hypothesis_id,
-            strategy_id="st_x", level="isolated_backtest", params="{}",
-            result="{}", verdict="pass", range_hash="rh_orp")
+            strategy_id="st_x", level="isolated_backtest", params={},
+            result={}, verdict="pass", range_hash="rh_orp")
         from core.persistence.orm.engine import engine_for
         from core.persistence.orm.models import VrTradeDetail
         from sqlalchemy import insert
@@ -274,50 +227,18 @@ class TestOrphanTradesTolerance:
                                 "timestamps": None, "values": []}
 
 
-class TestHttpEntryPipeline:
-    """B4-12 HTTP 面全链路：validate-backtest 端点真实执行 → 落盘 →
-    detail 读回（MCP 三验证工具均 api.post 透传到本端点——此段即
-    「MCP→HTTP→服务→落盘→读回」的中枢；MCP 壳形制见
-    tests/mcpserver/test_tools_passthrough.py）。"""
-
-    def test_validate_backtest_endpoint_detail_roundtrip(
-            self, api_client, svc_db, tmp_data_dir, hypothesis_id,
-            strategy_saved):
-        resp = api_client.post("/api/research/validate-backtest", json={
-            "hypothesis_id": hypothesis_id, "strategy_id": strategy_saved,
-            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                              "start": "2023-03-01T00:00:00Z",
-                              "end": "2023-04-01T00:00:00Z"}})
-        assert resp.status_code == 200
-        src = resp.json()
-        assert src["duplicated"] is False
-        r2 = api_client.get(
-            f"/api/research/validation-records/{src['record_id']}/detail")
-        assert r2.status_code == 200
-        body = r2.json()
-        assert body["detail_available"] is True
-        assert len(body["executions"]) == 1
-        ex = body["executions"][0]
-        assert ex["exec_ref"] == "main" and ex["exec_index"] == 0
-        # B2-9（HTTP 入口面）：响应 metrics 与落盘明细逐份对账
-        assert len(ex["trades"]) == src["metrics"]["total_trades"]
-        assert ex["equity"]["length"] == len(ex["equity"]["values"])
-        assert body["init_cash"] == 100000.0 and body["fee"] == 0.001 \
-            and body["slippage"] == 0.0005
-
-
 class TestDegradedPassthrough:
     """读取面降级形制透传（允许 ORM 直插降级行证如实透传——不重建
     时间轴）。"""
 
     def test_degraded_equity_timestamps_passthrough(
             self, api_client, db_path, hypothesis_id):
-        rr.save_validation_with_log(
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
             db_path, record_id="rec_degraded", hypothesis_id=hypothesis_id,
             strategy_id="st_x", level="isolated_backtest",
-            params=json.dumps({"init_cash": 1.0, "fee": 2.0,
-                               "slippage": 3.0}),
-            result="{}", verdict="pass", range_hash="rh_deg")
+            params={"init_cash": 1.0, "fee": 2.0, "slippage": 3.0},
+            result={}, verdict="pass", range_hash="rh_deg")
         from core.persistence.orm.engine import engine_for
         from core.persistence.orm.models import VrEquityCurve
         from sqlalchemy import insert
@@ -352,11 +273,13 @@ class TestStoredJsonCorruptRejected:
 
     def _seed_record(self, db_path, hypothesis_id, *, params="{}",
                      result="{}"):
-        rr.save_validation_with_log(
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
             db_path, record_id="rec_corrupt", hypothesis_id=hypothesis_id,
             strategy_id="st_x", level="isolated_backtest",
-            params=params, result=result, verdict="pass",
-            range_hash="rh_corrupt")
+            params=params if isinstance(params, str) else params,
+            result=result if isinstance(result, str) else result,
+            verdict="pass", range_hash="rh_corrupt")
 
     def _seed_equity(self, db_path, timestamps, values):
         from core.persistence.orm.engine import engine_for

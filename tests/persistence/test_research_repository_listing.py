@@ -58,9 +58,10 @@ def _insert_strategy(db_path: Path, strategy_id: str, parent_ids: str,
 
 def _save_pass(db_path: Path, hypothesis_id: str, strategy_id: str,
                record_id: str) -> None:
-    rr.save_validation_with_log(
+    from tests.helpers.vr_factory import insert_validation_record
+    insert_validation_record(
         db_path, record_id=record_id, hypothesis_id=hypothesis_id,
-        strategy_id=strategy_id, level="isolated_backtest", params="{}",
+        strategy_id=strategy_id, level="isolated_backtest", params={},
         result=None, verdict="pass", range_hash=f"rk_{record_id}")
 
 
@@ -264,12 +265,13 @@ class TestListValidationRecords:
         rr.save_hypothesis_with_log(db_path, **_hyp_kwargs(chash="c", rhash="r1"))
         rr.save_hypothesis_with_log(
             db_path, **_hyp_kwargs(hypothesis_id="hyp_2", chash="c", rhash="r2"))
+        from tests.helpers.vr_factory import insert_validation_record
         for i, (hyp, st) in enumerate([("hyp_1", "st_a"), ("hyp_1", "st_b"),
                                        ("hyp_2", "st_a")]):
-            rr.save_validation_with_log(
-                db_path, record_id=f"rec_{i}", hypothesis_id=hyp, strategy_id=st,
-                level="isolated_backtest", params="{}", result=None,
-                verdict="pass", range_hash=f"rk_{i}")
+            insert_validation_record(
+                db_path, record_id=f"rec_{i}", hypothesis_id=hyp,
+                strategy_id=st, level="isolated_backtest", params={},
+                result=None, verdict="pass", range_hash=f"rk_{i}")
 
     def test_hypothesis_filter(self, db_path: Path) -> None:
         rows = rr.list_validation_records(db_path, hypothesis_id="hyp_1")
@@ -298,9 +300,10 @@ class TestFindValidationIdentityNone:
 
     def test_none_strategy_matches_none_record(self, db_path: Path) -> None:
         rr.save_hypothesis_with_log(db_path, **_hyp_kwargs())
-        rr.save_validation_with_log(
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
             db_path, record_id="rec_none", hypothesis_id="hyp_1",
-            strategy_id=None, level="random_window", params="{}",
+            strategy_id=None, level="random_window", params={},
             result=None, verdict="inconclusive", range_hash="rk_none")
 
         found = rr.find_validation_by_identity(db_path, "hyp_1", None, "rk_none",
@@ -369,41 +372,6 @@ class TestAnalysisTaskNoopAndBoundary:
             "仅早于阈值的 running 行回收，failed 终态不重复回收"
 
 
-class TestFeatureRequestRepository:
-    """CARD-06 收口资产：功能需求单 repository 三函数（路由层内联 SQL 迁入）。"""
-
-    def _save(self, db_path: Path, rid: str, status: str = "open",
-              created: str = "2026-10-01T00:00:00") -> None:
-        rr.save_feature_request(db_path, request_id=rid, title=f"t-{rid}",
-                                payload='{"k": 1}', status=status,
-                                created_at=created)
-
-    def test_save_list_count_roundtrip(self, db_path: Path) -> None:
-        self._save(db_path, "fr_1")
-        self._save(db_path, "fr_2", created="2026-10-01T01:00:00")
-
-        rows = rr.list_feature_requests(db_path)
-        assert [r["request_id"] for r in rows] == ["fr_1", "fr_2"], \
-            "created_at 升序稳定排序"
-        assert rows[0]["payload"] == '{"k": 1}' and rows[0]["status"] == "open"
-        assert rr.count_feature_requests(db_path) == 2
-        assert rr.count_feature_requests(db_path, status="closed") == 0
-
-    def test_status_filter_and_pagination(self, db_path: Path) -> None:
-        self._save(db_path, "fr_1", status="open", created="2026-10-01T00:00:00")
-        self._save(db_path, "fr_2", status="closed", created="2026-10-01T01:00:00")
-        self._save(db_path, "fr_3", status="open", created="2026-10-01T02:00:00")
-
-        open_rows = rr.list_feature_requests(db_path, status="open")
-        assert {r["request_id"] for r in open_rows} == {"fr_1", "fr_3"}
-        assert rr.count_feature_requests(db_path, status="open") == 2, \
-            "count 过滤口径与 list 一致"
-        assert len(rr.list_feature_requests(db_path, limit=2)) == 2
-        rest = rr.list_feature_requests(db_path, offset=2, limit=5)
-        assert [r["request_id"] for r in rest] == ["fr_3"]
-        assert rr.list_feature_requests(db_path, offset=99) == []
-
-
 class TestListPluginsRepository:
     """CARD-06 收口资产：插件审计清单同构查询（source 分派 + name 过滤）。"""
 
@@ -439,80 +407,6 @@ class TestListPluginsRepository:
         rows = rr.list_plugins(db_path, source="formula", name="same")
         assert [r["version"] for r in rows] == [1, 2]
 
-
-class TestKeysetPaginationRepository:
-    """CARD-07 修复资产：list_* 分页双轨 + count 配套（repository 直测）。
-
-    feature_requests 的 created_at 外部可控，作 keyset 语义证明位；
-    缺省 asc + offset/limit 原样（iter_all_pages 消费方契约不动）；
-    cursor 严格比较（created_at 同值时主键决胜）。
-    """
-
-    def _save(self, db_path: Path, rid: str, created: str) -> None:
-        rr.save_feature_request(db_path, request_id=rid, title=rid,
-                                payload="{}", status="open",
-                                created_at=created)
-
-    @pytest.fixture(autouse=True)
-    def _three_rows(self, db_path: Path) -> None:
-        # fr_b/fr_c 同 created_at（主键决胜路径），fr_a 更早
-        self._save(db_path, "fr_a", "2026-10-01T00:00:00")
-        self._save(db_path, "fr_b", "2026-10-01T01:00:00")
-        self._save(db_path, "fr_c", "2026-10-01T01:00:00")
-
-    def test_default_asc_offset_limit_unchanged(self, db_path: Path) -> None:
-        rows = rr.list_feature_requests(db_path)
-        assert [r["request_id"] for r in rows] == ["fr_a", "fr_b", "fr_c"], \
-            "缺省 asc 稳定排序（created_at 同值主键决胜）"
-        assert [r["request_id"] for r in
-                rr.list_feature_requests(db_path, offset=1, limit=1)] == ["fr_b"]
-
-    def test_desc_order(self, db_path: Path) -> None:
-        rows = rr.list_feature_requests(db_path, order="desc")
-        assert [r["request_id"] for r in rows] == ["fr_c", "fr_b", "fr_a"]
-
-    def test_desc_cursor_walk(self, db_path: Path) -> None:
-        """desc 续页：cursor=(created_at, pk) 严格小于比较，无重无漏。"""
-        page1 = rr.list_feature_requests(db_path, order="desc", limit=1)
-        assert page1[0]["request_id"] == "fr_c"
-        cur = (page1[0]["created_at"], page1[0]["request_id"])
-        page2 = rr.list_feature_requests(db_path, order="desc",
-                                         limit=2, cursor=cur)
-        assert [r["request_id"] for r in page2] == ["fr_b", "fr_a"], \
-            "同 created_at 时 pk 严格小于决胜（fr_c 后是 fr_b）"
-
-    def test_asc_cursor_walk(self, db_path: Path) -> None:
-        """asc 续页：cursor 严格大于比较。"""
-        first = rr.list_feature_requests(db_path, limit=1)
-        assert first[0]["request_id"] == "fr_a"
-        cur = (first[0]["created_at"], first[0]["request_id"])
-        rest = rr.list_feature_requests(db_path, limit=5, cursor=cur)
-        assert {r["request_id"] for r in rest} == {"fr_b", "fr_c"}
-
-    def test_count_filters_match_list(self, db_path: Path) -> None:
-        """三 count 函数过滤口径与对应 list 一致。"""
-        rr.save_hypothesis_with_log(db_path, **_hyp_kwargs(chash="c", rhash="r1"))
-        rr.save_hypothesis_with_log(
-            db_path, **_hyp_kwargs(hypothesis_id="hyp_2", chash="c", rhash="r2"))
-        rr.transition_hypothesis_with_promotion(
-            db_path, "hyp_2", target_status="refuted", terminal_ref="rec_x")
-        rr.append_research_log(db_path, hypothesis_id="hyp_1",
-                               entry_type="adhoc", summary="x")
-        rr.save_validation_with_log(
-            db_path, record_id="rec_1", hypothesis_id="hyp_1",
-            strategy_id="st_a", level="isolated_backtest", params="{}",
-            result=None, verdict="pass", range_hash="rk_1")
-
-        assert rr.count_hypotheses(db_path) == 2
-        assert rr.count_hypotheses(db_path, status="active") == 1, \
-            "count 与 list_hypotheses 同过滤口径"
-        assert rr.count_research_log(db_path, entry_type="adhoc") == 1
-        assert rr.count_research_log(db_path, hypothesis_id="hyp_1") == 3, \
-            "register + adhoc + validate（save_validation_with_log 双写日志）"
-        assert rr.count_validation_records(
-            db_path, hypothesis_id="hyp_1") == 1
-        assert rr.count_validation_records(
-            db_path, hypothesis_id="hyp_1", strategy_id="st_b") == 0
 
 
 class TestParseParentIds:

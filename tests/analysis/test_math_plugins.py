@@ -22,7 +22,7 @@ from core.analysis.plugin_service import (
     register_formula_plugin,
 )
 from core.analysis.registry_meta import derive_warmup_full
-from core.analysis.validation_service import run_isolated_backtest
+from core.analysis.validation_service import run_sandbox_backtest
 from core.persistence.db_ext import init_db_ext
 
 _EXPRESSIONS = {
@@ -190,19 +190,13 @@ class TestS1AcceptancePipeline:
         t = translate_hypothesis(db, hypothesis_id=hid, data_dir=data_dir)
         assert t["status"] == "draft" and t["risk_genes"] == "declared"
 
-        v = run_isolated_backtest(
-            db, data_dir, hypothesis_id=hid, strategy_id=t["strategy_id"],
-            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": _RUN_START, "end": _RUN_END})
+        v = run_sandbox_backtest(
+            db, data_dir, strategy_id=t["strategy_id"], hypothesis_id=hid,
+            symbol="BTCUSDT", timeframe="4h",
+            start=_RUN_START, end=_RUN_END)
         assert v["record_id"], "验证记录在案"
-        assert v["verdict"] in ("pass", "fail", "inconclusive")
-        assert v["warmup"]["bars"] >= 200, "kalman 固定贡献进 warmup"
-        # 幂等：同请求重跑返回既有记录
-        v2 = run_isolated_backtest(
-            db, data_dir, hypothesis_id=hid, strategy_id=t["strategy_id"],
-            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": _RUN_START, "end": _RUN_END})
-        assert v2["record_id"] == v["record_id"]
+        assert v["sandbox"] is True
+        assert v["warmup_bars"] >= 200, "kalman 固定贡献进 warmup"
 
     def test_s1_series_mount_fully_wired(self, db, market_df):
         """series 档 fx 形制接线：fx_kf_level 作 sl_series_source 挂载

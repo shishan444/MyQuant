@@ -293,7 +293,7 @@ class TestStrategyDelete:
         assert get_resp.status_code == 404
         assert self._transition_events(client, strategy_id) == []
 
-    @pytest.mark.parametrize("status", ["active", "paper", "candidate", "live"])
+    @pytest.mark.parametrize("status", ["active", "paper", "candidate"])
     def test_delete_non_draft_archives(self, client: TestClient, status: str) -> None:
         """非 draft→经 transit(manual_archive) 归档：204+行保留
         status=archived+事件在场（REST 同端点语义从物理删除变归档——
@@ -685,129 +685,6 @@ class TestStrategyCompare:
         assert data["results"][0]["strategy_id"] in ids
 
 # ── Test: Evolution Tasks ──
-
-class TestEvolutionTaskCreate:
-    def test_create_evolution_task(self, client: TestClient) -> None:
-        """POST /api/evolution/tasks should create an evolution task."""
-        payload = _sample_evolution_create()
-        response = client.post("/api/evolution/tasks", json=payload)
-        assert response.status_code == 201
-        data = response.json()
-        assert data["task_id"] is not None
-        assert data["status"] == "pending"
-        assert data["symbol"] == "BTCUSDT"
-        assert data["timeframe"] == "4h"
-        assert data["target_score"] == 80.0
-
-    def test_create_evolution_task_missing_fields(self, client: TestClient) -> None:
-        """POST /api/evolution/tasks with missing fields should return 422."""
-        response = client.post("/api/evolution/tasks", json={})
-        assert response.status_code == 422
-
-class TestEvolutionTaskList:
-    def test_list_tasks_empty(self, client: TestClient) -> None:
-        """GET /api/evolution/tasks should return empty list."""
-        response = client.get("/api/evolution/tasks")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["items"] == []
-        assert data["total"] == 0
-
-    def test_list_tasks_after_create(self, client: TestClient) -> None:
-        """GET /api/evolution/tasks should list created tasks."""
-        client.post("/api/evolution/tasks", json=_sample_evolution_create())
-        response = client.get("/api/evolution/tasks")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["total"] == 1
-
-    def test_list_tasks_filter_by_status(self, client: TestClient) -> None:
-        """GET /api/evolution/tasks?status=pending should filter."""
-        client.post("/api/evolution/tasks", json=_sample_evolution_create())
-        response = client.get("/api/evolution/tasks", params={"status": "pending"})
-        assert response.status_code == 200
-        data = response.json()
-        assert data["total"] == 1
-
-class TestEvolutionTaskGet:
-    def test_get_task(self, client: TestClient) -> None:
-        """GET /api/evolution/tasks/{id} should return task details."""
-        create_resp = client.post("/api/evolution/tasks", json=_sample_evolution_create())
-        task_id = create_resp.json()["task_id"]
-        response = client.get(f"/api/evolution/tasks/{task_id}")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["task_id"] == task_id
-        assert data["symbol"] == "BTCUSDT"
-
-    def test_get_task_not_found(self, client: TestClient) -> None:
-        """GET /api/evolution/tasks/{id} with nonexistent ID should return 404."""
-        response = client.get("/api/evolution/tasks/nonexistent-id")
-        assert response.status_code == 404
-
-class TestEvolutionTaskHistory:
-    def test_get_task_history_empty(self, client: TestClient) -> None:
-        """GET /api/evolution/tasks/{id}/history should return empty list."""
-        create_resp = client.post("/api/evolution/tasks", json=_sample_evolution_create())
-        task_id = create_resp.json()["task_id"]
-        response = client.get(f"/api/evolution/tasks/{task_id}/history")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["task_id"] == task_id
-        assert data["generations"] == []
-
-    def test_get_task_history_with_data(self, client: TestClient) -> None:
-        """GET /api/evolution/tasks/{id}/history should return generation history."""
-        create_resp = client.post("/api/evolution/tasks", json=_sample_evolution_create())
-        task_id = create_resp.json()["task_id"]
-        # Add history via the DB layer
-        from core.persistence.db import save_history
-        from api.deps import get_db_path
-
-        # We need to use the test db_path - use the app state
-        db_path = client.app.state.db_path
-        save_history(db_path, task_id, 1, 75.0, 60.0, "summary1")
-        save_history(db_path, task_id, 2, 80.0, 65.0, "summary2")
-
-        response = client.get(f"/api/evolution/tasks/{task_id}/history")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["generations"]) == 2
-        assert data["generations"][0]["generation"] == 1
-        assert data["generations"][0]["best_score"] == 75.0
-
-class TestEvolutionTaskPause:
-    def test_pause_task(self, client: TestClient) -> None:
-        """POST /api/evolution/tasks/{id}/pause should pause task."""
-        create_resp = client.post("/api/evolution/tasks", json=_sample_evolution_create())
-        task_id = create_resp.json()["task_id"]
-        # D3: pause 前态 {running}——先推进到 running（模拟 runner 拾取）
-        from core.persistence.db import update_task as _ut
-        _ut(client.app.state.db_path, task_id, status="running")
-        response = client.post(f"/api/evolution/tasks/{task_id}/pause")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "paused"
-
-    def test_pause_task_not_found(self, client: TestClient) -> None:
-        """POST /api/evolution/tasks/{id}/pause with nonexistent ID should return 404."""
-        response = client.post("/api/evolution/tasks/nonexistent-id/pause")
-        assert response.status_code == 404
-
-class TestEvolutionTaskStop:
-    def test_stop_task(self, client: TestClient) -> None:
-        """POST /api/evolution/tasks/{id}/stop should stop task."""
-        create_resp = client.post("/api/evolution/tasks", json=_sample_evolution_create())
-        task_id = create_resp.json()["task_id"]
-        response = client.post(f"/api/evolution/tasks/{task_id}/stop")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "stopped"
-
-    def test_stop_task_not_found(self, client: TestClient) -> None:
-        """POST /api/evolution/tasks/{id}/stop with nonexistent ID should return 404."""
-        response = client.post("/api/evolution/tasks/nonexistent-id/stop")
-        assert response.status_code == 404
 
 # ── Test: Data Management ──
 

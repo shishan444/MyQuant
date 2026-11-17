@@ -242,28 +242,6 @@ class TestEmbeddedAndMissing:
         assert by_id["vr_04"]["result"] is None  # 三态缺失如实
         assert by_id["vr_01"]["pollution_cause"] is None  # 未标注 NULL
 
-    def test_same_source_as_strategy_report(self, client):
-        """与 GET /validation/{strategy_id}/report 同源同值（同一 record 两视图）。
-
-        修正记录：原版在 report 404（strategy 实体未种）与交集空时
-        零断言恒绿——Scenario 同源同值实际未被证明。现 fixture 已种
-        st_wb 实体，两视图交集由种子确定（vr_00/02 isolated、vr_04
-        random_window），硬断言共有字段一致。
-        """
-        rep = client.get("/api/research/validation/st_wb/report")
-        assert rep.status_code == 200  # 实体已种——404 即种子失效
-        rep_iso = {r["record_id"]: r for r in rep.json()["isolated_backtests"]}
-        rep_win_ids = {r["record_id"] for r in rep.json()["random_window_summaries"]}
-        mine = {r["record_id"]: r for r in client.get(
-            "/api/research/validation-records",
-            params={"strategy_id": "st_wb", "limit": 200}).json()["records"]}
-        # 交集非空（同源性可证明）+ 两视图 record 归属一致
-        assert set(mine) == (set(rep_iso) | rep_win_ids)
-        assert {"vr_00", "vr_02"} <= set(rep_iso)
-        assert "vr_04" in rep_win_ids
-        # 共有字段同值：isolated 行 verdict 两视图一致
-        for rid in ("vr_00", "vr_02"):
-            assert mine[rid]["verdict"] == rep_iso[rid]["verdict"]
 
 
 class TestStagedLevelFilter:

@@ -31,10 +31,9 @@ def _seed(db: Path) -> str:
 
 
 def _save(db: Path, record_id: str, trace=None, hyp="hyp_t"):
-    rr.save_validation_with_log(
+    rr.save_sandbox_validation_record(
         db, record_id=record_id, hypothesis_id=hyp, strategy_id=None,
-        level="isolated_backtest", segmentation="", params="{}",
-        result="{}", verdict="pass", range_hash=f"rh_{record_id}",
+        params="{}", result="{}", range_hash=f"rh_{record_id}",
         trace=trace)
 
 

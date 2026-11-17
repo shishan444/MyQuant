@@ -72,9 +72,10 @@ def _promote_via_research_chain(db: Path) -> str:
         db, conditions=_CONDS, statement="s", data_ranges=_RANGES, strategy_params={"stop_loss": 0.05})[
         "hypothesis_id"]
     sid = translate_hypothesis(db, hypothesis_id=hid)["strategy_id"]
-    rr.save_validation_with_log(
+    from tests.helpers.vr_factory import insert_validation_record
+    insert_validation_record(
         db, record_id="rec_chain_pass", hypothesis_id=hid, strategy_id=sid,
-        level="isolated_backtest", params="{}", result=None, verdict="pass",
+        level="isolated_backtest", params={}, result=None, verdict="pass",
         range_hash="rh_chain_pass")
     out = transition_hypothesis(
         db, hid, target_status="supported", evidence_ref="rec_chain_pass")

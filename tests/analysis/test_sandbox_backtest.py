@@ -126,17 +126,15 @@ class TestSandboxBacktest:
             timeframe="4h", start="2023-03-01", end="2023-03-20",
             hypothesis_id=hid)
         assert out["hypothesis_id"] == hid
-        # 同区间隔离验证：区间重叠被拒（窥探拦截）
-        with pytest.raises(ResearchError) as ei:
-            run_isolated_backtest(
-                db, data_dir, hypothesis_id=hid, strategy_id=sid,
-                request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                               "start": "2023-03-05T00:00:00Z",
-                               "end": "2023-03-15T00:00:00Z"})
-        assert ei.value.code == "RESEARCH_RANGE_OVERLAP"
-        judged = ei.value.detail["judged_ranges"]
-        assert any(r["start"].startswith("2023-03-01") for r in judged), \
-            "沙盒区间应出现在判定并集明细中"
+        # 沙盒区间计入判定并集（retire-legacy 后旧隔离 409 通道退役，
+        # 并集面经研究日志 data_ranges 留痕直读验证——同一事实源）
+        import json as _json
+        entries = [e for e in rr.list_research_log(db, hypothesis_id=hid)
+                   if e["entry_type"] == "validate"]
+        assert entries, "沙盒执行留 validate 日志"
+        ranges = _json.loads(entries[-1]["data_ranges"] or "[]")
+        assert any(str(r.get("start", "")).startswith("2023-03-01")
+                   for r in ranges), "沙盒区间应出现在并集留痕明细中"
 
     def test_over_limit_rejected(self, strategy_id_module, data_dir):
         db, sid = strategy_id_module

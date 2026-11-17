@@ -65,37 +65,6 @@ class TestChartIndicatorsTimeframeGuard:
         assert "interval 未知" in response.json()["detail"]
 
 
-class TestEvolutionTimeframeGuard:
-    def _payload(self, **overrides) -> dict:
-        body = {
-            "symbol": "BTCUSDT", "timeframe": "4h", "target_score": 80.0,
-            "score_template": "explorer", "population_size": 15,
-            "max_generations": 200,
-        }
-        body.update(overrides)
-        return body
-
-    def test_unknown_timeframe_400_interval_detail(
-        self, api_client: TestClient,
-    ) -> None:
-        """非法 timeframe → 400 detail 'interval 未知'（白名单拒绝）。"""
-        response = api_client.post(
-            "/api/evolution/tasks", json=self._payload(timeframe="9z"),
-        )
-        assert response.status_code == 400
-        assert "interval 未知" in response.json()["detail"]
-
-    def test_valid_timeframe_missing_data_400_kline_detail(
-        self, api_client: TestClient,
-    ) -> None:
-        """合法周期无数据 → 400 'K线数据' 形制不变。"""
-        response = api_client.post(
-            "/api/evolution/tasks", json=self._payload(symbol="NOSUCHCOIN"),
-        )
-        assert response.status_code == 400
-        assert "K线数据" in response.json()["detail"]
-
-
 class TestDatasetIdGuard:
     """backtest/compare 的 dataset_id 命名白名单（rsplit + 双校验）。"""
 

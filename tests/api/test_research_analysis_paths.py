@@ -139,30 +139,6 @@ class TestCorruptedJsonTails:
         assert body["result_ref"] == "{corrupt"
         assert "result" not in body, "损坏 result_ref 不产生 result 键"
 
-    def test_validation_report_result_corrupt_zero_filled(
-            self, api_client, paths_env):
-        """result 列损坏归 {}：人话摘要按缺省 0 值呈现（不 500）。"""
-        rr.save_hypothesis_with_log(
-            paths_env["db"], hypothesis_id="hyp_c", conditions="{}",
-            conditions_hash="cc", statement="c", data_ranges="[]",
-            ranges_hash="rc")
-        # B2 两态判定序（变更一）：报告查询先判实体存在——补建策略
-        # 实体使本用例聚焦损坏 result 容错（实体缺失 404 有专测覆盖）
-        from core.persistence.repository.strategy import save_strategy
-        save_strategy(paths_env["db"], strategy_id="st_c", dna_json="{}",
-                      symbol="BTCUSDT", timeframe="4h", name="c",
-                      source="manual")
-        rr.save_validation_with_log(
-            paths_env["db"], record_id="rec_c", hypothesis_id="hyp_c",
-            strategy_id="st_c", level="isolated_backtest",
-            params='{"request_range": {}}', result="{corrupt",
-            verdict="pass", range_hash="rkc")
-        _wire(api_client, paths_env)
-        resp = api_client.get("/api/research/validation/st_c/report")
-        assert resp.status_code == 200, "损坏 result 不应 500"
-        iso = resp.json()["isolated_backtests"][0]
-        assert iso["range"] == {} and "0.0%" in iso["人话"], \
-            "损坏 result 归 {}，指标缺省 0 值呈现"
 
     def test_model_plugin_oos_summary_corrupt(self, api_client, paths_env):
         """oos_summary 损坏：列表 200 原样保留。"""

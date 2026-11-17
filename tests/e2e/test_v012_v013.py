@@ -23,28 +23,6 @@ def _wait_react(page: Page, timeout: int = 8000):
 
 
 class TestV012Evolution:
-    def test_evolution_page_loads(self, page: Page):
-        page.goto(BASE + "/evolution", timeout=10000)
-        page.wait_for_load_state("domcontentloaded")
-        _wait_react(page)
-        root = page.locator("#root")
-        assert len(root.inner_html()) > 200
-
-    def test_evolution_has_task_info(self, page: Page):
-        page.goto(BASE + "/evolution", timeout=10000)
-        page.wait_for_load_state("domcontentloaded")
-        _wait_react(page)
-        content = page.content().lower()
-        assert "evolution" in content or "task" in content
-
-    def test_evolution_screenshot(self, page: Page):
-        page.goto(BASE + "/evolution", timeout=10000)
-        page.wait_for_load_state("domcontentloaded")
-        _wait_react(page)
-        page.screenshot(path="tests/e2e/artifacts/v012_evolution_page.png")
-
-
-class TestV013Library:
     def test_library_page_loads(self, page: Page):
         page.goto(BASE + "/library", timeout=10000)
         page.wait_for_load_state("domcontentloaded")

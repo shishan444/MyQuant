@@ -38,13 +38,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _STRAT_DIR = _REPO_ROOT / "api" / "routes" / "strategies"
 
 # 六调用点所在文件（backtest 读库/内联同文件两点；前 3 同目录；
-# live/evolution 跨目录——显式清单不依赖 grep head 截断）
+# 显式清单不依赖 grep head 截断——live_trading/evolution 两路由文件
+# 已随旧域退役（retire-legacy 任务 7/8），清单随之收缩）
 GUARDED_FILES = [
     _STRAT_DIR / "backtest.py",
     _STRAT_DIR / "batch.py",
     _STRAT_DIR / "compare.py",
-    _REPO_ROOT / "api" / "routes" / "live_trading.py",
-    _REPO_ROOT / "api" / "routes" / "evolution.py",
 ]
 
 # 排除面（A-1）：validate_dna 单段内联块保留的文件——显式列名

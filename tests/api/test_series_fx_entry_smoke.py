@@ -107,9 +107,9 @@ class TestSeriesSystemChain:
         })
         assert r_reg.status_code == 200, r_reg.text[:300]  # 登记幂等形制 200
         hid = r_reg.json()["hypothesis_id"]
-        r_tr = api_client.post(f"/api/research/translate/{hid}")
-        assert r_tr.status_code == 200, r_tr.text[:300]
-        out = r_tr.json()
+        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        out = translate_hypothesis(
+            api_client.app.state.db_path, hypothesis_id=hid)
         assert out["risk_genes_disclosure"]["values"][
             "sl_series_source"]["indicator"] == "BB"
         sid = out["strategy_id"]

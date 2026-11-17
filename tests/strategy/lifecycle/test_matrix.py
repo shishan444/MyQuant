@@ -294,9 +294,10 @@ class TestRealTriggerPaths:
             data_ranges=_RANGES, strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         sid = translate_hypothesis(
             research_db, hypothesis_id=hid)["strategy_id"]
-        rr.save_validation_with_log(
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
             research_db, record_id="rec_rl_pass", hypothesis_id=hid,
-            strategy_id=sid, level="isolated_backtest", params="{}",
+            strategy_id=sid, level="isolated_backtest", params={},
             result=None, verdict="pass", range_hash="rh_rl_pass")
         out = transition_hypothesis(
             research_db, hid, target_status="supported",
@@ -316,9 +317,10 @@ class TestRealTriggerPaths:
             data_ranges=_RANGES, strategy_params={"stop_loss": 0.05})["hypothesis_id"]
         sid = translate_hypothesis(
             research_db, hypothesis_id=hid)["strategy_id"]
-        rr.save_validation_with_log(
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
             research_db, record_id="rec_rl_fail", hypothesis_id=hid,
-            strategy_id=sid, level="isolated_backtest", params="{}",
+            strategy_id=sid, level="isolated_backtest", params={},
             result=None, verdict="fail", range_hash="rh_rl_fail")
         transition_hypothesis(
             research_db, hid, target_status="refuted",

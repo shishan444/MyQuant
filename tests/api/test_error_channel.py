@@ -100,17 +100,6 @@ class TestRandomWindowGhostHypothesis404:
     → 404（服务层 RESEARCH_HYPOTHESIS_NOT_FOUND 冒泡应用层全局兜底
     透传——原 200 直写虚挂记录行为消灭的端点级固化）。"""
 
-    def test_ghost_hypothesis_404(self, api_client, error_env):
-        _wire(api_client, error_env)
-        resp = api_client.post("/api/research/random-window-test", json={
-            "strategy_id": "st_any", "hypothesis_id": "hyp_ghost",
-            "symbol": "BTCUSDT", "timeframe": "4h",
-            "data_start": "2024-01-01T00:00:00Z",
-            "data_end": "2024-03-01T00:00:00Z",
-            "window_bars": 60, "n_windows": 2, "seed": 7})
-        assert resp.status_code == 404, resp.text
-        assert resp.json()["detail"]["code"] == "RESEARCH_HYPOTHESIS_NOT_FOUND"
-        assert "hyp_ghost" in resp.text
 
 
 class TestCollectRefsUnit:
@@ -717,8 +706,9 @@ class TestDataRangeTimestampValidation:
         assert "ISO8601" in msgs and "2024-01-01" in msgs  # 合法形 hint 在场
 
     def test_invalid_timestamp_three_endpoints(self, api_client):
-        """三消费端点参数化：任一 DataRangeItem 字段非法串 → 422 且
-        msg 含错误码与 hint。"""
+        """消费端点参数化：任一 DataRangeItem 字段非法串 → 422 且
+        msg 含错误码与 hint（retire-legacy 后旧验证端点退役——该端点
+        的消费面随之消失，存活两消费面继续锚）。"""
         cases = [
             ("/api/research/analysis", {
                 "template": "correlation_scan",
@@ -736,11 +726,6 @@ class TestDataRangeTimestampValidation:
                 "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
                                  "start": "2024-01-01T00:00:00Z",
                                  "end": "2024-13-45T00:00:00Z"}]}),
-            ("/api/research/validate-backtest", {
-                "hypothesis_id": "hyp_any", "strategy_id": "st_any",
-                "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                                  "start": "2024-01-01",
-                                  "end": "不是时间"}}),
         ]
         for path, body in cases:
             resp = api_client.post(path, json=body)

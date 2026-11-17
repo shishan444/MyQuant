@@ -23,8 +23,6 @@ class TestUpperBound422:
         pytest.param("/api/data/datasets/ds-x/ohlcv", "limit", 50001, id="dataset ohlcv 50001"),
         pytest.param("/api/data/ohlcv/BTCUSDT/4h", "limit", 50001, id="by-symbol ohlcv 50001"),
         pytest.param("/api/data/chart-indicators/BTCUSDT/4h", "limit", 50001, id="chart-indicators 50001"),
-        pytest.param("/api/evolution/strategies", "limit", 501, id="evolution strategies 501"),
-        pytest.param("/api/evolution/tasks/tx/discovered-strategies", "limit", 501, id="discovered 501"),
         pytest.param("/api/strategies", "limit", 501, id="strategies 501"),
         # verify 样本已随旧验证会话体系退役（retire-verify-sessions）——
         # 换 research/log 的 cursor 形制校验面（真 422 面；page_size 是钳制语义）
@@ -36,8 +34,6 @@ class TestUpperBound422:
         assert response.status_code == 422, f"{url}?{param}={value}"
 
     @pytest.mark.parametrize(("url", "params"), [
-        pytest.param("/api/evolution/tasks", {"page": 0}, id="page=0"),
-        pytest.param("/api/evolution/tasks", {"page_size": 501}, id="page_size=501"),
         pytest.param("/api/strategies", {"offset": -5}, id="strategies offset=-5"),
         pytest.param("/api/data/datasets", {"limit": 0}, id="limit=0 下界拒绝"),
         pytest.param("/api/data/datasets", {"limit": -1}, id="limit=-1"),
@@ -65,12 +61,6 @@ class TestBoundaryAndDefaultPass:
         response = api_client.get("/api/data/ohlcv/BTCUSDT/4h", params={"limit": 50000})
         assert response.status_code == 200
 
-    def test_page_and_page_size_bounds_pass(self, api_client: TestClient) -> None:
-        response = api_client.get(
-            "/api/evolution/tasks", params={"page": 1, "page_size": 500},
-        )
-        assert response.status_code == 200
-
     def test_offset_zero_passes(self, api_client: TestClient) -> None:
         response = api_client.get("/api/strategies", params={"offset": 0})
         assert response.status_code == 200
@@ -78,6 +68,5 @@ class TestBoundaryAndDefaultPass:
     def test_defaults_unchanged(self, api_client: TestClient) -> None:
         """默认参数路径不受约束影响。"""
         assert api_client.get("/api/data/datasets").status_code == 200
-        assert api_client.get("/api/evolution/tasks").status_code == 200
         assert api_client.get("/api/strategies").status_code == 200
         assert api_client.get("/api/research/log").status_code == 200

@@ -306,9 +306,10 @@ class TestTransitionGaps:
         other = _register(db, statement="竞争B")
         # 目标态 supported 的证据核验先于迁移——须有真实 pass 记录
         from core.persistence.repository import research as rr
-        rr.save_validation_with_log(
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
             db, record_id="rec_race", hypothesis_id=hid, strategy_id=None,
-            level="isolated_backtest", params="{}", result=None,
+            level="isolated_backtest", params={}, result=None,
             verdict="pass", range_hash="rh_race")
 
         real = rr.transition_hypothesis_with_promotion  # patch 前捕获

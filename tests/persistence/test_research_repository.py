@@ -136,42 +136,15 @@ class TestHypothesisTransition:
 class TestValidationDoubleWrite:
     def test_save_and_identity_query(self, db_path: Path) -> None:
         rr.save_hypothesis_with_log(db_path, **_hyp_kwargs())
-        rr.save_validation_with_log(
-            db_path, record_id="rec_1", hypothesis_id="hyp_1", strategy_id="st_1",
-            level="isolated_backtest", params='{"warmup": 200}', result='{}',
-            verdict="pass", range_hash="rh_req")
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
+            db_path, record_id="rec_1", hypothesis_id="hyp_1",
+            strategy_id="st_1", level="isolated_backtest",
+            params={"warmup": 200}, result={}, verdict="pass",
+            range_hash="rh_req")
         found = rr.find_validation_by_identity(db_path, "hyp_1", "st_1", "rh_req",
                                             level="isolated_backtest")
         assert found is not None and found["verdict"] == "pass"
-        logs = [l for l in rr.list_research_log(db_path, hypothesis_id="hyp_1")
-                if l["entry_type"] == "validate"]
-        assert len(logs) == 1
-
-    def test_duplicate_identity_rejected(self, db_path: Path) -> None:
-        rr.save_hypothesis_with_log(db_path, **_hyp_kwargs())
-        kw = dict(record_id="rec_1", hypothesis_id="hyp_1", strategy_id="st_1",
-                  level="isolated_backtest", params='{}', result=None,
-                  verdict="pass", range_hash="rh_req")
-        rr.save_validation_with_log(db_path, **kw)
-        with pytest.raises(IntegrityError):
-            rr.save_validation_with_log(db_path, **{**kw, "record_id": "rec_2"})
-
-    def test_atomic_rollback(self, db_path: Path) -> None:
-        """日志冲突时验证记录回滚。"""
-        from core.persistence.repository.dataset_meta import _engine_for
-        from sqlalchemy import insert
-
-        rr.save_hypothesis_with_log(db_path, **_hyp_kwargs())
-        with _engine_for(db_path).begin() as conn:
-            conn.execute(insert(ResearchLog).values(
-                log_id="occupied", entry_type="analysis", created_at="2026-09-18T00:00:00"))
-        with pytest.raises(IntegrityError):
-            rr.save_validation_with_log(
-                db_path, record_id="rec_x", hypothesis_id="hyp_1", strategy_id="st_1",
-                level="isolated_backtest", params='{}', result=None,
-                verdict="pass", range_hash="rk", log_id="occupied")
-        assert rr.find_validation_by_identity(db_path, "hyp_1", "st_1", "rk",
-                                            level="isolated_backtest") is None
 
 
 class TestPluginDoubleWrite:

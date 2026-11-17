@@ -37,7 +37,7 @@ class TestEndToEndBothDirections:
         db, d = _env(tmp_path)
         from core.analysis.hypothesis_service import register_hypothesis
         from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        from core.analysis.validation_service import run_isolated_backtest
+        from core.analysis.validation_service import run_sandbox_backtest
         from core.persistence.repository.strategy import get_strategy
 
         hid = register_hypothesis(
@@ -72,16 +72,13 @@ class TestEndToEndBothDirections:
         # 在求值时经 naming 解析——DNA 层锚定指标名）
         assert '"SessionRange"' in genes_raw["dna_json"]
 
-        result = run_isolated_backtest(
-            db, d, hypothesis_id=hid, strategy_id=out["strategy_id"],
-            request_range={"symbol": "BTCUSDT", "timeframe": "1h",
-                           "start": "2023-08-01" if direction == "long"
-                           else "2023-09-01",
-                           "end": "2023-09-01" if direction == "long"
-                           else "2023-10-01"})
-        assert result["verdict"] in {"pass", "fail", "inconclusive"}
+        result = run_sandbox_backtest(
+            db, d, strategy_id=out["strategy_id"], hypothesis_id=hid,
+            symbol="BTCUSDT", timeframe="1h",
+            start="2023-08-01" if direction == "long" else "2023-09-01",
+            end="2023-09-01" if direction == "long" else "2023-10-01")
+        assert result["sandbox"] is True and result["record_id"]
         assert "metrics" in result and "time_exit" not in result  # 检查无泄漏键
-        assert result["direction"] == direction
 
 
 class TestInspectCasesAnchors:

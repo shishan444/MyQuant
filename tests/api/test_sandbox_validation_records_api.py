@@ -272,13 +272,15 @@ class TestZeroChangeFaces:
         assert all(x["record_id"] != out["record_id"]
                    for x in o["records"])
 
-    def test_sandbox_detail_empty_skeleton_with_params(self, env):
-        """TC-4-1：沙盒 detail 200 空骨架+params 顶层三键提取真值。
+    def test_sandbox_detail_rows_with_params(self, env):
+        """TC-4-1（K1 新契约）：沙盒 detail 200 携带明细行+params
+        顶层三键提取真值。
 
         非默认参数前置（tests-plan 权威定义：fee=0.002/init_cash=50000）
         ——三键值与 run_sandbox_backtest 缺省值全异，「params 顶层提取
         真值」与「端点硬编码默认值」可判别（P2 修复：原默认参前置
-        两形态不可判别）。
+        两形态不可判别）。retire-legacy K1 后沙盒新记录必须保留明细
+        （三明细有行+三布尔=1）。
         """
         client, hid, out, db, d = env
         o = run_sandbox_backtest(
@@ -289,18 +291,17 @@ class TestZeroChangeFaces:
             f"/api/research/validation-records/{o['record_id']}/detail")
         assert r.status_code == 200
         body = r.json()
-        assert body["detail_available"] is False
-        assert body["executions"] == []
+        assert body["detail_available"] is True, "K1：明细行在场"
+        assert body["executions"], "K1：执行份非空"
         assert body["level"] == "sandbox_backtest"
         assert body["verdict"] == ""
         # 三键=params 顶层提取真值（与缺省 0.001/0.0005/100000 全异）
         assert body["fee"] == 0.002
         assert body["slippage"] == 0.001
         assert body["init_cash"] == 50000.0
-        assert body["signal_trace"] is None
-        assert body["trade_semantics"] is None
-        assert body["stop_price"] is None
-        assert body["mtf_gated_bars"] is None
+        assert body["signal_trace"] is True, "K1：留痕三布尔=1"
+        assert body["trade_semantics"] is True
+        assert body["stop_price"] is True
 
     def test_sandbox_rejected_as_ruler_ab_source(self, env):
         """TC-4-2：沙盒 record_id 经公共校验件 resolve_validation_record

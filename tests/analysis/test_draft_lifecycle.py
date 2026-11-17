@@ -43,10 +43,12 @@ def _hyp(db, conds=None, ranges=None) -> str:
 
 
 def _record(db, hid, sid, verdict, rec_id=None):
-    rr.save_validation_with_log(
+    from tests.helpers.vr_factory import insert_validation_record
+    insert_validation_record(
         db, record_id=rec_id or f"rec_{hid[:8]}_{verdict}",
         hypothesis_id=hid, strategy_id=sid, level="isolated_backtest",
-        params="{}", result=None, verdict=verdict, range_hash=f"rh_{hid[:6]}_{verdict}")
+        params={}, result=None, verdict=verdict,
+        range_hash=f"rh_{hid[:6]}_{verdict}")
 
 
 class TestVerdictEnforcement:
@@ -107,16 +109,6 @@ class TestAbandoned:
         with pytest.raises(ResearchError, match="已终态"):
             transition_hypothesis(db, hid, target_status="refuted",
                                   evidence_ref="whatever")
-        # 终态假设拒绝验证（隔离回测拒收）
-        from core.analysis.validation_service import run_isolated_backtest
-        with pytest.raises(ResearchError) as ei:
-            run_isolated_backtest(db, Path("."), hypothesis_id=hid,
-                                  strategy_id="st_x",
-                                  request_range={"symbol": "BTCUSDT",
-                                                 "timeframe": "4h",
-                                                 "start": "2024-03-01",
-                                                 "end": "2024-03-20"})
-        assert ei.value.code == "RESEARCH_HYPOTHESIS_TERMINAL"
 
 
 class TestPromotion:

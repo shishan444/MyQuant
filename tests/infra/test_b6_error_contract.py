@@ -40,19 +40,6 @@ class TestErrorContractG16:
         detail = r.json()["detail"]
         assert isinstance(detail, list) and detail, "422=校验明细数组（Pydantic 默认）"
 
-    def test_409_business_string(self, client):
-        """非法状态迁移拒绝：业务语义字符串（evolution-task-lifecycle 契约）。"""
-        from core.persistence.db import save_task, update_task
-        from tests.helpers.data_factory import make_dna
-
-        db = client.app.state.db_path
-        save_task(db, "st-409", 80.0, "profit_first", "BTCUSDT", "4h", make_dna())
-        # pending 任务暂停（仅 running 合法）→ HTTP 409 + detail 业务字符串
-        r = client.post("/api/evolution/tasks/st-409/pause")
-        assert r.status_code == 409
-        assert isinstance(r.json()["detail"], str)
-        assert "running" in r.json()["detail"]
-
     def test_5xx_fixed_generic_detail(self, client):
         """未捕获异常 → 固定通用文案（无堆栈/路径泄露）。"""
         from unittest.mock import patch

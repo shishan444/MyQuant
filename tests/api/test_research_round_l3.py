@@ -19,13 +19,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.errors import ResearchError
-from core.analysis.validation_service import (
-    query_union_balance, run_isolated_backtest)
 from core.persistence.db_ext import init_db_ext
-from core.persistence.repository.strategy import save_strategy
-from core.strategy.dna import (
-    ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole,
-    StrategyDNA)
 
 SYMBOL = "BTCUSDT"
 BASE = {"symbol": SYMBOL, "timeframe": "4h",
@@ -120,7 +114,9 @@ class TestResearchRoundDoD:
         assert p4["verdict"] in ("plateau", "indeterminate", "spike",
                                  "unsupported")
 
-        # ⑤ R4 闭环：登记假设 → 查询余量 → remaining 段隔离验证不被拒
+        # ⑤ R4 闭环（retire-legacy 后收缩）：登记假设（union-balance
+        # 端点与隔离验证已退役——函数级守护归任务 15 冻结锚，此处
+        # 留登记链可达性）
         from core.analysis.hypothesis_service import register_hypothesis
         hyp = register_hypothesis(
             db, conditions={"when_conditions": conds,
@@ -129,37 +125,10 @@ class TestResearchRoundDoD:
             data_ranges=[{"symbol": SYMBOL, "timeframe": "4h",
                           "start": "2023-02-01T00:00:00Z",
                           "end": "2023-03-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
-        balance = api_client.get("/api/research/union-balance", params={
-            "symbol": SYMBOL, "timeframe": "4h", "hypothesis_id": hyp})
-        assert balance.status_code == 200, balance.text
-        remaining = balance.json()["remaining"]
-        assert remaining, "登记区间外应有剩余"
-        seg = next(r for r in remaining
-                   if r["start"] < BASE["start"] and r["end"] > BASE["end"])
-        save_strategy(db, strategy_id="st_l3",
-                      dna_json=StrategyDNA(
-                          signal_genes=[SignalGene(
-                              "RSI", {"period": 14},
-                              SignalRole.ENTRY_TRIGGER, "rsi_14",
-                              {"type": "lt", "threshold": 45}),
-                              SignalGene(
-                              "RSI", {"period": 14},
-                              SignalRole.EXIT_TRIGGER, "rsi_14",
-                              {"type": "gt", "threshold": 1e9})],
-                          logic_genes=LogicGenes(),
-                          execution_genes=ExecutionGenes(
-                              symbol=SYMBOL, timeframe="4h"),
-                          risk_genes=RiskGenes()).to_json(),
-                      symbol=SYMBOL, timeframe="4h")
-        result = run_isolated_backtest(
-            db, d, hypothesis_id=hyp, strategy_id="st_l3",
-            request_range={"symbol": SYMBOL, "timeframe": "4h",
-                           "start": BASE["start"], "end": BASE["end"]})
-        assert result["verdict"] in ("pass", "fail", "inconclusive")
-        assert seg["start"] <= BASE["start"]
+        assert hyp
 
         # ⑥ 留痕全貌：四模板留痕三型（analysis×2 + analysis×1 + exit_sweep
-        # 检查型）；exit_sweep 区间不进判定并集（第⑤步隔离验证可过即证）
+        # 检查型）；exit_sweep 条目不挂假设（检查型模板语义）
         import sqlite3
         with sqlite3.connect(db) as conn:
             rows = conn.execute(
@@ -170,23 +139,23 @@ class TestResearchRoundDoD:
         assert ("analysis", "condition_stats") in entries
         assert ("analysis", "counter_profile") in entries
         assert ("exit_sweep", "exit_sweep") in entries
-        # exit_sweep 条目不挂假设（查询剩余段隔离验证已被允许执行）
+        # exit_sweep 条目不挂假设（检查型模板——留痕 hypothesis_id None）
         for et, ref in entries:
             if et == "exit_sweep":
                 row = next(r for r in rows if r[0] == et)
                 assert row[2] is None
 
     def test_mcp_capability_doc_lists_new_capabilities(self):
-        """MCP 能力自述对拍（7.1）：六项新能力与参数形制在自述中。"""
+        """MCP 能力自述对拍（7.1）：分析族能力与参数形制在自述中
+        （union_balance 工具已随 retire-legacy 5.3 退役——自述断言
+        面随之收缩）。"""
         from mcpserver.capability import build_capability_doc
         text = build_capability_doc(
-            ["union_balance", "query_indicator", "run_analysis"])
+            ["query_indicator", "run_analysis"])
         for token in ("批量读数（0.4.1）",
                       "组合条件（0.4.1 起；regime_split 2026-10-14 起）",
                       "区间事件摘要（0.4.1 segment_narrative）",
-                      "判定并集余量查询（0.4.1 union_balance）",
                       "反例画像（0.4.1 counter_profile）",
                       "退出参数扫描（0.4.1 exit_sweep）",
                       "本模板不挂假设"):
             assert token in text, f"能力自述缺: {token}"
-        assert "- union_balance" in text

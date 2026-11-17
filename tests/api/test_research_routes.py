@@ -127,10 +127,11 @@ class TestHypothesisTransition:
     def test_evidence_driven_transition(self, api_client):
         hid = _register(api_client).json()["hypothesis_id"]
         # 造一条验证记录作为证据
-        rr.save_validation_with_log(
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
             Path(api_client.app.state.db_path), record_id="rec_ev",
             hypothesis_id=hid, strategy_id="st_x", level="isolated_backtest",
-            params="{}", result=None, verdict="fail", range_hash="rh1")
+            params={}, result=None, verdict="fail", range_hash="rh1")
 
         resp = api_client.post(f"/api/research/hypotheses/{hid}/transition",
                                json={"target_status": "refuted", "evidence_ref": "rec_ev"})
@@ -153,188 +154,6 @@ class TestHypothesisTransition:
                                json={"target_status": "supported", "evidence_ref": "rec_ghost"})
         assert resp.status_code == 422
         assert resp.json()["detail"]["code"] == "RESEARCH_EVIDENCE_NOT_FOUND"
-
-
-class TestIsolatedBacktest:
-    def _register_hyp(self, api_client):
-        return _register(api_client).json()["hypothesis_id"]
-
-    def _request(self, api_client, hid, start, end):
-        return api_client.post("/api/research/validate-backtest", json={
-            "hypothesis_id": hid, "strategy_id": "st_test",
-            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                              "start": start, "end": end}})
-
-    def test_overlap_rejected_with_judged_ranges(self, api_client, research_env):
-        """请求区间与登记区间重叠 → 409 + judged_ranges 明细。"""
-        api_client.app.state.db_path = research_env["db"]
-        api_client.app.state.data_dir = research_env["data_dir"]
-        hid = self._register_hyp(api_client)
-        resp = self._request(api_client, hid,
-                             "2024-01-15T00:00:00Z", "2024-02-15T00:00:00Z")
-        assert resp.status_code == 409
-        detail = resp.json()["detail"]
-        assert detail["code"] == "RESEARCH_RANGE_OVERLAP"
-        assert detail["detail"]["judged_ranges"], "须附判定并集明细"
-        assert detail["detail"]["overlaps"], "须附重叠段"
-
-    def test_unreported_range_intercepted_by_log(self, api_client, research_env):
-        """漏报拦截：声明区间 A，日志另有区间 B → 请求 B 被拒。"""
-        api_client.app.state.db_path = research_env["db"]
-        api_client.app.state.data_dir = research_env["data_dir"]
-        # 登记时只声明 1 月
-        hid = _register(api_client, ranges=[{
-            "symbol": "BTCUSDT", "timeframe": "4h",
-            "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"}
-        ]).json()["hypothesis_id"]
-        # 但日志显示其曾分析过 2 月（模拟漏报）
-        rr.append_research_log(
-            research_env["db"], hypothesis_id=hid, entry_type="analysis",
-            data_ranges=json.dumps([{"start": "2024-02-01T00:00:00Z",
-                                     "end": "2024-03-01T00:00:00Z"}]))
-        resp = self._request(api_client, hid,
-                             "2024-02-10T00:00:00Z", "2024-03-10T00:00:00Z")
-        assert resp.status_code == 409
-        assert resp.json()["detail"]["code"] == "RESEARCH_RANGE_OVERLAP"
-
-    def test_clean_range_runs_with_warmup(self, api_client, research_env):
-        """干净区间放行：warmup 声明 + 门槛判定 + 双落。"""
-        api_client.app.state.db_path = research_env["db"]
-        api_client.app.state.data_dir = research_env["data_dir"]
-        hid = self._register_hyp(api_client)
-        # 数据 500 bar（1/1 起 83 天）。RSI lookback 14 → warmup max(200,42)=200
-        # 请求 3/1 之后（前 354 bar 预热可用 > 200）
-        resp = self._request(api_client, hid,
-                             "2024-03-01T00:00:00Z", "2024-03-20T00:00:00Z")
-        assert resp.status_code == 200, resp.text
-        body = resp.json()
-        assert body["duplicated"] is False
-        assert body["verdict"] in ("pass", "fail", "inconclusive")  # 0.2.11 三态
-        assert body["warmup"]["bars"] >= 200
-        assert "max(200" in body["warmup"]["basis"]
-        assert "total_return" in body["metrics"]
-        # 双落
-        dbp = Path(api_client.app.state.db_path)
-        logs = rr.list_research_log(dbp, hypothesis_id=hid)
-        assert any(e["entry_type"] == "validate" for e in logs)
-
-    def test_warmup_memory_enables_head_signals(self, api_client, research_env):
-        """M1 隔离语义行为级证明：warmup 历史记忆使请求区间头部的有记忆指标正确。
-
-        构造：warmup 段（bar 0-299）价格恒 62000，请求段（bar 300 起）恒 60000；
-        策略 EMA(50) > 61500 触发。有 warmup 时请求首 bar 的 ema 携带历史记忆
-        （约 62000）→ 头部即触发交易；无 warmup（截断计算）时 ema 从 60000
-        起算 → 永不触发。total_trades >= 1 即证明记忆真实进入了请求区间。
-        """
-        api_client.app.state.db_path = research_env["db"]
-        api_client.app.state.data_dir = research_env["data_dir"]
-        import numpy as np
-        import pandas as pd
-        n = 1000
-        idx = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC", name="timestamp")
-        close = np.concatenate([
-            np.full(700, 62000.0),   # warmup 段（700 bar > 600 推导值）：高位平台
-            np.full(300, 60000.0),   # 请求段：低位平台
-        ])
-        pd.DataFrame({
-            "open": close, "high": close + 10, "low": close - 10,
-            "close": close, "volume": np.full(n, 100.0), "trades": 10,
-        }, index=idx).to_parquet(research_env["data_dir"] / "BTCUSDT_4h.parquet")
-
-        from core.persistence.repository.strategy import save_strategy
-        gene = SignalGene(
-            indicator="EMA", params={"period": 50}, role=SignalRole.ENTRY_TRIGGER,
-            field_name="ema_50", condition={"type": "gt", "threshold": 61500})
-        # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit（gt 1e9 永不触发——与原无 exit 默认路径行为等效）
-        dna = StrategyDNA(
-            signal_genes=[gene, SignalGene(
-                indicator="EMA", params={"period": 50},
-                role=SignalRole.EXIT_TRIGGER,
-                field_name="ema_50",
-                condition={"type": "gt", "threshold": 1e9})],
-            logic_genes=LogicGenes(),
-            execution_genes=ExecutionGenes(timeframe="4h"),
-            risk_genes=RiskGenes())
-        save_strategy(research_env["db"], strategy_id="st_emamem", dna_json=dna.to_json(),
-                      symbol="BTCUSDT", timeframe="4h", name="ema-mem")
-
-        hid = _register(api_client, ranges=[{
-            "symbol": "BTCUSDT", "timeframe": "4h",
-            "start": "2024-01-01T00:00:00Z", "end": "2024-01-05T00:00:00Z"}]).json()["hypothesis_id"]
-        resp = api_client.post("/api/research/validate-backtest", json={
-            "hypothesis_id": hid, "strategy_id": "st_emamem",
-            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                              "start": "2024-04-26T00:00:00Z", "end": "2024-06-05T00:00:00Z"}})
-        assert resp.status_code == 200, resp.text
-        body = resp.json()
-        assert body["warmup"]["bars"] >= 200
-        # 行为断言：请求区间头部 ema 携带历史记忆（62000 段）→ 触发交易；
-        # 若 warmup 前扩失效（截断计算），ema 从 60000 起算永不触发 → 此处红
-        assert body["metrics"]["total_trades"] >= 1, (
-            f"warmup 记忆未进入请求区间头部: {body['metrics']}")
-
-    def test_warmup_insufficient_rejected(self, api_client, research_env):
-        """请求区间起点太近数据头部 → warmup 不足 422。"""
-        api_client.app.state.db_path = research_env["db"]
-        api_client.app.state.data_dir = research_env["data_dir"]
-        # 登记区间只占数据最头部（不与请求区间重叠）
-        hid = _register(api_client, ranges=[{
-            "symbol": "BTCUSDT", "timeframe": "4h",
-            "start": "2024-01-01T00:00:00Z", "end": "2024-01-03T00:00:00Z"}
-        ]).json()["hypothesis_id"]
-        # 请求 01-03 起：不重叠，但其前仅 12 bar << 200 warmup → 422
-        resp = self._request(api_client, hid,
-                             "2024-01-03T00:00:00Z", "2024-01-10T00:00:00Z")
-        assert resp.status_code == 422
-        assert resp.json()["detail"]["code"] == "RESEARCH_WARMUP_INSUFFICIENT"
-
-    def test_duplicate_request_idempotent(self, api_client, research_env):
-        api_client.app.state.db_path = research_env["db"]
-        api_client.app.state.data_dir = research_env["data_dir"]
-        hid = self._register_hyp(api_client)
-        args = ("2024-03-01T00:00:00Z", "2024-03-20T00:00:00Z")
-        r1 = self._request(api_client, hid, *args).json()
-        r2 = self._request(api_client, hid, *args).json()
-        assert r2["duplicated"] is True
-        assert r2["record_id"] == r1["record_id"]
-
-    def test_terminal_hypothesis_rejected(self, api_client, research_env):
-        api_client.app.state.db_path = research_env["db"]
-        api_client.app.state.data_dir = research_env["data_dir"]
-        hid = self._register_hyp(api_client)
-        dbp = Path(api_client.app.state.db_path)
-        rr.save_validation_with_log(
-            dbp, record_id="rec_t", hypothesis_id=hid, strategy_id="st_test",
-            level="isolated_backtest", params="{}", result=None,
-            verdict="fail", range_hash="rh_t")
-        api_client.post(f"/api/research/hypotheses/{hid}/transition",
-                        json={"target_status": "refuted", "evidence_ref": "rec_t"})
-        resp = self._request(api_client, hid,
-                             "2024-03-01T00:00:00Z", "2024-03-20T00:00:00Z")
-        assert resp.status_code == 409
-        assert resp.json()["detail"]["code"] == "RESEARCH_HYPOTHESIS_TERMINAL"
-
-
-class TestRandomWindow:
-    def test_same_seed_same_result(self, api_client, research_env):
-        api_client.app.state.db_path = research_env["db"]
-        api_client.app.state.data_dir = research_env["data_dir"]
-        payload = {
-            "strategy_id": "st_test", "symbol": "BTCUSDT", "timeframe": "4h",
-            "data_start": "2024-03-01T00:00:00Z", "data_end": "2024-03-25T00:00:00Z",
-            "window_bars": 10, "n_windows": 3, "seed": 7,
-        }
-        r1 = api_client.post("/api/research/random-window-test", json=payload).json()
-        r2 = api_client.post("/api/research/random-window-test",
-                             json={**payload, "seed": 7}).json()
-        # 二次请求命中幂等键 → duplicated=True，完整结果在 result 内
-        assert r2["duplicated"] is True and r2["record_id"] == r1["record_id"]
-        w1 = [(w["start"], round(w["metrics"]["total_return"], 10)) for w in r1["windows"]]
-        w2 = [(w["start"], round(w["metrics"]["total_return"], 10))
-              for w in r2["result"]["windows"]]
-        assert w1 == w2, "同种子同参数必须复现"
-        assert r1["summary"]["n_windows"] == 3
-        assert "worst_window" in r1["summary"]
 
 
 class TestAnalysisAndReport:
@@ -361,91 +180,8 @@ class TestAnalysisAndReport:
         assert any(e["entry_type"] == "analysis" and e.get("data_ranges")
                    for e in logs)
 
-    def test_validation_report_fields(self, api_client, research_env):
-        api_client.app.state.db_path = research_env["db"]
-        api_client.app.state.data_dir = research_env["data_dir"]
-        hid = _register(api_client).json()["hypothesis_id"]
-        api_client.post("/api/research/validate-backtest", json={
-            "hypothesis_id": hid, "strategy_id": "st_test",
-            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                              "start": "2024-03-01T00:00:00Z", "end": "2024-03-20T00:00:00Z"}})
-        resp = api_client.get("/api/research/validation/st_test/report")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["total_records"] >= 1
-        entry = body["isolated_backtests"][0]
-        for key in ("record_id", "verdict", "warmup_bars", "人话"):
-            assert key in entry
 
-    def test_report_benchmark_disclosure(self, api_client, research_env):
-        """3.1：新记录人话含对照句；旧形式记录（无键）容缺标「无对照数据」。"""
-        api_client.app.state.db_path = research_env["db"]
-        api_client.app.state.data_dir = research_env["data_dir"]
-        dbp = Path(api_client.app.state.db_path)
-        # 新形式：含 benchmark_return/excess_return
-        rr.save_validation_with_log(
-            dbp, record_id="rec_bm_new", hypothesis_id="adhoc",
-            strategy_id="st_test", level="isolated_backtest",
-            params=json.dumps({"request_range": RANGES[0]}),
-            result=json.dumps({
-                "metrics": {"total_return": 0.12, "max_drawdown": -0.08,
-                            "total_trades": 15,
-                            "benchmark_return": 0.345,
-                            "excess_return": -0.225},
-                "warmup": {"bars": 200}}, ensure_ascii=False),
-            verdict="pass", range_hash="rh_bm_new")
-        # 旧形式：验证记录无对照键（0.2.3 之前落库的 result_json）
-        rr.save_validation_with_log(
-            dbp, record_id="rec_bm_old", hypothesis_id="adhoc",
-            strategy_id="st_test", level="isolated_backtest",
-            params=json.dumps({"request_range": RANGES[0]}),
-            result=json.dumps({
-                "metrics": {"total_return": 0.10, "max_drawdown": -0.05,
-                            "total_trades": 8},
-                "warmup": {"bars": 200}}, ensure_ascii=False),
-            verdict="fail", range_hash="rh_bm_old")
-        body = api_client.get("/api/research/validation/st_test/report").json()
-        talks = {e["record_id"]: e["人话"]
-                 for e in body["isolated_backtests"]}
-        assert "同期买入持有 34.5%" in talks["rec_bm_new"]
 
-        assert "超额 -22.5%" in talks["rec_bm_new"]
-        assert "无对照数据" in talks["rec_bm_old"]
-
-    def test_report_inconclusive_three_state_wording(self, api_client, research_env):
-        """0.2.11：inconclusive 人话档=证据不足（样本不足未定论）——
-        不呈现为「未通过」（错义）；random 摘要行含总判定。"""
-        api_client.app.state.db_path = research_env["db"]
-        api_client.app.state.data_dir = research_env["data_dir"]
-        dbp = Path(api_client.app.state.db_path)
-        for i, verdict in enumerate(("pass", "fail", "inconclusive")):
-            rr.save_validation_with_log(
-                dbp, record_id=f"rec_3st_{verdict}", hypothesis_id="adhoc",
-                strategy_id="st_test", level="isolated_backtest",
-                params=json.dumps({"request_range": RANGES[0]}),
-                result=json.dumps({
-                    "metrics": {"total_return": 0.05, "max_drawdown": -0.05,
-                                "total_trades": 4},
-                    "warmup": {"bars": 200}}, ensure_ascii=False),
-                verdict=verdict, range_hash=f"rh_3st_{i}")
-        rr.save_validation_with_log(
-            dbp, record_id="rec_3st_rw", hypothesis_id="adhoc",
-            strategy_id="st_test", level="random_window",
-            params="{}",
-            result=json.dumps({"windows": [], "summary": {
-                "n_windows": 8, "all_pass": False, "worst_window": {
-                    "metrics": {"total_return": -0.02, "max_drawdown": -0.1}}}},
-                ensure_ascii=False),
-            verdict="inconclusive", range_hash="rh_3st_rw")
-        body = api_client.get("/api/research/validation/st_test/report").json()
-        talks = {e["record_id"]: e["人话"]
-                 for e in body["isolated_backtests"]}
-        assert "判定：通过" in talks["rec_3st_pass"]
-        assert "判定：未通过" in talks["rec_3st_fail"]
-        assert "证据不足" in talks["rec_3st_inconclusive"], \
-            "inconclusive 不得呈现为未通过"
-        rw_talk = body["random_window_summaries"][-1]["人话"]
-        assert "总判定：证据不足" in rw_talk
 
 
 class TestConcurrencyAndIdempotence:
@@ -494,9 +230,10 @@ class TestConcurrencyAndIdempotence:
         api_client.app.state.data_dir = research_env["data_dir"]
         hid = _register(api_client).json()["hypothesis_id"]
         dbp = Path(api_client.app.state.db_path)
-        rr.save_validation_with_log(
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
             dbp, record_id="rec_cc", hypothesis_id=hid, strategy_id="st_t",
-            level="isolated_backtest", params="{}", result=None,
+            level="isolated_backtest", params={}, result=None,
             verdict="fail", range_hash="rh_cc")
 
         import threading
@@ -569,10 +306,11 @@ class TestSupersededChain:
 
         # 假设 A：登记 + 验证记录
         hid_a = _register(api_client, statement="旧想法").json()["hypothesis_id"]
-        rr.save_validation_with_log(
-            dbp, record_id="rec_sup_a", hypothesis_id=hid_a, strategy_id="st_test",
-            level="isolated_backtest", params="{}", result=None,
-            verdict="pass", range_hash="rh_sup_a")
+        from tests.helpers.vr_factory import insert_validation_record
+        insert_validation_record(
+            dbp, record_id="rec_sup_a", hypothesis_id=hid_a,
+            strategy_id="st_test", level="isolated_backtest", params={},
+            result=None, verdict="pass", range_hash="rh_sup_a")
 
         # 假设 B（接替者）：修正后的条件
         conds_b = {
@@ -592,25 +330,6 @@ class TestSupersededChain:
         assert resp.status_code == 200
         a = rr.get_hypothesis(dbp, hid_a)
         assert a["status"] == "superseded" and a["superseded_by"] == hid_b
-
-        # A 终态拒验
-        resp2 = api_client.post("/api/research/validate-backtest", json={
-            "hypothesis_id": hid_a, "strategy_id": "st_test",
-            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                              "start": "2024-06-01T00:00:00Z", "end": "2024-06-20T00:00:00Z"}})
-        assert resp2.status_code == 409
-        assert resp2.json()["detail"]["code"] == "RESEARCH_HYPOTHESIS_TERMINAL"
-
-        # B 可验证（干净区间）——接力成立
-        resp3 = api_client.post("/api/research/validate-backtest", json={
-            "hypothesis_id": hid_b, "strategy_id": "st_test",
-            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                              "start": "2024-06-01T00:00:00Z", "end": "2024-06-20T00:00:00Z"}})
-        # 500 bar 到 2024-03-31——6 月无数据，预期 DATA_INSUFFICIENT（B 未被
-        # 终态拒绝即证明接力语义；数据不足与终态拒是不同错误）
-        assert resp3.status_code in (200, 422), resp3.text
-        if resp3.status_code == 422:
-            assert resp3.json()["detail"]["code"] != "RESEARCH_HYPOTHESIS_TERMINAL"
 
         # 日志链：A 的链含 register→transition（superseded）
         types = [e["entry_type"] for e in rr.list_research_log(dbp, hypothesis_id=hid_a)]
@@ -687,155 +406,3 @@ class TestWatchdogRaceViaApi:
             exec_mod._EXECUTOR = old
 
 
-class TestReportSandboxExclusion:
-    """TC-9-1~9-4：策略验证档案排除 sandbox_backtest（B8——档案主体
-    记录口径=正式验证，沙盒不推高不挤位；lineage 谱系四级归属不受
-    影响）。"""
-
-    def _use(self, api_client, research_env):
-        api_client.app.state.db_path = research_env["db"]
-        api_client.app.state.data_dir = research_env["data_dir"]
-
-    def test_pure_sandbox_strategy_report_zero_records_skeleton(
-            self, api_client, research_env):
-        """TC-9-1：纯沙盒策略 200 零记录骨架+report_notice（不进
-        有记录分支——无人话成绩单行）。"""
-        self._use(api_client, research_env)
-        db, d = research_env["db"], research_env["data_dir"]
-        # 显式 gene_signature（沿 sig_wb_test 先例）——condition 的
-        # threshold 不进 gene_signature 派生，隐式推导会与 st_test 同
-        # 签名触发去重静默 return，st_pure 建不出来
-        gene = SignalGene(
-            indicator="RSI", params={"period": 14},
-            role=SignalRole.ENTRY_TRIGGER, field_name="rsi_14",
-            condition={"type": "lt", "threshold": 35})
-        dna = StrategyDNA(
-            signal_genes=[gene, SignalGene(
-                "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, "rsi_14",
-                {"type": "gt", "threshold": 1e9})],
-            logic_genes=LogicGenes(),
-            execution_genes=ExecutionGenes(timeframe="4h"),
-            risk_genes=RiskGenes())
-        save_strategy(db, strategy_id="st_pure", dna_json=dna.to_json(),
-                      symbol="BTCUSDT", timeframe="4h", name="pure",
-                      gene_signature="sig_pure_sb_test")
-        from core.analysis.validation_service import run_sandbox_backtest
-        for _ in range(2):
-            run_sandbox_backtest(
-                db, d, strategy_id="st_pure", symbol="BTCUSDT",
-                timeframe="4h", start="2024-03-01", end="2024-03-20")
-        resp = api_client.get("/api/research/validation/st_pure/report")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["total_records"] == 0
-        assert body["isolated_backtests"] == []
-        assert body["random_window_summaries"] == []
-        assert body["report_notice"] == (
-            "该策略自身无验证记录；lineage 段披露同假设身份族"
-            "的全部历史翻译实体与各自记录归属（含各代草稿）")
-        assert body["lineage"]["entities"][0]["strategy_id"] == "st_pure"
-
-    def test_report_total_records_excludes_sandbox(
-            self, api_client, research_env):
-        """TC-9-2：正式 2 条快照→沙盒 3 次→total 不变+两明细逐字节
-        一致+lineage 变化恰为沙盒归属新增（其余桶不变）。"""
-        self._use(api_client, research_env)
-        db, d = research_env["db"], research_env["data_dir"]
-        rr.save_validation_with_log(
-            db, record_id="rec9_i", hypothesis_id="adhoc",
-            strategy_id="st_test", level="isolated_backtest",
-            params=json.dumps({"request_range": RANGES[0]}),
-            result=json.dumps({
-                "metrics": {"total_return": 0.05, "max_drawdown": -0.05,
-                            "total_trades": 4},
-                "warmup": {"bars": 200}}, ensure_ascii=False),
-            verdict="pass", range_hash="rh9_i")
-        rr.save_validation_with_log(
-            db, record_id="rec9_r", hypothesis_id="adhoc",
-            strategy_id="st_test", level="random_window", params="{}",
-            result=json.dumps({"windows": [], "summary": {
-                "n_windows": 8, "all_pass": True, "worst_window": {
-                    "metrics": {"total_return": -0.02,
-                                "max_drawdown": -0.1}}}},
-                ensure_ascii=False),
-            verdict="pass", range_hash="rh9_r")
-        before = api_client.get(
-            "/api/research/validation/st_test/report").json()
-        assert before["total_records"] == 2
-        from core.analysis.validation_service import run_sandbox_backtest
-        for _ in range(3):
-            run_sandbox_backtest(
-                db, d, strategy_id="st_test", symbol="BTCUSDT",
-                timeframe="4h", start="2024-02-10", end="2024-02-28")
-        after = api_client.get(
-            "/api/research/validation/st_test/report").json()
-        assert after["total_records"] == 2  # 沙盒不推高
-        assert after["isolated_backtests"] == before["isolated_backtests"]
-        assert after["random_window_summaries"] == \
-            before["random_window_summaries"]
-        # lineage 变化恰为沙盒归属新增：当前实体出现 sandbox_backtest
-        # 桶（count=3+record_ids 3 条），其余桶逐键不变
-        b_ent = before["lineage"]["entities"][0]
-        a_ent = after["lineage"]["entities"][0]
-        # 沙盒桶形制（specs lineage 四级）：{count: 3, 三键恒 0}
-        assert a_ent["records"].get("sandbox_backtest") == {
-            "count": 3, "pass": 0, "fail": 0, "inconclusive": 0}
-        assert len(a_ent["record_ids"].get("sandbox_backtest", [])) == 3
-        assert {k: v for k, v in a_ent["records"].items()
-                if k != "sandbox_backtest"} == b_ent["records"]
-        assert {k: v for k, v in a_ent["record_ids"].items()
-                if k != "sandbox_backtest"} == b_ent["record_ids"]
-
-    def test_report_exclusion_scope_exactly_sandbox_backtest(
-            self, api_client, research_env):
-        """TC-9-3：排除面恰 sandbox_backtest 一值——composite 直插
-        对照照现状计入（不得实现成三正式 level 白名单过排死值域）。"""
-        self._use(api_client, research_env)
-        db = research_env["db"]
-        rr.save_validation_with_log(
-            db, record_id="rec9c_i", hypothesis_id="adhoc",
-            strategy_id="st_test", level="isolated_backtest",
-            params="{}", result="{}", verdict="pass", range_hash="rh9c_i")
-        rr.save_validation_with_log(
-            db, record_id="rec9c_p", hypothesis_id="adhoc",
-            strategy_id="st_test", level="composite",
-            params="{}", result="{}", verdict="pass", range_hash="rh9c_p")
-        body = api_client.get(
-            "/api/research/validation/st_test/report").json()
-        assert body["total_records"] == 2  # composite 照现状计入
-
-    def test_report_exclusion_pushed_down_before_limit_truncation(
-            self, api_client, research_env):
-        """TC-9-4：排除 SQL 下推先于 limit=200 截断——201 沙盒行+1 条
-        正式行（时刻晚于全部沙盒行）。
-
-        判别力构造注记：repo 拉取 order 缺省 asc，正式行置于时刻最
-        晚端（asc 窗口尾端之外）——若实现为拉 200 后 Python 过滤，前
-        200 窗口全为沙盒行，正式行被截 total=0（红）；下推实现排除
-        沙盒后拉取，正式行在场 total=1（绿）。tests-plan 原文「正式
-        行 created_at 最早」在 asc 语义下恒在窗口头部无判别力，按
-        判别力等效构造落位（P1/P2 实施时对照校准授权）。
-        """
-        self._use(api_client, research_env)
-        db = research_env["db"]
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-        from core.persistence.orm.models import ValidationRecord
-        S = sessionmaker(bind=create_engine(f"sqlite:///{db}"))
-        with S() as sess:
-            sess.add(ValidationRecord(
-                record_id="rec9d_formal", hypothesis_id="adhoc",
-                strategy_id="st_test", level="isolated_backtest",
-                segmentation="", verdict="pass", range_hash="rh9d_f",
-                params="{}", result="{}",
-                created_at="2030-01-01T00:00:00Z"))
-            sess.commit()
-        for i in range(201):
-            rr.save_sandbox_validation_record(
-                db, record_id=f"rec9d_sbx_{i:03d}",
-                hypothesis_id="adhoc", strategy_id="st_test",
-                params="{}", result="{}", range_hash=f"rh9d_{i:03d}")
-        resp = api_client.get("/api/research/validation/st_test/report")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["total_records"] == 1  # 正式行在场未被 201 沙盒挤出

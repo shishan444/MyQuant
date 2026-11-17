@@ -279,10 +279,9 @@ class TestParityFourParamDomains:
 
     @staticmethod
     def _no_compute_exempt_p4a() -> set:
-        import core.evolution.population as pop
-        m = re.search(r"_NO_COMPUTE\s*=\s*\{([^}]+)\}",
-                      inspect.getsource(pop))
-        return set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
+        # 进化侧 _NO_COMPUTE 单一事实源已随 core/evolution 退役删除
+        # （retire-legacy B1）——豁免集冻结为退役时点字面值
+        return {"FractalEntropy", "VolumeProfile"}
 
     def test_mechanism_self_proof(self):
         """机制自证（F-D 补强）：历史吞参负例写死字面量（提取器漏抓
@@ -297,12 +296,9 @@ class TestParityFourParamDomains:
         assert self._consumed_keys("BB") != set()
 
     def _no_compute_exempt(self) -> set:
-        """豁免面程序派生：进化侧已知无计算实现的指标清单
-        （population._NO_COMPUTE——单一事实源，不写字面副本）。"""
-        import core.evolution.population as pop
-        m = re.search(r"_NO_COMPUTE\s*=\s*\{([^}]+)\}",
-                      inspect.getsource(pop))
-        return set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
+        """豁免面：无计算实现的指标清单（原进化侧 _NO_COMPUTE 派生；
+        其宿主已随 core/evolution 退役——冻结为退役时点字面值）。"""
+        return {"FractalEntropy", "VolumeProfile"}
 
     def test_indicator_names_bidirectional(self):
         """P4b：registry 指标名 vs _compute_indicator 分支名双向。
@@ -314,8 +310,8 @@ class TestParityFourParamDomains:
             r'name == "([^"]+)"', src))
         registry_names = set(INDICATOR_REGISTRY.keys())
         exempt = self._no_compute_exempt()
-        # 双层之一：豁免集确实源自 population（派生失败=空集→暗差全红）
-        assert exempt, "豁免派生失败（population._NO_COMPUTE 提取空）"
+        # 豁免集冻结锚（原 population 派生源已退役）：非空防静默清空
+        assert exempt == {"FractalEntropy", "VolumeProfile"}, exempt
         missing = registry_names - branch_names - exempt
         assert not missing, (
             f"有名无分支（静默空返回）: {sorted(missing)}")

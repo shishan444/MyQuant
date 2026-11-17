@@ -246,28 +246,6 @@ class TestDNABoundary:
 class TestEvolutionBoundary:
     """Boundary tests for core/evolution/operators.py."""
 
-    def test_crossover_empty_signal_genes(self):
-        """Crossover with empty signal_genes should not crash."""
-        from core.evolution.operators import crossover
-        from core.strategy.dna import StrategyDNA, LogicGenes, ExecutionGenes, RiskGenes
-        dna_a = StrategyDNA(
-            signal_genes=[],
-            logic_genes=LogicGenes(),
-            execution_genes=ExecutionGenes(),
-            risk_genes=RiskGenes(),
-        )
-        dna_b = StrategyDNA(
-            signal_genes=[],
-            logic_genes=LogicGenes(),
-            execution_genes=ExecutionGenes(),
-            risk_genes=RiskGenes(),
-        )
-        # Should either work or raise cleanly
-        try:
-            child = crossover(dna_a, dna_b)
-            assert isinstance(child, StrategyDNA)
-        except (IndexError, ValueError):
-            pass  # Acceptable to reject empty parents
 
 # ============================================================================
 # Gap 8: storage.load_parquet with non-existent path

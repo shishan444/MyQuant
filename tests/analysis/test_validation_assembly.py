@@ -127,40 +127,6 @@ class TestDanglingSourceRejected:
             _sandbox(db, data_dir, "st_ghost")
         assert ei.value.code == "RESEARCH_SIGNAL_SOURCE_INVALID"
 
-    def test_isolated_rejects(self, db, data_dir):
-        from core.analysis.validation_service import run_isolated_backtest
-        hid = register_hypothesis(
-            db, conditions={
-                "when_conditions": [
-                    {"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
-                "then_conditions": [
-                    {"subject": "close", "action": "gt", "target": 0}]},
-            # 登记区间避开请求区间（登记区间计入判定并集，重叠即 409）
-            statement="s", data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
-                                         "start": "2024-05-01T00:00:00Z",
-                                         "end": "2024-06-01T00:00:00Z"}]
-        , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
-        # 伪造分量证据绕过加严门（本用例锁定的是组装层失效拒绝）
-        rr.save_validation_with_log(
-            db, record_id="rec_ghost", hypothesis_id=hid, strategy_id=None,
-            level="component", params=json.dumps({"column": "fx_ghost"}),
-            result=None, verdict="pass", range_hash="rh_ghost")
-        _strategy(db, "st_ghost2", signal_sources=[
-            {"type": "rule"}, {"type": "formula", "ref": "fx_ghost"}],
-            composition={"mode": "logic", "op": "AND"})
-        with pytest.raises(ResearchError) as ei:
-            run_isolated_backtest(db, data_dir, hypothesis_id=hid,
-                                  strategy_id="st_ghost2",
-                                  request_range={"symbol": "BTCUSDT",
-                                                 "timeframe": "4h",
-                                                 "start": "2024-01-01T00:00:00Z",
-                                                 "end": "2024-01-15T00:00:00Z"})
-        assert ei.value.code == "RESEARCH_SIGNAL_SOURCE_INVALID"
-        # 不产出验证记录（拒绝先于落库）
-        assert not [r for r in rr.list_validation_records(db, hypothesis_id=hid)
-                    if r["level"] == "isolated_backtest"]
-
-
 class TestPluginWarmupCoverage:
     """插件表达式窗口参与 warmup 推导：超 floor 的窗口生效。"""
 
@@ -291,33 +257,6 @@ class TestTranslatedDraftAffectsSignals:
         assert real["warmup_bars"] >= 200
 
 
-class TestComponentEvidenceTightened:
-    """0.2.11 D3：分量证据须 verdict=pass——fail/inconclusive 不算数
-    （组合加严门不开后门；直测查询语义，链路层由既有用例覆盖）。"""
-
-    def test_non_pass_component_not_counted(self, db):
-        from core.analysis.validation_service import _missing_component_evidence
-        for verdict in ("fail", "inconclusive"):
-            rr.save_validation_with_log(
-                db, record_id=f"rec_comp_{verdict}", hypothesis_id="adhoc",
-                strategy_id=None, level="component",
-                params=json.dumps({"column": "fx_comp"}),
-                result=None, verdict=verdict, range_hash=f"rh_c_{verdict}")
-        assert _missing_component_evidence(
-            db, [{"type": "formula", "ref": "fx_comp"}]) == ["fx_comp"], \
-            "非 pass 分量记录不算有效证据"
-
-    def test_pass_component_counted(self, db):
-        from core.analysis.validation_service import _missing_component_evidence
-        rr.save_validation_with_log(
-            db, record_id="rec_comp_ok", hypothesis_id="adhoc",
-            strategy_id=None, level="component",
-            params=json.dumps({"column": "fx_ok"}),
-            result=None, verdict="pass", range_hash="rh_c_ok")
-        assert _missing_component_evidence(
-            db, [{"type": "formula", "ref": "fx_ok"}]) == []
-
-
 class TestBooleanColumnConsumptionChain:
     """0.2.12 T3：布尔列三消费点一线穿——假设条件 subject（gt 0.5
     触发）→ 翻译 formula 信号源（threshold）→ 组装回测（真=触发）。"""
@@ -412,50 +351,3 @@ class TestGoldenCrossAcceptanceAnchor:
             timeframe="4h", start="2024-01-01", end="2024-01-15")
         assert out5["sandbox"] is True
 
-
-
-class TestComponentEvidencePagination:
-    """CARD-01 链路 C：分量证据核验分页取全量（原 limit=200 单页截断）。
-
-    有效分量记录置于升序第 201 位（旧单页之外）：截断则该列仍判
-    missing，全量则认可——超页可见性锚。次序用直插 created_at 严格
-    递增控制（save_validation_with_log 的 _now() 无法指定位次）。
-    """
-
-    def test_超页component记录末尾pass_仍被认可(self, db):
-        import json as _json
-        from datetime import datetime, timedelta, timezone
-        from sqlalchemy import insert
-        from core.persistence.orm.models import ValidationRecord
-        from core.persistence.repository.dataset_meta import _engine_for
-        from core.analysis.validation_service import _missing_component_evidence
-
-        # 记录表 hypothesis_id 为 NOT NULL+FK：借既有 adhoc 假设挂靠
-        #（TestComponentEvidenceTightened 同款形制）
-        hid = "adhoc"
-        base = datetime(2026, 6, 1, tzinfo=timezone.utc)
-
-        def _row(i: int) -> dict:
-            hit = i == 200  # 第 201 条：升序末尾，旧 limit=200 之外
-            return dict(
-                record_id=f"rec_pg_{i:04d}", hypothesis_id=hid,
-                strategy_id=None,
-                level="component" if hit else "isolated",
-                params=_json.dumps(
-                    {"column": "fx_far" if hit else "fx_noise"}),
-                result=None,
-                verdict="pass",
-                range_hash=f"rh_pg_{i:04d}",
-                components=None,
-                created_at=(base + timedelta(seconds=i)).isoformat())
-
-        with _engine_for(db).begin() as conn:
-            for i in range(201):
-                conn.execute(insert(ValidationRecord).values(**_row(i)))
-
-        # 超页分量证据被认可（截断则返回 ["fx_far"]）
-        assert _missing_component_evidence(
-            db, [{"type": "formula", "ref": "fx_far"}]) == []
-        # 未取证列仍判 missing（防全通假象的对照锚）
-        assert _missing_component_evidence(
-            db, [{"type": "formula", "ref": "fx_none"}]) == ["fx_none"]

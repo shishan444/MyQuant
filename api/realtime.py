@@ -58,14 +58,6 @@ def _join_by_query(sid: str, environ: dict, namespace: str) -> None:
             return
 
 
-@sio.on("connect", namespace="/evolution")
-async def _connect_evolution(sid: str, environ: dict) -> bool | None:
-    if not check_socket_auth(environ):
-        return False  # A2：设置 API key 时 connect 须带同值 token
-    _join_by_query(sid, environ, "/evolution")
-    await _emit_task_snapshot(sid, environ, "/evolution")
-
-
 @sio.on("connect", namespace="/trading")
 async def _connect_trading(sid: str, environ: dict) -> bool | None:
     if not check_socket_auth(environ):
@@ -88,19 +80,7 @@ async def _emit_task_snapshot(sid: str, environ: dict, namespace: str) -> None:
         return  # 测试上下文无库——跳过快照
 
     def _read() -> dict | None:
-        from core.persistence.repository import evolution as evo
         from core.persistence.repository import paper
-        if namespace == "/evolution":
-            row = evo.get_task(db_path, room)
-            if row is None or row.get("status") not in ("running", "paused", "pending", "stopped"):
-                return None
-            return {
-                "type": "task_snapshot", "task_id": room, "status": row.get("status"),
-                "current_generation": row.get("current_generation", 0),
-                "best_score": row.get("best_score"), "target_score": row.get("target_score"),
-                "max_generations": row.get("max_generations"),
-                "current_phase": row.get("current_phase"),
-            }
         # /trading：纸盘新域快照（rebuild-paper-trading 5.2，design §7.2
         # 新 schema——旧 paper_trading 表读取面切换，旧仓库已随旧域
         # 退役移除，frontend-switch-and-retire R.1）。
@@ -127,7 +107,6 @@ async def _emit_task_snapshot(sid: str, environ: dict, namespace: str) -> None:
     snapshot = await asyncio.to_thread(_read)
     if snapshot is not None:
         await sio.emit("task_snapshot", snapshot, namespace=namespace, room=room)
-
 
 
 # 断开时 room 成员随 sid 自动清理——无需显式 handler

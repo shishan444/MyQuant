@@ -265,26 +265,3 @@ class TestR1ParamTranslateRoute:
     translate_hypothesis——本类经 POST /api/research/translate 路由
     完成登记→路由翻译→产物恰键的最后一公里）。"""
 
-    def test_route_translate_product_carries_keys(self, api_client, reg_env):
-        """API 路由翻译：带参假设经 POST /api/research/translate/{id}
-        → 200+strategy_id → 产物基因恰登记键（路由层零键丢失）。"""
-        import json as _json
-        from core.persistence.repository.strategy import get_strategy
-        _wire(api_client, reg_env)
-        hid = api_client.post("/api/research/hypotheses", json=_body(
-            reg_env["df"],
-            _tb(direction="resistance", proximity_pct=0.03))).json()[
-            "hypothesis_id"]
-        r = api_client.post(
-            f"/api/research/translate/{hid}",
-            json={"strategy_symbol": "BTCUSDT",
-                  "data_dir": str(reg_env["data_dir"])})
-        assert r.status_code == 200, r.text
-        sid = r.json()["strategy_id"]
-        dna = _json.loads(
-            get_strategy(reg_env["db"], sid)["dna_json"])
-        cond = [g for g in dna["signal_genes"]
-                if g["role"] == "entry_trigger"][0]["condition"]
-        assert cond == {"type": "touch_bounce",
-                        "direction": "resistance",
-                        "proximity_pct": 0.03}

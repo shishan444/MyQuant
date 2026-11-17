@@ -341,32 +341,6 @@ class TestRegisterExistingPluginSignal:
 class TestSeedDivergenceAndUpdateIdempotence:
     """2.8 异种子断言 + 数据更新幂等。"""
 
-    def test_different_seed_different_windows(self, api_client, plugin_env, monkeypatch):
-        db = _wire(api_client, plugin_env)
-        from core.strategy.dna import (
-            ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA)
-        from core.persistence.repository.strategy import save_strategy
-        # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit（gt 1e9
-        # 永不触发——与原无 exit 默认路径行为等效）
-        save_strategy(db, strategy_id="st_rw", dna_json=StrategyDNA(
-            signal_genes=[SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
-                                     "rsi_14", {"type": "lt", "threshold": 35}),
-                          SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
-                                     "rsi_14", {"type": "gt", "threshold": 1e9})],
-            logic_genes=LogicGenes(), execution_genes=ExecutionGenes(timeframe="4h"),
-            risk_genes=RiskGenes()).to_json(), symbol="BTCUSDT", timeframe="4h")
-        payload = {
-            "strategy_id": "st_rw", "symbol": "BTCUSDT", "timeframe": "4h",
-            "data_start": "2024-03-01T00:00:00Z", "data_end": "2024-03-25T00:00:00Z",
-            "window_bars": 10, "n_windows": 3,
-        }
-        r7 = api_client.post("/api/research/random-window-test",
-                             json={**payload, "seed": 7}).json()
-        r8 = api_client.post("/api/research/random-window-test",
-                             json={**payload, "seed": 8}).json()
-        w7 = {w["start"] for w in r7["windows"]}
-        w8 = {w["start"] for w in r8["windows"]}
-        assert w7 != w8, "异种子必须产生不同窗口集（防伪随机退化为常量）"
 
     def test_data_update_idempotent(self, tmp_path, monkeypatch):
         """C6 更新幂等：二次增量运行不重复落行。"""

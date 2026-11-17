@@ -21,14 +21,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.persistence.db import (
-    get_task,
-    init_db,
-    list_all_tasks,
-    save_history,
-    save_task,
-    update_task,
-)
+from core.persistence.db import init_db
 from core.persistence.repository.backtest_result import get_backtest_result, list_backtest_results, save_backtest_result
 from core.persistence.repository.dataset_meta import delete_dataset, get_dataset, list_datasets, save_dataset_meta, update_dataset_stats
 from core.persistence.repository.strategy import delete_strategy, get_strategy, list_strategies, save_strategy, update_strategy
@@ -177,57 +170,6 @@ class TestInitDbExt:
         assert "strategy" in table_names
 
 # ── Test: Backward Compatibility ──
-
-class TestBackwardCompatibility:
-    """Existing core db.py operations must still work after migration."""
-
-    def test_save_and_get_task_still_works(self, initialized_db: Path) -> None:
-        from core.strategy.dna import StrategyDNA
-
-        dna = StrategyDNA()
-        save_task(
-            db_path=initialized_db,
-            task_id="compat-001",
-            target_score=80.0,
-            template="profit_first",
-            symbol="BTCUSDT",
-            timeframe="4h",
-            initial_dna=dna,
-        )
-        task = get_task(initialized_db, "compat-001")
-        assert task is not None
-        assert task["task_id"] == "compat-001"
-
-    def test_update_task_still_works(self, initialized_db: Path) -> None:
-        from core.strategy.dna import StrategyDNA
-
-        dna = StrategyDNA()
-        save_task(initialized_db, "compat-002", 80.0, "profit_first",
-                  "BTCUSDT", "4h", dna)
-        update_task(initialized_db, "compat-002", status="completed",
-                    stop_reason="target_reached")
-        task = get_task(initialized_db, "compat-002")
-        assert task["status"] == "completed"
-
-    def test_list_all_tasks_still_works(self, initialized_db: Path) -> None:
-        from core.strategy.dna import StrategyDNA
-
-        dna = StrategyDNA()
-        for i in range(3):
-            save_task(initialized_db, f"compat-list-{i}", 80.0,
-                      "profit_first", "BTCUSDT", "4h", dna)
-        tasks = list_all_tasks(initialized_db)
-        assert len(tasks) == 3
-
-    def test_save_history_still_works(self, initialized_db: Path) -> None:
-        from core.persistence.db import save_history, get_history
-
-        save_history(initialized_db, "task-hist", 1, 75.0, 60.0,
-                     json.dumps([]))
-        hist = get_history(initialized_db, "task-hist")
-        assert len(hist) == 1
-
-# ── Test: Strategy CRUD ──
 
 class TestStrategyCRUD:
     def test_save_and_get_strategy(self, initialized_db: Path) -> None:

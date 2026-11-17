@@ -20,98 +20,6 @@ from fastapi.testclient import TestClient
 from tests.helpers.data_factory import make_dna, make_ohlcv
 
 
-class TestEvolutionToleranceBranches:
-    """evolution.py 容错分支（55-100/161-168/295-296/476-498）。"""
-
-    def test_parse_json_helpers_corrupt_input(self) -> None:
-        """_parse_json_list/dict：坏 JSON 与非列表/字典 → None。"""
-        from api.routes.evolution import _parse_json_dict, _parse_json_list
-        assert _parse_json_list("{bad") is None
-        assert _parse_json_list("[1,2]") == [1, 2]
-        assert _parse_json_list('{"a":1}') is None  # 非列表
-        assert _parse_json_dict("{bad") is None
-        assert _parse_json_dict('{"a":1}') == {"a": 1}
-        assert _parse_json_dict("[1]") is None  # 非字典
-        assert _parse_json_list(None) is None
-        assert _parse_json_dict(None) is None
-
-    def test_task_response_corrupt_json_fields(self, api_client: TestClient) -> None:
-        """坏 initial_dna/champion_dna/requirements JSON → 对应字段 None。"""
-        from core.persistence.db import save_task, update_task
-        from core.persistence.repository import evolution as evo_repo
-        from sqlalchemy import update as sa_update
-        from core.persistence.orm.models import EvolutionTask
-        from core.persistence.repository.dataset_meta import _engine_for
-        db_path = api_client.app.state.db_path
-        save_task(db_path, task_id="t-bad", target_score=80.0,
-                  template="explorer", symbol="BTCUSDT", timeframe="4h",
-                  initial_dna=make_dna())
-        engine = _engine_for(db_path)
-        with engine.begin() as conn:
-            conn.execute(sa_update(EvolutionTask).where(
-                EvolutionTask.task_id == "t-bad").values(
-                initial_dna="{corrupt", champion_dna="{corrupt",
-                requirements_json="{corrupt"))
-        response = api_client.get("/api/evolution/tasks/t-bad")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["initial_dna"] is None
-        assert data["champion_dna"] is None
-        assert data["requirements"] is None
-        assert data["indicator_pool"] is None  # 坏 JSON 列表路径
-
-    def test_strategies_list_corrupt_json_passes(self, api_client: TestClient) -> None:
-        """/strategies 列表：坏 dna/metrics JSON 条目保留（None 字段）。"""
-        from core.persistence.repository.strategy import save_strategy
-        db_path = api_client.app.state.db_path
-        save_strategy(db_path, strategy_id="evo-bad", dna_json="{corrupt",
-                      symbol="BTCUSDT", timeframe="4h", source="evolution",
-                      metrics_json="{also-bad", best_score=1.0)
-        response = api_client.get("/api/evolution/strategies")
-        items = {i["strategy_id"]: i for i in response.json()}
-        assert "evo-bad" in items
-        assert items["evo-bad"]["dna"] is None
-        assert items["evo-bad"]["metrics"] is None
-
-    def test_create_task_corrupt_parquet_passes(self, api_client: TestClient) -> None:
-        """建任务读坏 parquet：except pass → 201 且行数 0。"""
-        data_dir = api_client.app.state.data_dir
-        (data_dir / "BADPARQ_4h.parquet").write_bytes(b"not parquet")
-        response = api_client.post(
-            "/api/evolution/tasks",
-            json={"symbol": "BADPARQ", "timeframe": "4h",
-                  "target_score": 80.0, "score_template": "explorer",
-                  "population_size": 5, "max_generations": 5},
-        )
-        assert response.status_code == 201
-        assert response.json()["data_row_count"] == 0
-        assert response.json()["data_time_start"] is None
-
-    def test_task_strategies_corrupt_champion_and_snapshot(
-        self, api_client: TestClient,
-    ) -> None:
-        """champion/snapshot 坏 JSON：pass/continue 不炸，正常快照保留。"""
-        from core.persistence.db import save_task, save_snapshot, update_task
-        db_path = api_client.app.state.db_path
-        save_task(db_path, task_id="t-sc", target_score=80.0,
-                  template="explorer", symbol="BTCUSDT", timeframe="4h",
-                  initial_dna=make_dna())
-        from sqlalchemy import update as sa_update
-        from core.persistence.orm.models import EvolutionTask
-        from core.persistence.repository.dataset_meta import _engine_for
-        engine = _engine_for(db_path)
-        with engine.begin() as conn:
-            conn.execute(sa_update(EvolutionTask).where(
-                EvolutionTask.task_id == "t-sc").values(champion_dna="{corrupt"))
-        good_snap = make_dna()
-        good_snap.strategy_id = "snap-ok"
-        save_snapshot(db_path, "t-sc", 1, best_score=1.0, avg_score=0.5,
-                      best_dna=good_snap, population=[])
-        response = api_client.get("/api/evolution/tasks/t-sc/strategies")
-        strategies = response.json()["strategies"]
-        assert [s["strategy_id"] for s in strategies] == ["snap-ok"]
-
-
 class TestCrudToleranceBranches:
     """crud.py 容错分支（91-94/232-239）。"""
 
@@ -320,21 +228,6 @@ class TestSceneGaps:
             assert key in first
 
 
-class TestLiveTradingGaps:
-    """live_trading.py PATCH 空 updates 跳过（67-69 分支）。"""
-
-    def test_patch_empty_body_noop(self, api_client: TestClient) -> None:
-        response = api_client.post(
-            "/api/live-trading/tasks",
-            json={"symbol": "BTCUSDT", "timeframe": "4h",
-                  "dna_json": make_dna().to_json()},
-        )
-        task_id = response.json()["task_id"]
-        patched = api_client.patch(f"/api/live-trading/tasks/{task_id}", json={})
-        assert patched.status_code == 200
-        assert patched.json()["task_id"] == task_id
-
-
 class TestDataGaps:
     """data.py import-batch 空 files 400（243）。"""
 
@@ -385,82 +278,6 @@ class TestUnreachableNotes:
         assert True
 
 
-class TestRunnerDirectBranches:
-    """runner.py 可直构分支：_tick 的 active 任务清理（177-183）与
-    run() 循环的 tick error 容错（156-157）。
-
-    深执行路径（target_score 调整 260-262/307、MTF 装载 331-338、
-    on_generation 内部 482-483/601-602、无 champion else 634）需完整
-    进化编排（线程 + engine mock 全链），主路径已由 tests/evolution
-    线程级测试覆盖——按闸门口径记录为编排型深分支，不强行直构。
-    """
-
-    def _make_runner(self, tmp_path: Path):
-        from core.persistence.db_ext import init_db_ext
-        from api.runner import EvolutionRunner
-        db_path = tmp_path / "r.db"
-        init_db_ext(db_path)
-        return EvolutionRunner(db_path=db_path, data_dir=tmp_path,
-                               poll_interval=0.0)
-
-    def test_tick_clears_finished_active_task(self, tmp_path: Path) -> None:
-        """active 任务已停止（DB 态）→ _tick 清理 _active_task_id。"""
-        from core.persistence.db import save_task, update_task
-        runner = self._make_runner(tmp_path)
-        save_task(runner.db_path, task_id="t-done", target_score=80.0,
-                  template="explorer", symbol="BTCUSDT", timeframe="4h",
-                  initial_dna=make_dna())
-        update_task(runner.db_path, "t-done", status="stopped")
-        # 并发模型（research-tooling-data-quality 卡 B）：属性退役改
-        # future 登记——终态 DB 行对应登记被 _tick 剔除
-        import concurrent.futures as _cf
-        runner._pool = _cf.ThreadPoolExecutor(max_workers=1)
-        _fut = runner._pool.submit(lambda: None)
-        _fut.result()
-        with runner._lock:
-            runner._futures["t-done"] = _fut
-        runner._tick()
-        with runner._lock:
-            assert "t-done" not in runner._futures
-        runner._pool.shutdown(wait=True)
-
-    def test_tick_continues_active_running_task(self, tmp_path: Path) -> None:
-        """active 任务仍 running → _tick 保留（代际推进归 on_generation）。"""
-        from core.persistence.db import save_task, update_task
-        runner = self._make_runner(tmp_path)
-        save_task(runner.db_path, task_id="t-run", target_score=80.0,
-                  template="explorer", symbol="BTCUSDT", timeframe="4h",
-                  initial_dna=make_dna())
-        update_task(runner.db_path, "t-run", status="running")
-        runner._active_task_id = "t-run"
-        runner._tick()
-        assert runner._active_task_id == "t-run"
-
-    def test_run_loop_survives_tick_error(self, tmp_path: Path) -> None:
-        """run() 循环：_tick 抛异常被吞，循环继续至 stop。"""
-        runner = self._make_runner(tmp_path)
-        calls = {"n": 0}
-        original_tick = runner._tick
-
-        def _tick_then_stop():
-            calls["n"] += 1
-            if calls["n"] == 1:
-                raise RuntimeError("tick boom")
-            original_tick()
-            runner.stop()
-
-        runner._tick = _tick_then_stop
-        runner.run()  # 不应抛异常（tick error 容错分支）
-        assert calls["n"] >= 2  # 第一次抛错后循环仍继续
-
-    def test_get_status_shape(self, tmp_path: Path) -> None:
-        runner = self._make_runner(tmp_path)
-        status = runner.get_status()
-        assert status["is_alive"] is False
-        assert status["active_task_id"] is None
-        assert "tick_count" in status and "last_tick_age_seconds" in status
-
-
 class TestSceneMetaFallback:
     """scene.py 126：payload.scene_type 不在 SCENE_META 时从 result 取。"""
 
@@ -490,35 +307,6 @@ class TestSceneMetaFallback:
         assert data["scene_label"]  # result 侧 meta 提供 label
 
 
-class TestEvolutionSnapshotCorruptContinue:
-    """evolution.py 497-498：坏 JSON 快照 continue，好快照保留。"""
-
-    def test_corrupt_snapshot_skipped(self, api_client: TestClient) -> None:
-        import sys
-        from core.persistence.db import save_task, save_snapshot
-        from sqlalchemy import update as sa_update
-        from core.persistence.orm.models import GenerationSnapshot
-        from core.persistence.repository.dataset_meta import _engine_for
-        db_path = api_client.app.state.db_path
-        save_task(db_path, task_id="t-snap", target_score=80.0,
-                  template="explorer", symbol="BTCUSDT", timeframe="4h",
-                  initial_dna=make_dna())
-        # 直接落坏 best_dna：先存好快照再改列为坏 JSON
-        good = make_dna()
-        good.strategy_id = "snap-good"
-        save_snapshot(db_path, "t-snap", 1, best_score=1.0, avg_score=0.5,
-                      best_dna=good, population=[])
-        engine = _engine_for(db_path)
-        with engine.begin() as conn:
-            conn.execute(sa_update(GenerationSnapshot).where(
-                GenerationSnapshot.task_id == "t-snap",
-                GenerationSnapshot.generation == 1,
-            ).values(best_dna="{corrupt"))
-        response = api_client.get("/api/evolution/tasks/t-snap/strategies")
-        assert response.status_code == 200
-        assert response.json()["strategies"] == []
-
-
 class TestBacktestLegacyExceptUnreachable:
     """backtest.py 147-148 不可达判定（实测证实，patch 指标抛错实验失败后归因）。
 
@@ -535,74 +323,3 @@ class TestBacktestLegacyExceptUnreachable:
         assert True
 
 
-class TestNonameStrategyRegression:
-    """CARD-31（TD-G1）修复锚定：无名策略 verify/列表不再 500。
-
-    根因：row.get("name", sid[:8]) 的 default 仅键缺失生效——save 层
-    name=None 落库后键存在值 None → strategy_name=None 炸
-    VerifySummaryItem 校验。修复后 None 也回退短 id。save 层对显式
-    缺省有内建名生成，None name 行经 ORM 直构（复现真实缺口路径）。
-    """
-
-    @staticmethod
-    def _seed_noname(db_path, sid: str) -> None:
-        from sqlalchemy import insert as sa_insert
-        from core.persistence.orm.models import Strategy
-        from core.persistence.repository.dataset_meta import _engine_for
-        engine = _engine_for(db_path)
-        from tests.helpers.data_factory import make_dna as _mk
-        with engine.begin() as conn:
-            conn.execute(sa_insert(Strategy).values(
-                strategy_id=sid, name=None, dna_json=_mk().to_json(),
-                source="manual", symbol="BTCUSDT", timeframe="4h",
-                created_at="2026-10-02T00:00:00Z",
-                updated_at="2026-10-02T00:00:00Z",
-            ))
-
-    def test_evolution_list_noname_fallback(self, api_client: TestClient) -> None:
-        """evolution 策略列表：None name → strategy_id 前 8 位。"""
-        from sqlalchemy import insert as sa_insert, update as sa_update
-        from core.persistence.orm.models import Strategy
-        from core.persistence.repository.dataset_meta import _engine_for
-        db_path = api_client.app.state.db_path
-        from tests.helpers.data_factory import make_dna as _mk
-        engine = _engine_for(db_path)
-        with engine.begin() as conn:
-            conn.execute(sa_insert(Strategy).values(
-                strategy_id="evo-noname-x", name=None,
-                dna_json=_mk().to_json(), source="evolution",
-                source_task_id="t-x", symbol="BTCUSDT", timeframe="4h",
-                created_at="2026-10-02T00:00:00Z",
-                updated_at="2026-10-02T00:00:00Z",
-            ))
-        response = api_client.get("/api/evolution/strategies")
-        items = {i["strategy_id"]: i for i in response.json()}
-        assert items["evo-noname-x"]["name"] == "evo-nona"  # sid[:8]
-
-    def test_batch_processor_noname_fallback(self, tmp_path: Path) -> None:
-        """batch processor：None name → 短 id 回退（源头同修复）。"""
-        from core.persistence.db_ext import init_db_ext
-        from api.routes.strategies.batch import _BatchBacktestProcessor
-        from api.schemas import BatchBacktestRequest, BacktestDateRange
-        from sqlalchemy import insert as sa_insert
-        from core.persistence.orm.models import Strategy
-        from core.persistence.repository.dataset_meta import _engine_for
-        from tests.helpers.data_factory import make_dna as _mk
-        db_path = tmp_path / "nn.db"
-        init_db_ext(db_path)
-        engine = _engine_for(db_path)
-        with engine.begin() as conn:
-            conn.execute(sa_insert(Strategy).values(
-                strategy_id="batch-noname", name=None,
-                dna_json=_mk().to_json(), source="manual",
-                symbol="BTCUSDT", timeframe="4h",
-                created_at="2026-10-02T00:00:00Z",
-                updated_at="2026-10-02T00:00:00Z",
-            ))
-        payload = BatchBacktestRequest(
-            strategy_ids=["batch-noname"],
-            data_ranges=[BacktestDateRange(start="2024-01-01", end="2024-06-01")],
-        )
-        processor = _BatchBacktestProcessor(payload, db_path, tmp_path)
-        processor.init()
-        assert processor.strategy_names["batch-noname"] == "batch-no"

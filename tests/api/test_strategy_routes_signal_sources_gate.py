@@ -349,32 +349,3 @@ class TestInlineDnaBadSources:
         assert not is_structured, detail
 
 
-class TestLiveEntryDnaJsonDirect:
-    """live 入口（POST /api/live-trading/tasks）：dna_json 字符串直传
-    ——不经 Pydantic List[Dict]，四形态全可达（含顶层非 list）。"""
-
-    @pytest.mark.parametrize(
-        ("label", "sources"),
-        [
-            pytest.param("拼错type", [{"type": "fomula"}], id="拼错type"),
-            pytest.param("非dict条目", [{"type": "rule"}, "x"], id="非dict条目"),
-            pytest.param("缺ref", [{"type": "formula"}], id="缺ref"),
-            pytest.param("顶层非list", 5, id="顶层非list"),
-        ],
-    )
-    def test_live_dna_json_malformed_422(self, api_client, label, sources):
-        """四形态畸形经 dna_json 直传 → 422 DNA_VALIDATION_FAILED
-        （现状：拼错/缺 ref 型行为错位〔缺 ref 报 PLUGIN 码、拼错型
-        放行落库〕、非 dict/顶层非 list 型 500 或裸异常——from_json
-        原样透传后无判据拦截）。"""
-        dna = _dna_with_sources(sources)
-        resp = api_client.post("/api/live-trading/tasks", json={
-            "symbol": "BTCUSDT", "timeframe": "4h",
-            "dna_json": dna.to_json(), "direction": "long"})
-
-        assert resp.status_code == 422, (
-            f"[{label}] {resp.status_code} {resp.text[:300]}")
-        body = resp.json()["detail"]
-        assert body["code"] == "DNA_VALIDATION_FAILED", f"[{label}] {body}"
-        assert any("signal_sources" in e for e in body["errors"]), (
-            f"[{label}] {body['errors']}")

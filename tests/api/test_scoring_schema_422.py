@@ -10,20 +10,6 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 
-class TestEvolutionTaskSchema422:
-    def test_invalid_score_template_rejected_422(self, api_client):
-        payload = {"symbol": "BTCUSDT", "timeframe": "4h",
-                   "score_template": "bogus"}
-        resp = api_client.post("/api/evolution/tasks", json=payload)
-        assert resp.status_code == 422
-
-    def test_invalid_objective_rejected_422(self, api_client):
-        payload = {"symbol": "BTCUSDT", "timeframe": "4h",
-                   "requirements": {"objective": "bogus"}}
-        resp = api_client.post("/api/evolution/tasks", json=payload)
-        assert resp.status_code == 422
-
-
 class TestBacktestSchema422:
     def test_invalid_score_template_rejected_422(self, api_client):
         payload = {"dataset_id": "BTCUSDT_4h", "score_template": "nonexistent"}

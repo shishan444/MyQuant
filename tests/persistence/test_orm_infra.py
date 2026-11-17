@@ -329,25 +329,39 @@ class TestAlembicBaseline:
         前一版由 upgrade 补触发器与存量分类（不再撞 duplicate column
         亦不再 stamp head 短路留下无触发器的谎报终态）；数据保全、
         二次幂等。"""
-        from core.persistence.db import init_db, save_task, get_task
+        from core.persistence.db import init_db
         from core.persistence.db_ext import init_db_ext
-        from core.strategy.dna import StrategyDNA
 
         db = tmp_path / "mixed.db"
         init_db(db)   # ORM create_all：head 全列形、无 alembic_version
-        save_task(db, "mix-001", 80.0, "profit_first", "BTCUSDT", "4h",
-                  StrategyDNA())
+        # 混用路径数据保全锚：save_task 委托已随进化域退役
+        # （retire-legacy B1）——改 SQL 直插一行演化任务占位（列集以
+        # ORM 声明为准）
+        import sqlite3 as _sq
+        conn0 = _sq.connect(str(db))
+        conn0.execute(
+            "INSERT INTO evolution_task (task_id, status, score_template,"
+            " symbol, timeframe, target_score, created_at, updated_at)"
+            " VALUES ('mix-001', 'pending', 'profit_first', 'BTCUSDT',"
+            " '4h', 80.0, '2026-11-01T00:00:00', '2026-11-01T00:00:00')")
+        conn0.commit()
+        conn0.close()
 
         init_db_ext(db)   # 修复前：stamp b7c4e9a2f1d3+upgrade 撞列
 
-        assert get_task(db, "mix-001") is not None, "混用路径数据保全"
+        conn1 = _sq.connect(str(db))
+        n = conn1.execute(
+            "SELECT COUNT(*) FROM evolution_task WHERE task_id='mix-001'"
+        ).fetchone()[0]
+        conn1.close()
+        assert n == 1, "混用路径数据保全"
         conn = sqlite3.connect(str(db))
         ver = conn.execute("SELECT version_num FROM alembic_version").fetchall()
         conn.close()
         assert len(ver) == 1
 
         init_db_ext(db)   # 二次幂等
-        assert get_task(db, "mix-001") is not None
+        # （数据保全已上方 SQL 复核）
 
     def test_create_all_form_db_init_db_ext_installs_triggers(
             self, tmp_path: Path):

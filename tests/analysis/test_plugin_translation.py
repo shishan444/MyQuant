@@ -429,50 +429,9 @@ class TestComponentTrialAndEvidence:
         assert replay["strategy_id"] == sid
         assert self._component_logs(db, sid), "命中点补试算写记录"
 
-    def test_t8a_source_releases_gate(self, db, data_dir):
-        """T8a 门禁 (a) 源放行：翻译即产 component_eval 记录 →
-        组合策略验证不被组件证据门禁拦截（原 GAP-09 死锁解除锚）。"""
-        col = _plugin(db)
-        hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
-                                  "target": 0.5}])
-        out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
-        from core.analysis.validation_service import _missing_component_evidence
-        missing = _missing_component_evidence(db, [
-            {"type": "formula", "ref": col}])
-        assert missing == [], f"(a) 源应放行，missing={missing}"
 
-    def test_t8_both_missing_blocked(self, db, tmp_path):
-        """T8 双无拦截：全新未注册执行列（无记录无 component pass）
-        ——手工 DNA 直查门禁。"""
-        from core.analysis.validation_service import _missing_component_evidence
-        missing = _missing_component_evidence(db, [
-            {"type": "formula", "ref": "fx_never_evaluated"}])
-        assert missing == ["fx_never_evaluated"]
 
-    def test_t8b_source_releases_and_precise_match(self, db, data_dir):
-        """T8 (b) 源放行+精确匹配边界：手工 component pass 记录命中
-        foo；foo_v2 前缀相似仍拦。"""
-        from core.analysis.validation_service import _missing_component_evidence
-        rr.save_validation_with_log(
-            db, record_id="rec_comp_b", hypothesis_id="adhoc",
-            strategy_id="st_x", level="component",
-            params=json.dumps({"column": "foo"}),
-            result=None, verdict="pass", range_hash="rh_b")
-        assert _missing_component_evidence(
-            db, [{"type": "formula", "ref": "foo"}]) == []
-        assert _missing_component_evidence(
-            db, [{"type": "formula", "ref": "foo_v2"}]) == ["foo_v2"]
 
-    def test_t8_verdict_pass_filter_kept(self, db, tmp_path):
-        """T8 verdict=pass 过滤保持：fail 的 component 记录不算证据。"""
-        from core.analysis.validation_service import _missing_component_evidence
-        rr.save_validation_with_log(
-            db, record_id="rec_comp_fail", hypothesis_id="adhoc",
-            strategy_id="st_x", level="component",
-            params=json.dumps({"column": "bar"}),
-            result=None, verdict="fail", range_hash="rh_f")
-        assert _missing_component_evidence(
-            db, [{"type": "formula", "ref": "bar"}]) == ["bar"]
 
 
 class TestGateDualSourceEdgeAnchors:
@@ -480,86 +439,8 @@ class TestGateDualSourceEdgeAnchors:
     -protocol：「或活跃」分支移除鉴别锚（活跃注册列零证据→拦）+
     「组件证据零操作达成」全链+组合加严「缺分量证据被拒」。"""
 
-    def test_t8_active_registered_column_without_evidence_blocked(self, db):
-        """「或活跃」移除鉴别锚：列在插件注册表活跃（刚注册成功）但
-        零 component_eval/component pass 证据 → 门禁仍拦（若「或活跃
-        且被引用」分支复活，本例将放行——恒真分支无判别力）。"""
-        from core.analysis.validation_service import _missing_component_evidence
-        col = _plugin(db, name="mom_active")   # 注册即活跃
-        missing = _missing_component_evidence(db, [
-            {"type": "formula", "ref": col}])
-        assert missing == [col], "活跃注册列零证据仍拦（双无拦截）"
 
-    def test_w2_vaccine2_full_chain_gate_release(
-            self, db, data_dir):
-        """疫苗 2 集成链（spec Scenario「组件证据零操作达成」）：
-        登记→翻译（试算写记录+产 draft）→隔离验证——组件证据门禁
-        放行（验证跑出三态判定，不因组件证据 409）。"""
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        from core.analysis.validation_service import run_isolated_backtest
-        col = _plugin(db, name="mom_v2")
-        # 卡 R 起装载挂全量 validate_dna（Q-1）：补 then（指标 subject
-        # 恒假形态 RSI gt 1e9——翻译产物含 exit 基因过装载校验，恒假
-        # 出场与原无 then 产物的默认出场路径行为等效；断言面是门禁
-        # 放行三态判定，不受出场形态影响）
-        hid = _raw_hyp(db, when=[{"subject": col, "action": "gt",
-                                  "target": 0.5}],
-                       then=[{"subject": {"indicator": "RSI",
-                                          "params": {"period": 14}},
-                              "action": "gt", "target": 1e9}])
-        out = translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
-        assert out["status"] == "draft"
-        res = run_isolated_backtest(
-            db, data_dir, hypothesis_id=hid,
-            strategy_id=out["strategy_id"],
-            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": "2024-02-20", "end": "2024-03-05"})
-        assert res["verdict"] in ("pass", "fail", "inconclusive"), \
-            "门禁放行（不因组件证据 RESEARCH_COMPONENT_EVIDENCE_MISSING 拒）"
 
-    def test_t8_combo_strict_missing_component_rejected(
-            self, db, data_dir):
-        """组合加严协同（spec MODIFIED「缺分量证据被拒」+「component_
-        eval 证据亦开组合门」）：双 formula 源策略——有证据源不拖累、
-        无证据源拦截并列名（组合门恒收紧，(a) 源证据不放宽）。"""
-        from core.analysis.validation_service import (
-            ResearchError, run_isolated_backtest)
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        from core.strategy.dna import (
-            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA)
-        from core.persistence.repository.strategy import save_strategy
-        col_a = _plugin(db, name="mom_ca")   # 将有证据（经翻译试算）
-        col_b = _plugin(db, name="mom_cb")   # 恒零证据
-        hid = _raw_hyp(db, when=[{"subject": col_a, "action": "gt",
-                                  "target": 0.5}])
-        translate_hypothesis(db, data_dir=data_dir, hypothesis_id=hid)
-        from core.strategy.dna import SignalGene, SignalRole
-        # 卡 R 起装载挂全量 validate_dna（Q-1）：补恒假 exit 基因
-        # （纯插件源只顶 entry 不顶 exit——T2「不顶替出场」语义；
-        # exit 恒假与原无 exit 构造行为等效，分量证据门断言面不变）
-        dna = StrategyDNA(
-            signal_genes=[SignalGene(
-                "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
-                "rsi_14", {"type": "gt", "threshold": 1e9})],
-            signal_sources=[{"type": "formula", "ref": col_a,
-                             "threshold": 0.5, "operator": ">"},
-                            {"type": "formula", "ref": col_b,
-                             "threshold": 0.5, "operator": ">"}],
-            logic_genes=LogicGenes(),
-            execution_genes=ExecutionGenes(timeframe="4h"),
-            risk_genes=RiskGenes())
-        save_strategy(db, strategy_id="st_combo_strict",
-                      dna_json=dna.to_json(), symbol="BTCUSDT",
-                      timeframe="4h")
-        with pytest.raises(ResearchError) as ei:
-            run_isolated_backtest(
-                db, data_dir, hypothesis_id=hid,
-                strategy_id="st_combo_strict",
-                request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                               "start": "2024-02-20", "end": "2024-03-05"})
-        assert ei.value.code == "RESEARCH_COMPONENT_EVIDENCE_MISSING"
-        assert ei.value.detail["missing"] == [col_b], \
-            "有证据源不在缺失清单（(a) 源有效），仅无证据源被列"
 
 
 class TestBackfillHitPoints:
@@ -971,16 +852,6 @@ class TestR2MultiRolePluginSources:
         assert _role(out_b) == ["exit"], "同列 then 组 → exit"
         assert _role(out_c) == ["exit_partial"], "同列 exit_partial 组 → exit_partial"
 
-    def test_e4_trial_chain_covers_group_plugins(self, db, data_dir):
-        """E4 试算链锚：exit_partial 组插件源经落库前试算（_component_
-        precheck 不因组别跳过）——门禁 (a) 源记录在场（「翻译过=有
-        记录」不变式扩展到分批组）。"""
-        from core.analysis.validation_service import _missing_component_evidence
-        out, col = self._fx_exit_strategy(
-            db, data_dir, "exit_partial_conditions", "fx_e4")
-        assert _missing_component_evidence(
-            db, [{"type": "formula", "ref": col}]) == [], \
-            "分批组插件源试算记录在场（试算链按角色同适用）"
 
     def test_e5_zero_migration_entry_encoding(self):
         """E5 零迁移实质断言：插件条目无 role 键（存量形制）与显式

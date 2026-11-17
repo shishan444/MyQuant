@@ -37,24 +37,10 @@ BAD_TF_CASES = [
         {"symbol": "BTCUSDT", "timeframe": "13x", "indicator": "RSI"},
         "timeframe", id="指标读数"),
     pytest.param(
-        "/api/research/validate-backtest",
-        {"hypothesis_id": "hyp_x", "strategy_id": "st_x", "request_range": _RANGE},
-        "request_range.timeframe", id="隔离回测"),
-    pytest.param(
-        "/api/research/staged-validation",
-        {"strategy_id": "st_x", "symbol": "BTCUSDT", "timeframe": "13x",
-         "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"},
-        "timeframe", id="分段验证"),
-    pytest.param(
         "/api/research/backtest-sandbox",
         {"strategy_id": "st_x", "symbol": "BTCUSDT", "timeframe": "13x",
          "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"},
         "timeframe", id="沙盒回测"),
-    pytest.param(
-        "/api/research/random-window-test",
-        {"strategy_id": "st_x", "symbol": "BTCUSDT", "timeframe": "13x",
-         "data_start": "2024-01-01T00:00:00Z", "data_end": "2024-02-01T00:00:00Z"},
-        "timeframe", id="随机窗口"),
 ]
 
 

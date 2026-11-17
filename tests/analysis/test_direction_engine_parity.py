@@ -166,13 +166,12 @@ def world(tmp_path_factory):
 
 
 def _run_iso(world, hyp_key, st_key, seg):
+    from core.analysis.validation_service import run_sandbox_backtest
     start, end = ISO_DOWN if seg == "down" else ISO_UP
-    resp = world["client"].post("/api/research/validate-backtest", json={
-        "hypothesis_id": world[hyp_key], "strategy_id": world[st_key],
-        "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                          "start": start, "end": end}})
-    assert resp.status_code == 200, resp.text
-    return resp.json()
+    return run_sandbox_backtest(
+        world["db"], world["data_dir"], strategy_id=world[st_key],
+        hypothesis_id=world[hyp_key], symbol="BTCUSDT", timeframe="4h",
+        start=start, end=end)
 
 
 @pytest.fixture(scope="module")
@@ -291,18 +290,6 @@ class TestA44BenchmarkSemantics:
 
 
 class TestA45EntityIsolation:
-    def test_judged_union_partitioned_by_hypothesis(self, metrics, world):
-        """判定并集按假设分族：long/lev1 对照在 short 已判区间上均
-        运行成功（fixture 内 status==200 即隔离证据——不 409）；short
-        自身同区间重放走幂等命中（并集/幂等都生效于本假设身份）。"""
-        resp = world["client"].post("/api/research/validate-backtest", json={
-            "hypothesis_id": world["hyp_short"],
-            "strategy_id": world["st_short"],
-            "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                              "start": ISO_DOWN[0], "end": ISO_DOWN[1]}})
-        assert resp.status_code == 200
-        assert resp.json()["duplicated"] is True
-
     def test_records_bound_to_own_hypothesis(self, metrics, world):
         """A4-5：两条独立验证记录分别挂各自假设（family 按 hash 分族）。"""
         from core.persistence.repository import research as rr

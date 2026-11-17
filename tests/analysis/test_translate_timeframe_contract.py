@@ -193,37 +193,14 @@ class TestR2TranslateTimeframeContract:
         assert out["execution_timeframe"] == "30m", (
             "active 分流点第七键须在场且=产物行周期")
 
-    def test_mcp_and_rest_default_semantics(self, db):
-        """四入口默认一致：MCP 工具签名默认 None+REST schema 默认 None
-        （两入口缺省均透传服务层继承语义——签名/schema 层锚）。"""
-        import inspect
-
-        ns = {}
-        exec(compile(
-            "import mcpserver.tools as _t", "<probe>", "exec"), ns)
-        # MCP 工具闭包注册后原函数经 fn 属性可达（FastMCP 形制）——
-        # 不依赖内部结构：源码签名静态断言（默认值契约面）
-        import mcpserver.tools as tools_mod
-        src = inspect.getsource(tools_mod)
-        assert "strategy_timeframe: str | None = None" in src, (
-            "MCP 工具默认值须为 None 继承哨兵")
-        from api.routes.research.validation import TranslateRequest
-        assert TranslateRequest.model_fields[
-            "strategy_timeframe"].default is None
-
     def test_boundary_none_sentinel_and_empty_string(self, db):
-        """边界：服务层 None=继承哨兵（不报错）；空串在 schema 层被
-        接受（Optional[str]）但经 require_known_timeframe 值域拒绝
-        （REST 层只对非 None 校验——空串非 None 必经校验面）。"""
+        """边界：服务层 None=继承哨兵（不报错）；空串经
+        require_known_timeframe 值域拒绝（REST 入口已退役，值域面
+        由共用守卫函数承载——空串非 None 必经校验面）。"""
         hid = _hyp(db, "1h")
         out = translate_hypothesis(
             db, hypothesis_id=hid, strategy_timeframe=None)
         assert out["execution_timeframe"] == "1h"
-        from api.routes.research.validation import TranslateRequest
-        req = TranslateRequest(strategy_symbol="BTCUSDT",
-                               strategy_timeframe="")
-        assert req.strategy_timeframe == ""  # schema 层收（拒绝在 require）
         from api.routes.research.common import require_known_timeframe
         with pytest.raises(Exception):
-            require_known_timeframe(req.strategy_timeframe,
-                                    "strategy_timeframe")
+            require_known_timeframe("", "strategy_timeframe")

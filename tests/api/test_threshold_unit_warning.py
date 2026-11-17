@@ -287,11 +287,12 @@ class TestRestFaceAndCoexistence:
         assert "verdict" in out["precheck_warnings"]
 
     def test_c12_warned_hypothesis_validate_backtest_isomorphic(self, env):
-        """C12（spec「零阻断全链」后半段）：带警告假设照常
-        validate-backtest——与无警告假设输出形制同构、警告键不渗入
-        验证面。登记区间与请求区间不重叠（隔离回测判定并集语义）。"""
+        """C12（spec「零阻断全链」后半段）：带警告假设照常回测——与
+        无警告假设输出形制同构、警告键不渗入验证面（retire-legacy 后
+        验证面由 backtest-sandbox 承载）。登记区间与请求区间不重叠
+        （沙盒挂假设时判定并集语义同源）。"""
         from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        from core.analysis.validation_service import run_isolated_backtest
+        from core.analysis.validation_service import run_sandbox_backtest
 
         def _cond(target):
             return {
@@ -314,12 +315,11 @@ class TestRestFaceAndCoexistence:
                               "start": "2024-01-05T00:00:00Z",
                               "end": "2024-02-10T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
             t = translate_hypothesis(env["db"], hypothesis_id=r["hypothesis_id"])
-            out = run_isolated_backtest(
-                env["db"], env["data_dir"], hypothesis_id=r["hypothesis_id"],
-                strategy_id=t["strategy_id"],
-                request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                               "start": "2024-02-20T00:00:00Z",
-                               "end": "2024-03-20T00:00:00Z"})
+            out = run_sandbox_backtest(
+                env["db"], env["data_dir"], strategy_id=t["strategy_id"],
+                hypothesis_id=r["hypothesis_id"], symbol="BTCUSDT",
+                timeframe="4h",
+                start="2024-02-20T00:00:00Z", end="2024-03-20T00:00:00Z")
             return r, t, out
 
         r_warn, t_warn, out_warn = _full(-2.33)

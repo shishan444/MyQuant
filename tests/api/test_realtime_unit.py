@@ -120,20 +120,6 @@ class TestJoinByQuery:
         sio_mock.enter_room.assert_not_called()
 
 
-class TestCancelStream:
-    def test_cancel_forwards_session_id(self) -> None:
-        """C→S cancel 事件携带 session_id 时转发协作取消。"""
-        with patch("api.stream_control.request_cancel") as cancel_mock:
-            asyncio.run(realtime._cancel_stream("sid", {"session_id": "batch_xyz"}))
-        cancel_mock.assert_called_once_with("batch_xyz")
-
-    def test_cancel_with_none_payload_forwards_none(self) -> None:
-        """payload 为 None 时转发 None（request_cancel 侧 no-op）。"""
-        with patch("api.stream_control.request_cancel") as cancel_mock:
-            asyncio.run(realtime._cancel_stream("sid", None))
-        cancel_mock.assert_called_once_with(None)
-
-
 class TestBroadcastErrorContainment:
     def test_broadcast_on_closed_loop_does_not_propagate(self) -> None:
         """主循环已关闭时 broadcast 吞掉异常（不向调用方传播）。"""
@@ -147,17 +133,6 @@ class TestBroadcastErrorContainment:
 class TestConnectHandlers:
     """connect 薄壳：_join_by_query + _emit_task_snapshot 的组合转发。"""
 
-    def test_connect_evolution_joins_and_snapshots(self, monkeypatch) -> None:
-        monkeypatch.delenv("MYQUANT_DB_PATH", raising=False)
-        sio_mock = MagicMock()
-        sio_mock.emit = AsyncMock()
-        with patch.object(realtime, "sio", sio_mock):
-            asyncio.run(realtime._connect_evolution(
-                "sid", {"QUERY_STRING": "task_id=t9"},  # type: ignore[arg-type]
-            ))
-        sio_mock.enter_room.assert_called_once_with(
-            "sid", "t9", namespace="/evolution",
-        )
 
     def test_connect_trading_joins_room(self, monkeypatch) -> None:
         monkeypatch.delenv("MYQUANT_DB_PATH", raising=False)
@@ -171,29 +146,23 @@ class TestConnectHandlers:
             "sid", "pt-9", namespace="/trading",
         )
 
-    def test_connect_streams_joins_room(self) -> None:
-        sio_mock = MagicMock()
-        with patch.object(realtime, "sio", sio_mock):
-            asyncio.run(realtime._connect_streams(
-                "sid", {"QUERY_STRING": "session_id=batch_1"},  # type: ignore[arg-type]
-            ))
-        sio_mock.enter_room.assert_called_once_with(
-            "sid", "batch_1", namespace="/streams",
-        )
-
-
-class TestEmitTaskSnapshot:
-    def _make_db_with_evolution_task(self, tmp_path: Path, status: str) -> Path:
+    def _make_db_with_paper_task(self, tmp_path: Path, status: str) -> Path:
+        """快照构造夹具（SQL 直插 pt_task——/trading 快照读 paper 域；
+        原进化任务构造已随域退役，retire-legacy B1）。"""
+        import sqlite3
         from core.persistence.db_ext import init_db_ext
-        from core.persistence.db import save_task, update_task
-        from tests.helpers.data_factory import make_dna
         db_path = tmp_path / "snap.db"
         init_db_ext(db_path)
-        save_task(
-            db_path, task_id="evo-1", target_score=80.0, template="explorer",
-            symbol="BTCUSDT", timeframe="4h", initial_dna=make_dna(),
-        )
-        update_task(db_path, "evo-1", status=status)
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "INSERT INTO pt_task (task_id, status, strategy_id,"
+            " dna_snapshot_json, symbol, timeframe, research_status_snapshot,"
+            " initial_cash, created_at, updated_at)"
+            " VALUES ('evo-1', :s, 'st-snap', '{}', 'BTCUSDT', '4h',"
+            " 'unverified', 10000.0, '2026-11-01T00:00:00',"
+            " '2026-11-01T00:00:00')", {"s": status})
+        conn.commit()
+        conn.close()
         return db_path
 
     def test_no_task_id_returns_early(self, monkeypatch) -> None:
@@ -218,41 +187,7 @@ class TestEmitTaskSnapshot:
             ))
         sio_mock.emit.assert_not_awaited()
 
-    def test_active_evolution_task_emits_snapshot(
-        self, monkeypatch, tmp_path: Path,
-    ) -> None:
-        """running 进化任务连接时下发 task_snapshot（B8.4 重连恢复）。"""
-        db_path = self._make_db_with_evolution_task(tmp_path, "running")
-        monkeypatch.setenv("MYQUANT_DB_PATH", str(db_path))
-        sio_mock = MagicMock()
-        sio_mock.emit = AsyncMock()
-        with patch.object(realtime, "sio", sio_mock):
-            asyncio.run(realtime._emit_task_snapshot(
-                "sid", {"QUERY_STRING": "task_id=evo-1"}, "/evolution",
-            ))
-        sio_mock.emit.assert_awaited_once()
-        args, kwargs = sio_mock.emit.await_args
-        event, payload = args[0], args[1]
-        assert event == "task_snapshot"
-        assert payload["task_id"] == "evo-1"
-        assert payload["status"] == "running"
-        assert payload["type"] == "task_snapshot"
-        assert kwargs.get("namespace") == "/evolution"
-        assert kwargs.get("room") == "evo-1"
 
-    def test_finished_evolution_task_no_snapshot(
-        self, monkeypatch, tmp_path: Path,
-    ) -> None:
-        """已完成（非活跃态）任务连接时不发快照。"""
-        db_path = self._make_db_with_evolution_task(tmp_path, "completed")
-        monkeypatch.setenv("MYQUANT_DB_PATH", str(db_path))
-        sio_mock = MagicMock()
-        sio_mock.emit = AsyncMock()
-        with patch.object(realtime, "sio", sio_mock):
-            asyncio.run(realtime._emit_task_snapshot(
-                "sid", {"QUERY_STRING": "task_id=evo-1"}, "/evolution",
-            ))
-        sio_mock.emit.assert_not_awaited()
 
     def _make_db_with_paper_task(self, tmp_path: Path, status: str, *,
                                  with_account: bool = False,
@@ -382,7 +317,7 @@ class TestEmitTaskSnapshot:
 
     def test_unknown_task_no_snapshot(self, monkeypatch, tmp_path: Path) -> None:
         """task_id 在库中不存在时不发快照。"""
-        db_path = self._make_db_with_evolution_task(tmp_path, "running")
+        db_path = self._make_db_with_paper_task(tmp_path, "running")
         monkeypatch.setenv("MYQUANT_DB_PATH", str(db_path))
         sio_mock = MagicMock()
         sio_mock.emit = AsyncMock()
@@ -394,7 +329,7 @@ class TestEmitTaskSnapshot:
 
     def test_unknown_trading_task_no_snapshot(self, monkeypatch, tmp_path: Path) -> None:
         """/trading namespace 下任务不存在时不发快照。"""
-        db_path = self._make_db_with_evolution_task(tmp_path, "running")
+        db_path = self._make_db_with_paper_task(tmp_path, "running")
         monkeypatch.setenv("MYQUANT_DB_PATH", str(db_path))
         sio_mock = MagicMock()
         sio_mock.emit = AsyncMock()
