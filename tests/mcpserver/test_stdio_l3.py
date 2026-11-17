@@ -115,7 +115,8 @@ def test_stdio_full_chain(live_api):
                 # 4) resource 读取：能力自述四部分
                 caps = await session.read_resource("quant://capabilities")
                 text = caps.contents[0].text
-                for part in ("工具清单", "验证协议要点", "策略可表达边界", "假设状态机"):
+                for part in ("工具清单", "验证协议要点", "策略库与验证记录",
+                            "条件可表达边界"):
                     assert part in text
 
     _run_async_compat(asyncio.wait_for(_run(), timeout=60))

@@ -252,28 +252,11 @@ class TestSchemaParity:
                     f"{tool} POST body 键 {sorted(stray)} 不在 Request 模型 " \
                     f"{sorted(model_fields)} 中"
 
-class TestSizingParamsDisclosure:
-    """仓位参数两键披露对拍（add-position-sizing-params 5.1；工具
-    schema 描述面随 register_hypothesis 退役删除——retire-legacy
-    任务 9，能力自述面存活承载）。"""
+class TestPaginationFolding:
+    """列表折叠与分页钳制（CARD-05/M2 资产——原 sizing 披露类随
+    register_hypothesis 退役，存活用例归位更名）。"""
 
-    def test_capability_doc_discloses_sizing_params(self) -> None:
-        """能力自述：声明块披露段含两键+值域+互斥+同语义执行
-        （沿 TestCapabilityResource 形制——AI 宿主按 doc 认知参数面）。"""
-        from mcpserver.server import build_server
-
-        mcp, _ = build_server(profile="research")
-        res = run_async(mcp.read_resource("quant://capabilities"))
-        text = res[0].content if isinstance(res, list) else str(res)
-        for token in ("initial_fraction", "max_position_loss",
-                      "互斥", "回测与纸盘同语义执行"):
-            assert token in text, f"能力自述缺仓位参数披露: {token}"
-
-
-class TestListFolding:
-    """2.2 分页真实生效 + 列表折叠默认响应 <20KB（D8）。"""
-
-    @pytest.fixture(scope="class")
+    @pytest.fixture
     def live_api(self, tmp_path_factory):
         import threading
         import time as _time

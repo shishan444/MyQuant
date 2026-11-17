@@ -30,12 +30,6 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   42 bar = 42 天，非 42 根基准 bar；下限 20 与主公式下限 200 分属
   两式）。结果会声明实际 warmup；数据起点不足时显式拒绝（错误
   detail 携带 warmup_bars 与 rule 全文）。
-- **门槛机械判定**：通过与否由预定义门槛表（盈利>0、回撤<25%、
-  交易数>=5）决定，不是你的判断。
-- **组合策略加严**：引用多个信号源的策略验证门槛更严。
-- **同种子复现**：随机窗口抽查记录种子，同种子同参数结果一致。
-- **幂等**：同条件集+区间集的假设登记返回既有 id；同区间的验证
-  重复请求返回既有记录（不会重复计算）。
 - **事件策略层（trigger_policy）**：假设登记与分析模板（event_study/
   condition_stats/precheck_hypothesis）可选携带 trigger_policy——
   条件集整体级（修饰 when 全集 AND 合并掩码如何变换为事件流），
@@ -118,11 +112,6 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   事件——载荷无原始 OHLCV 行；双上限区间 ≤5000 bar、事件 ≤500 条；
   默认事件源=注册表 trend/momentum/pattern 类+轨道族机械推导（不
   入集类别披露，indicators 点名不受限）；留痕 analysis 型。
-- **判定并集余量查询（0.4.1 union_balance）**：只读查询某假设的
-  已判区间/剩余可用区间/保守折算剩余 bar 数（三参数必填；数据范围
-  按 parquet 首尾 bar 完整时间戳直读，半开）；与隔离验证重叠拦截
-  同一账本两出口——查询 remaining 段发起隔离验证不被拒；零副作用
-  不落日志；假设不存在 404。
 - **反例画像（0.4.1 counter_profile）**：条件触发自动分符合组
   （窗口内任一时点实现方向预期——区间语义）/反例组，全指标特征
   分布对比（八键；特征域=注册表默认参数全输出列减 guard_only/
@@ -148,18 +137,6 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   （RESEARCH_NOT_EXPRESSIBLE，与 translate_hypothesis 同一公共
   入口防线）；**本模板不挂假设**：留痕检查型不进
   判定并集（检查不消耗验证区间）；组数 >10 走 202+轮询。
-- **分段验证**：run_staged_validation 按市场状态切段逐段独立回测
-  （检查⑤分题型成绩单——「哪类行情不行」的正式度量，与随机窗口抽查
-  互补：抽查答任意时段、分段答状态归因）。双模互斥：auto（0.2.7
-  机械判读 gates 内建）/explicit 段列表（恰好覆盖、相接不重叠）。
-  段级门槛沿用既有三段闸门逐段适用，段级 verdict 三态 {pass, fail,
-  inconclusive}（短段样本不足/方向不可区分判 inconclusive——证据
-  不足非证伪）；汇总三键（最差段/段间差异/全段达标），总判定最差
-  聚合三态。挂假设且全段 pass 产生可被 transition 引用的 pass 记录
-  （与隔离验证叠加不替代），inconclusive/fail 同样落记录但不可引用；
-  不挂假设 adhoc 纯日志（verdict 照报、record_id=None）。验证区间
-  不入判定并集（防同区间重复靠幂等——与隔离回测同语义）。
-
 - **纸盘挂载（rebuild-paper-trading 5.3）**：纸盘交易（实时行情虚拟
   资金前向验证）工具族六件——只读四件（list_paper_tasks 任务状态/
   get_paper_task 详情/get_paper_report 滚动与结题报告/get_paper_
@@ -173,71 +150,19 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   非 AI 决策——纸盘挂载不改变触金封禁边界（下单/调仓/修改风控类
   工具与端点任何档位不可达的边界永久不变）。
 
-- **进化控制与产物管理（research-tooling-data-quality）**：进化任务
-  控制与产物管理工具族六件——控制三件（stop_evolution_task 协作停止
-  ——当前代完整落库后退出/pause_evolution_task 当代完整落库后暂停
-  退出/resume_evolution_task 恢复=paused→pending 重新排队、从
-  initial_dna 完整重跑非断点续跑）+产物三件（get_evolution_strategies
-  运行中即可取任务策略集——快照通道 top10+终态 champion 兜底两态
-  连续，无第三份运行中冠军存储/update_strategy_metadata 元数据标注
-  （name/tags/notes 可选部分更新，tags 字符串形制直通）/
-  batch_delete_strategies 按进化任务圈定批量物理删除**不可逆**——
-  source_task_id 必填（无圈定的全库删除不提供）、confirm 必须显式
-  true 才执行（预览附 matched_count 与分数分布摘要 score_summary——
-  先看将删多少及其分数分布再确认）、删除域含受保护策略（paper/
-  candidate/live——在验/达标候选/实盘在役）或被非终态挂盘任务引用
-  时整批拒绝）。
+## 3. 策略库与验证记录（retire-legacy 后形态）
+- 策略入库与状态变更经人工 Web 审核操作（REST /api/strategies CRUD
+  与生命周期 8 边迁移——晋级边已退役，candidate/live 为休眠态）；
+  研究验证不再产出三态判定（旧编排已退役）。
+- run_backtest（沙盒统一流）为验证记录唯一生产写入通道：挂
+  hypothesis_id（指向存量假设，只读）时区间经研究日志计入判定并集
+  （防偷看账本——workbench 观察台内部消费）；不挂以 adhoc 留痕。
+  新记录三明细（逐笔成交/权益曲线/信号留痕）同事务原子落库，经
+  验证记录页 detail 端点复核（审视回溯分析）。
+- 历史假设记录冻结只读（登记/迁移/翻译通道已退役；workbench 对
+  存量数据的现算视图照常）。
 
-## 3. 草稿-转正生命周期（转化 → 验证 → 定案转正）
-- translate 对 active 假设产出 **draft 草稿**（不要求先有 pass 记录）：
-  WHEN 条件 → 入场信号，THEN 条件按「预期兑现即离场」→ 出场信号；
-  两者均不可表达时显式拒绝。
-- **策略层参数声明块（0.4.2）**：register_hypothesis 必填
-  strategy_params（D5 起 stop_loss 键必填——缺失或不带键 422；
-  stop_loss/take_profit/sl_mode/position_size/
-  leverage/exit_fraction/add_fraction/max_exposure——值域按 sl_mode
-  分叉：pct/trail 档 [0.005,0.20] 比例值、atr 档 [0.5,5.0] ATR 倍数；
-  sl_mode∈{pct,atr,trail}）。**仓位参数两键（add-position-sizing-
-  params）**：initial_fraction∈(0,1]（首笔动用资金比例——声明时
-  首笔定仓 margin=当时权益×该比例，替换 position_size 消费点，加仓
-  仍走 add_fraction）与 max_position_loss>0 金额无上界（持仓金额
-  防线——总浮亏=价格浮亏+该持仓累计资金费净支出，收盘判定达线
-  次根开盘全平）；initial_fraction 与 position_mode='risk_budget'
-  互斥（同笔首仓不可两个指挥）；两键**回测与纸盘同语义执行**；
-  不声明=存量行为逐位不变。translate 映射进产物 risk_genes（返回体
-  risk_genes=declared；无声明=平台默认 platform_default）。**声明块与
-  假设身份正交**：不进条件指纹与幂等身份（同条件集+同区间集=同一
-  假设），参数变体经终态后带新声明重登记产生；幂等两分支详见工具
-  文档（声明块必填后无「不带键」态——全等→duplicated、不等→422）。
-- **分批条件组（0.4.2）**：exit_partial_conditions（部分离场→
-  REDUCE_TRIGGER）/add_trigger_conditions（加仓触发→ADD_TRIGGER）/
-  add_suppress_conditions（加仓抑制→ADD_INHIBIT——任一抑制条件成立
-  的 bar 不加仓）三可选组键，组内 {subject,action,target} 与 when/then
-  同构；**组键进条件指纹参与假设身份**（触发条件属研究主张）；分批
-  数值参数（exit_fraction 缺省 0.5/add_fraction 0.1/max_exposure 1.0）
-  经 strategy_params 声明块承载（宿主组在场而块内缺数值键时自动
-  归一化）。回测与纸盘
-  新域执行分批与 trail；live 链对分批角色与 trail/atr 模式装载即拒。
-- **止损模式三分派（0.4.2）**：pct（入场价比例，存量语义）/atr
-  （止损=入场价∓倍数×ATR，按 DNA atr_period 动态取列，数据不足显式
-  拒）/trail（自最高价/最低价回撤达比例全部离场，多空对称）——回测
-  引擎真实分派；exit_sweep 网格按模式分档取值域（量纲双关）。
-- draft 即验证对象：对 draft 跑 run_isolated_validation——**验证的就是
-  将来出货的确切 DNA**。draft 的 DNA 不可经 PUT 修改（改条件请重新
-  translate）；draft 不出现在默认策略列表（显式 status=draft 可查）。
-- transition(supported) 时，若 draft 自身有 pass 记录，则同事务自动
-  转正（draft→active）；若 pass 挂在其他策略上而 draft 未验证，假设
-  照常定证但 draft 不转正（不会调包出货未验证的 DNA）。
-- 与库中既有策略同基因签名时显式分流标注（same_dna_existing），
-  不会静默丢弃；签名命中还须策略层参数九字段全等（含 atr_period）
-  才分流——参数异必建新实体（参数变体不被吞并）。
-- get_validation_report 携带 **lineage 谱系段**（0.4.2，纯增量）：
-  报告实体回链 parent 假设→同身份族（同条件集+区间集的全部假设含
-  终态后重登记变体）的全部历史翻译实体（draft/active/archived）与
-  各自三级验证记录计数/verdict 分布、is_current 标注——重新翻译后
-  旧实体考试记录归属清晰可辨。
-
-## 4. 策略可表达边界（假设→策略转化器的限制，显式拒绝优先）
+## 4. 条件可表达边界（exit_sweep 内存 DNA 构造的限制，显式拒绝优先）
 - 可表达：阈值比较（gt/lt/ge/le）、穿越（cross_above/cross_below）、
   回看类条件；插件信号（公式/模型）绑定为信号源；价格对指标列比较
   （price_above/price_below，fix-research-c2）；**列名 target 的序列
@@ -263,55 +188,13 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   THEN ETH）、分布形态类条件、无 subject 的模式条件、**条件携带
   timeframe 键的多周期假设**（0.2.14——TimeframeLayer 层映射的
   role 归属与跨层组装语义待独立版本产品决策；登记、条件求值类
-  分析与案例检查不受影响，但研究考试链（隔离回测/随机窗口/分段）
-  在翻译支持前不可用于混合周期假设——此类假设生命周期上限为
-  active，仅可经 abandoned/superseded 退出）。
-- 不可表达时走慢通道：提交 feature_requests（只保证持久化与可查，
-  **不会自动实现**——不要提单后空等结果）。
+  分析与案例检查不受影响；exit_sweep 对混合周期条件按同款掩码
+  投影求值（when 侧高周期放行域）。
 - **pattern_mining 为实验性**：特征自动挑选（按前缀 ~16 维，非全列）、
   特征 NaN 填零、区间头部时点特征有偏（无 warmup）——结论只作探索
   线索，不作定案证据；引用列不在模板可用域时结构化拒绝附清单
   （指标条件请走 condition_stats）。
 
-## 5. 假设状态机
-```
-登记 = active
-  ├─(证据 record_id，verdict=pass)→ supported ── 谱系 draft 有自身 pass
-  │                                            → 同事务转正（draft→active）
-  ├─(证据 record_id，verdict=fail)→ refuted（谱系 draft 永久保持 draft）
-  ├─(新假设 hypothesis_id)────────→ superseded
-  └─(放弃说明，免证据)───────────→ abandoned
-
-inconclusive 记录（0.2.11 证据闸门：样本不足/每笔收益均值 95% CI 跨零）
-  → 不触发任何迁移边（supported/refuted 须 pass/fail 严格匹配；draft
-    转正须 pass；组合分量证据须 pass——四不通路全堵），假设保持 active，
-    可换未消耗区间继续验证。inconclusive 是证据记录的属性，不是假设
-    的状态（状态机零改动——一次样本不足的验证不能否定假设）。
-终态（supported/refuted/superseded/abandoned）：拒绝转化、新验证与
-再迁移；被证伪或放弃的想法请登记新假设（可在 conditions 里引用旧
-想法的修正）。
-```
-- 条件是机器判定的唯一来源：你登记的 when/then 结构化条件会被
-  翻译与验证，statement 措辞只作展示。
-- subject 混合形制（0.2.13 统一）：参数化指标用结构化
-  {indicator, params, field}（GET list_indicators 查参数空间；多输出
-  指标 field 必填）；基础列与插件列用字符串精确名（GET
-  list_signal_columns 查询，条目附 reference_form 引用形制与可引用域）。
-  字符串编码形（如 rsi_14）入口已关闭——同列同写法在假设、模型特征、
-  分析模板三域通用。
-- when 条目可选 timeframe 键（0.2.14 新语义，asof_completed 防前视
-  纪律全域生效版本——历史结果与新语义跨代际不可直接对比）：
-  语义三分支——等于基准周期时键归一、与缺省语义完全相同；严格
-  高于基准周期时掩码投影求值（高周期轴解析+求值、布尔掩码按
-  已收盘可见性投影回基准索引）；低于基准周期结构化拒绝
-  （TIMEFRAME_NOT_HIGHER）。timeframe 修饰整条件；
-  穿越类动作挂高周期=状态窗语义（一次穿越持续至下次高周期收盘，
-  「穿越当根精确触发」是策略执行层脉冲职责）；低周期条件存在无歧义
-  等价表达——降基准（基准周期降为该低周期、其余条件挂高周期）；
-  then 条件携带键拒绝（前向收益对照的跨周期归属未定义）。末 bar
-  窗口语义=+tf 挂载机制：未收盘脉冲不落位、不进入任何已收盘可见性
-  判定——不存在「末 bar 兜底窗收未收盘脉冲」路径（0.2.14 design
-  B1 措辞两可的正式澄清：正确读法唯一）。
 """
 
 

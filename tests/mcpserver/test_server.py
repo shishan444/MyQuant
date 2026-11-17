@@ -105,10 +105,10 @@ class TestServerAssembly:
         mcp, _ = build_server(profile="research")
         res = run_async(mcp.read_resource("quant://capabilities"))
         text = res[0].content if isinstance(res, list) else str(res)
-        for part in ("工具清单", "验证协议要点", "策略可表达边界", "假设状态机"):
+        for part in ("工具清单", "验证协议要点", "策略库与验证记录",
+                     "条件可表达边界"):
             assert part in text, f"自述缺部分: {part}"
-        assert "register_hypothesis" in text  # 工具清单已合并
-        assert "不会自动实现" in text  # 需求单预期管理
+        assert "run_backtest" in text  # 工具清单已合并（沙盒统一流）
 
 
 class TestTierMarkupParity:

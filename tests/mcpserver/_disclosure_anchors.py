@@ -78,7 +78,7 @@ _CSEG_COMBO = ("组合条件（0.4.1起；regime_split2026-10-14起）", "区间
 _CSEG_PLUGINS = ("分析模板插件列条件（fix-research-c3起；regime_split2026-10-14起）",
                  "纯公式进场形制")
 _CSEG_COUNTER = ("反例画像（0.4.1counter_profile）", "退出参数扫描（0.4.1exit_sweep）")
-_CSEG_EXIT = ("退出参数扫描（0.4.1exit_sweep）", "分段验证")
+_CSEG_EXIT = ("退出参数扫描（0.4.1exit_sweep）", "纸盘挂载")
 _CSEG_TRIGGER = ("事件策略层（trigger_policy）", "沙盒回测纪律")
 
 # B1 清单串提取正则（与 test_contract_parity._conditions_support_list 同形制）
@@ -745,49 +745,18 @@ CAPABILITY_ENTRY_ANCHORED: tuple = (
     "反例画像",            # W2/G1-能力自述反例画像条目
     "退出参数扫描",         # W3/G1-能力自述退出参数扫描条目
     "事件策略层",           # G3-能力自述事件策略层条目
-    "进化控制与产物管理",   # G6 族级条目（CARD-07——专门锚登记）
 )
 
 CAPABILITY_ENTRY_WHITELIST: tuple = (
-    "隔离纪律", "时间参数规约", "warmup推导式", "门槛机械判定",
-    "组合策略加严", "同种子复现", "幂等", "沙盒回测纪律", "时点行情快照",
-    "案例抽查", "指标读数", "批量读数", "指标参数修复", "比较动作全集",
-    "纯公式进场形制", "区间事件摘要", "判定并集余量查询", "分段验证",
-    "纸盘挂载", "策略层参数声明块", "分批条件组", "止损模式三分派",
-    "pattern_mining为实验性",
-)
-
-# ---------------------------------------------------------------------------
-# 组 6：进化控制与产物管理族级条目（CARD-07——research-tooling-
-# data-quality P3 裁决落地物：能力自述「能力条目」从工具名在场升级为
-# 族级描述条目；锚钉六工具关键语义防文本漂移误导 AI）
-# ---------------------------------------------------------------------------
-
-# 族级条目段域（第 2 节末条——纸盘挂载条目后、第 3 节标题前）
-_CSEG_EVOLUTION_CTRL = ("进化控制与产物管理（research-tooling-data-quality）",
-                        "草稿-转正生命周期")
-
-GROUP6_ANCHORS: tuple = (
-    DisclosureAnchor(
-        anchor_id="G6-能力自述进化控制条目-六工具关键语义",
-        source="capability", seg_start=_CSEG_EVOLUTION_CTRL[0],
-        seg_end=_CSEG_EVOLUTION_CTRL[1],
-        kind="token_set",
-        tokens=("当前代完整落库后退出",     # stop/pause 协作语义
-                "重新排队",                 # resume 语义（CARD-06 收正）
-                "完整重跑非断点续跑",        # 非断点续跑防线（历史裁决 6）
-                "两态连续",                 # champion 快照+终态通道
-                "无第三份运行中冠军存储",    # 单一事实源
-                "字符串形制直通",            # tags 形制
-                "不可逆",                   # 批量删除
-                "confirm必须显式true",       # 确认契约
-                "score_summary",            # 分数分布摘要（CARD-05）
-                "整批拒绝"),                # 受保护策略预检
-        scope="进化控制与产物管理族级条目（六工具语义面）",
-        basis="CARD-07×P3 裁决（能力条目落地）+capability.py:173-186",
-    ),
+    "隔离纪律", "时间参数规约", "warmup推导式", "沙盒回测纪律",
+    "时点行情快照", "案例抽查", "指标读数", "批量读数", "指标参数修复",
+    "比较动作全集", "纯公式进场形制", "区间事件摘要",
+    "纸盘挂载", "pattern_mining为实验性",
+    # 门槛机械判定/组合策略加严/同种子复现/幂等/判定并集余量查询/
+    # 分段验证/进化控制与产物管理/策略层参数声明块/分批条件组/
+    # 止损模式三分派 已随 retire-legacy 退役域从能力自述删除（2026-11-16）
 )
 
 ALL_ANCHORS: tuple = (GROUP1_ANCHORS + GROUP1_TARGET_ANCHORS
                       + NEGATIVE_CLEAR_ANCHORS + GROUP3_ANCHORS
-                      + GROUP4_ANCHORS + GROUP5_ANCHORS + GROUP6_ANCHORS)
+                      + GROUP4_ANCHORS + GROUP5_ANCHORS)

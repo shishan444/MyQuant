@@ -131,7 +131,8 @@ def test_http_transport_full_chain(mcp_http_server):
 
                 caps = await session.read_resource("quant://capabilities")
                 text = caps.contents[0].text
-                for part in ("工具清单", "验证协议要点", "策略可表达边界", "假设状态机"):
+                for part in ("工具清单", "验证协议要点", "策略库与验证记录",
+                            "条件可表达边界"):
                     assert part in text
                 # 接入形态说明（本变更新增）
                 assert "streamable HTTP" in text
