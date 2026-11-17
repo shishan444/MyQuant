@@ -3,8 +3,9 @@
 三项对拍进 CI，拦截跨边界形制漂移：
 1) 白名单对拍：工具调用的端点 ∈ 档位白名单；
 2) 分页对拍：工具传出的查询参数键 ⊆ 服务端端点签名（静默失效即缺陷）；
-3) schema 对拍：工具 POST body 键 ⊆ 服务端 Request 模型字段；对象列表
-   参数在工具 schema 中为对象数组（items=object）。
+3) schema 对拍：工具 POST body 键 ⊆ 服务端 Request 模型字段
+   （register_hypothesis 对象数组形用例随工具退役删除——retire-legacy
+   任务 9）。
 
 提取方式：AST 扫描 tools.py 源码取每个工具真实调用的端点/参数（不依赖
 第二份注册表）；服务端签名经 FastAPI 路由表反射。
@@ -251,84 +252,10 @@ class TestSchemaParity:
                     f"{tool} POST body 键 {sorted(stray)} 不在 Request 模型 " \
                     f"{sorted(model_fields)} 中"
 
-    def test_object_list_params_declared_as_object_arrays(self) -> None:
-        """对象列表参数必须是对象数组（schema 即文档——agent 按文档传对象一次成功）。"""
-        import asyncio
-        from mcpserver.server import build_server
-
-        mcp, _ = build_server(profile="research")
-        by_name = {t.name: t.input_schema.get("properties", {})
-                   for t in run_async(mcp.list_tools())}
-        props = by_name["register_hypothesis"]
-        for param in ("when_conditions", "then_conditions", "data_ranges"):
-            assert props[param]["type"] == "array", param
-            assert props[param].get("items", {}).get("type") == "object", \
-                f"register_hypothesis.{param} 须为对象数组（服务端为对象列表）"
-
-    def test_new_params_schema_parity(self) -> None:
-        """0.4.2 新参数对拍：strategy_params 对象+分批组键三参数对象数组
-        ——与 HypothesisCreate 顶层键形制对齐（组键与 trigger_policy 同款：
-        非 None 才进请求体顶层）。Optional 参数为 anyOf(t|null) 形。"""
-        import asyncio
-
-        from api.schemas import HypothesisCreate
-        from mcpserver.server import build_server
-
-        mcp, _ = build_server(profile="research")
-        by_name = {t.name: t.input_schema.get("properties", {})
-                   for t in run_async(mcp.list_tools())}
-        props = by_name["register_hypothesis"]
-
-        def _variants(schema: dict) -> list:
-            return schema.get("anyOf") or [schema]
-
-        # strategy_params：对象（服务端弱形制 Dict）
-        assert any(v.get("type") == "object"
-                   for v in _variants(props["strategy_params"]))
-        # 组键三参数：对象数组（服务端 List[ConditionItem]）
-        for param in ("exit_partial_conditions", "add_trigger_conditions",
-                      "add_suppress_conditions"):
-            is_array_of_obj = any(
-                v.get("type") == "array"
-                and v.get("items", {}).get("type") == "object"
-                for v in _variants(props[param]))
-            assert is_array_of_obj, \
-                f"register_hypothesis.{param} 须为对象数组"
-        # 服务端模型顶层键存在（对齐对象=HypothesisCreate 顶层键形制）
-        for key in ("strategy_params", "exit_partial_conditions",
-                    "add_trigger_conditions", "add_suppress_conditions"):
-            assert key in HypothesisCreate.model_fields, \
-                f"HypothesisCreate 缺顶层键 {key}（对拍断裂）"
-
-    def test_register_hypothesis_docs_disclose_scaling(self) -> None:
-        """工具描述披露声明块与身份关系+分批组键语义（沿 trigger_policy
-        工具文档先例——错误即文档纪律）。review-042 CARD-14 补 token：
-        八键键集与三键值域联动须披露（与 capability.py 八键版对齐）。"""
-        import inspect
-
-        from mcpserver import tools as tools_mod
-        src = inspect.getsource(tools_mod)
-        for token in ("strategy_params", "幂等两分支", "终态后带新声明重登记",
-                      "exit_partial_conditions", "ADD_INHIBIT",
-                      "分批条件组", "exit_fraction", "生效杠杆"):
-            assert token in src, f"工具文档缺要素: {token}"
-
-
 class TestSizingParamsDisclosure:
-    """仓位参数两键三处披露对拍（add-position-sizing-params 5.1——
-    族 8a/b：工具 schema 描述+能力自述+错误场景文案）。"""
-
-    def test_register_hypothesis_docs_disclose_sizing_params(self) -> None:
-        """工具描述（schema 面）：两键进键集列举+值域/语义/互斥+
-        「回测与纸盘同语义执行」披露（沿动态定仓两键形制）。"""
-        import inspect
-
-        from mcpserver import tools as tools_mod
-        src = inspect.getsource(tools_mod)
-        for token in ("initial_fraction", "max_position_loss",
-                      "动用资金比例", "持仓金额防线",
-                      "同笔首仓不可两个指挥", "回测与纸盘同语义执行"):
-            assert token in src, f"工具文档缺仓位参数要素: {token}"
+    """仓位参数两键披露对拍（add-position-sizing-params 5.1；工具
+    schema 描述面随 register_hypothesis 退役删除——retire-legacy
+    任务 9，能力自述面存活承载）。"""
 
     def test_capability_doc_discloses_sizing_params(self) -> None:
         """能力自述：声明块披露段含两键+值域+互斥+同语义执行
@@ -484,12 +411,11 @@ class TestDisclosureParity:
 class TestTriggerPolicyDisclosure:
     """事件策略层披露面（trigger-policy tasks 7.1/7.2）。
 
-    三披露面（run_analysis/register_hypothesis 工具描述 + 能力自述）
-    MUST 携带三值枚举语义与「整理触发不创造触发」边界——工具经
-    @mcp.tool() 闭包注册无模块级属性，doc 断言走源码文本（同
-    TestDisclosureParity 取材纪律）；工具签名增 trigger_policy 后
-    schema 对拍（body 键 ⊆ Request 模型字段）由既有 TestSchemaParity
-    承载，本类跑通即对拍同步成立的证据。
+    两披露面（run_analysis 工具描述 + 能力自述）MUST 携带三值枚举
+    语义与「整理触发不创造触发」边界——工具经 @mcp.tool() 闭包注册
+    无模块级属性，doc 断言走源码文本（同 TestDisclosureParity 取材
+    纪律）；register_hypothesis 侧披露用例随工具退役删除
+    （retire-legacy 任务 9）。
     """
 
     _TOOLS_SRC = Path(tools_mod.__file__).read_text(encoding="utf-8")
@@ -497,12 +423,6 @@ class TestTriggerPolicyDisclosure:
     @staticmethod
     def _squash(text: str) -> str:
         return "".join(text.split())
-
-    def test_register_hypothesis_doc_三枚举与边界(self) -> None:
-        src = self._squash(self._TOOLS_SRC)
-        for token in ('"none"|"first_true"|"suppress_bars"',
-                      "不创造触发", "幂等身份"):
-            assert token in src, f"register_hypothesis 描述缺要素: {token}"
 
     def test_run_analysis_doc_事件口径与分形态(self) -> None:
         src = self._squash(self._TOOLS_SRC)
@@ -516,14 +436,6 @@ class TestTriggerPolicyDisclosure:
         for token in ("first_true", "suppress_bars", "同一权威变换",
                       "不静默降级", "不创造触发"):
             assert token in doc, f"能力自述缺要素: {token}"
-
-    def test_register_hypothesis_签名含_trigger_policy(self) -> None:
-        import re
-        m = re.search(
-            r"def register_hypothesis\((?:[^)]*\n)*?[^)]*"
-            r"trigger_policy: Optional\[dict\[str, Any\]\] = None",
-            self._TOOLS_SRC)
-        assert m is not None, "register_hypothesis 签名未增 trigger_policy"
 
 
 class TestIndicatorCountAlignment:
@@ -568,19 +480,6 @@ class TestIndicatorCountAlignment:
 
 class TestMultiTimeframeBoundaryDisclosure:
     """任务 6：工具描述多周期边界三句（unblock-research-validation）。"""
-
-
-class TestTranslateTimeframeContractDisclosure:
-    """R2 转化执行周期契约披露锚（fix-mtf-execution-consistency 组 2）。
-
-    spec delta「转化执行周期契约」明文 MCP docstring 同步披露——
-    docstring 未披露等于 AI 消费者视角的能力不存在（三面一致纪律）。
-    锁 translate 工具 docstring 执行周期契约句四要素：缺省继承语义、
-    继承来源（data_ranges[0].timeframe）、A1 异周期拒绝指引、回执
-    execution_timeframe 键。服务层行为锚在 tests/analysis/
-    test_translate_timeframe_contract.py（R2 六用例），本锚为 MCP
-    披露面（R2 锚族的 tests/mcpserver/ 面）。
-    """
 
 
 class TestRegimeSplitConditionsDisclosure:

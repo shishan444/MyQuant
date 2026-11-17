@@ -3,8 +3,9 @@
 断言工具描述层的契约真实性（capability-truthfulness）：枚举串与
 _TEMPLATE_REQUIRED_KEYS 一致（含 precheck_hypothesis 与补列的
 regime_split）、G3 旧指引（condition_stats 逐条独立复核）退役且新
-组合复核指引指向 precheck、阈值与双锚口径披露、register_hypothesis
-提及 precheck_warnings 返回键。
+组合复核指引指向 precheck、阈值与双锚口径披露。（register_
+hypothesis 侧 precheck_warnings 披露用例随工具退役删除——
+retire-legacy 任务 9。）
 """
 import pytest
 
@@ -41,10 +42,3 @@ class TestRunAnalysisContract:
         assert "projected_trades" in desc           # 双锚口径说明
         assert "analysis_segment_trades" in desc
         assert "trigger_density_upper_bound" in desc  # 口径差披露
-
-
-class TestRegisterHypothesisContract:
-    def test_mentions_precheck_warnings_key(self) -> None:
-        desc = _tools_by_name()["register_hypothesis"].description
-        assert "precheck_warnings" in desc
-        assert "analysis_segment_trades" in desc
