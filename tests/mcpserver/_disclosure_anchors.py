@@ -218,7 +218,7 @@ GROUP1_ANCHORS: tuple = (
         source="tools", seg_start=_SEG_RULER[0], seg_end=_SEG_RULER[1],
         kind="token_set",
         tokens=("mode（wave|box）", "trade_source", "rec_...",
-                "沙盒回测不落库逐笔", "隔离验证记录record_id",
+                "沙盒记录params形制无单区间", "存量隔离验证记录record_id",
                 "不静默截断", "识别率", "先到对侧比例", "edge_window",
                 "1h=240/15m=480", "±1pp"),
         covered=("ruler_compare",),
@@ -472,6 +472,47 @@ NEGATIVE_CLEAR_ANCHORS: tuple = (
     ),
 )
 
+# 退役工具名清零（CARD-06·偏差 2 处置路径 A 的 tester 侧全检锚，
+# lead 裁决 2026-11-16/17）：mcp-server 增量「能力自述资源」场景
+# 「退役工具零残留」——自述文本与工具描述文本（docstring）不得含
+# 任何 20 退役工具名（进化 8/假设 6/需求单 2/旧验证 4，清单权威=
+# 增量 MODIFIED 条）。squash 形匹配天然覆盖跨行断词形（rg 精确名
+# 扫描对「translate_↵hypothesis」形漏检——tools.py:489 实录）。
+# 「translate_hypothesis」取前缀形（兼抓全名 translate_hypothesis_
+# to_strategy 与裸前缀引用）。
+RETIRED_TOOL_NAMES: tuple = (
+    # 进化 8
+    "trigger_evolution", "pause_evolution_task", "resume_evolution_task",
+    "stop_evolution_task", "poll_evolution_task", "list_evolution_tasks",
+    "get_evolution_strategies", "batch_delete_strategies",
+    # 假设 6（translate 取前缀形）
+    "get_hypothesis", "list_hypotheses", "register_hypothesis",
+    "transition_hypothesis", "translate_hypothesis", "union_balance",
+    # 需求单 2
+    "submit_feature_request", "list_feature_requests",
+    # 旧验证 4
+    "get_validation_report", "run_isolated_validation",
+    "run_random_window_test", "run_staged_validation",
+)
+
+RETIRED_NAME_ANCHORS: tuple = (
+    DisclosureAnchor(
+        anchor_id="清零-tools声明面-退役工具名",
+        source="tools", seg_start="", seg_end="",
+        kind="negative_clear", tokens=RETIRED_TOOL_NAMES,
+        scope="tools.py 工具描述文本（docstring 全文件域）",
+        basis="mcp-server 增量「退役工具零残留」（叙述面——清单行"
+              "同源引用不在此域）",
+    ),
+    DisclosureAnchor(
+        anchor_id="清零-capability声明面-退役工具名",
+        source="capability", seg_start="", seg_end="",
+        kind="negative_clear", tokens=RETIRED_TOOL_NAMES,
+        scope="capability.py 能力自述文本（全文件域）",
+        basis="mcp-server 增量「能力自述资源·退役工具零残留」",
+    ),
+)
+
 # ---------------------------------------------------------------------------
 # 组 3：高频漂移清单句（比较动作全集/trigger_policy/模式集/枚举族）
 # ---------------------------------------------------------------------------
@@ -544,7 +585,6 @@ _DOMAIN_PRECISION_TOKENS = (
     "严格高于基准周期",      # 等基准歧义防线（排除「>=」笼统表述回潮）
     "不静默降级",           # 防线动词（显式拒绝的对面——丢了只剩错误码罗列）
     "同款放行",             # 机制来源引用（与策略翻译链同源放行）
-    "同一公共入口",          # 防线结构声明（translate_hypothesis 公共入口）
 )
 
 GROUP4_ANCHORS: tuple = (
@@ -758,5 +798,5 @@ CAPABILITY_ENTRY_WHITELIST: tuple = (
 )
 
 ALL_ANCHORS: tuple = (GROUP1_ANCHORS + GROUP1_TARGET_ANCHORS
-                      + NEGATIVE_CLEAR_ANCHORS + GROUP3_ANCHORS
-                      + GROUP4_ANCHORS + GROUP5_ANCHORS)
+                      + NEGATIVE_CLEAR_ANCHORS + RETIRED_NAME_ANCHORS
+                      + GROUP3_ANCHORS + GROUP4_ANCHORS + GROUP5_ANCHORS)

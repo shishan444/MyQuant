@@ -24,7 +24,8 @@ from mcpserver.capability import CAPABILITY_DOC
 
 from _disclosure_anchors import (
     ALL_ANCHORS, CAPABILITY_ENTRY_ANCHORED, CAPABILITY_ENTRY_WHITELIST,
-    NEGATIVE_CLEAR_TOKENS, REGISTERED_TEMPLATES, TIMEFRAME_FACES,
+    NEGATIVE_CLEAR_TOKENS, REGISTERED_TEMPLATES, RETIRED_TOOL_NAMES,
+    TIMEFRAME_FACES,
     DisclosureAnchor, _SEG_COUNTER, _SEG_EXIT, _SEG_REQUIRED, _SEG_SEGMENT,
 )
 
@@ -323,3 +324,20 @@ def test_negative_clear_by_source(source: str) -> None:
     for token in NEGATIVE_CLEAR_TOKENS:
         assert token not in sq, \
             f"[{source}] 过期语义残留（清零判据命中）: {token}"
+
+
+@pytest.mark.parametrize("source", ["tools", "capability"])
+def test_retired_tool_names_cleared_by_source(source: str) -> None:
+    """退役工具名清零直测（CARD-06·偏差 2 全检锚——与 parametrize
+    锚并存，独立测试便于变异复跑定位）。
+
+    20 退役名（进化 8/假设 6/需求单 2/旧验证 4）在两声明文件叙述面
+    不得出现；squash 形匹配覆盖跨行断词形（rg 精确名扫描对
+    tools.py:489「translate_↵hypothesis」形漏检实录——本锚即红界
+    证明）。工具清单行（build_capability_doc 机械生成、与 TOOL_TIERS
+    同源）不在此域——清单一致由注册面相等断言链拦截。
+    """
+    sq = _source_squash(source)
+    for name in RETIRED_TOOL_NAMES:
+        assert name not in sq, \
+            f"[{source}] 退役工具名叙述面残留: {name}"

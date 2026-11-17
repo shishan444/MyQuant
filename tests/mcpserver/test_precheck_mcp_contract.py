@@ -39,6 +39,9 @@ class TestRunAnalysisContract:
         desc = _tools_by_name()["run_analysis"].description
         assert "阈值 5 内建不可配" in desc          # D1 披露
         assert "≥5 pass" in desc
-        assert "projected_trades" in desc           # 双锚口径说明
-        assert "analysis_segment_trades" in desc
+        assert "projected_trades" in desc           # 锚口径（CARD-06 改单锚）
+        # 双锚口径退役注记（CARD-06）：analysis_segment_trades 字样随
+        # 假设登记链退役，改述为单锚+退役注记披露——句跨行，断言前
+        # squash 规整（docstring 换行断词防假红）
+        assert "分析段实际触发数锚已随假设登记链退役" in "".join(desc.split())
         assert "trigger_density_upper_bound" in desc  # 口径差披露
