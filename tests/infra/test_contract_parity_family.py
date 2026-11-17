@@ -24,7 +24,8 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.features.registry import INDICATOR_REGISTRY
-from core.validation.engine import _evaluate_single_condition
+# retire-legacy：condition_eval 自 core/validation/engine 迁入
+from core.analysis.condition_eval import _evaluate_single_condition
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

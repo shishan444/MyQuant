@@ -1,9 +1,13 @@
-"""链 B · 单回测链 L2（3.2）：构建 DNA → POST /backtest → 指标=裁判判定值。
+"""链 B · 单回测链 L2（3.2）：构建 DNA → sandbox 核算 → 指标=裁判判定值。
 
 链路级 L2 的核心断言：API 响应指标与独立参照实现（tests/reference/）
 在共享信号面上逐指标全等——「用户看到的数字」第一次有了可追溯的判定源。
-D-4 注记：strategy_id 路径当前断裂（哨兵在 tests/consistency/），链路以
-dna 直传走真实计算路径；compare 入口并入本链复验（C 链裁决）。
+retire-legacy-subsystems：POST /api/strategies/backtest 与 compare 入口
+退役（Q1=B），核算链唯一通道为 POST /api/research/backtest-sandbox
+（K1 后含验证记录落库）；compare 入口用例随守护对象退役删除。
+sandbox 链 warmup 前扩语义：数据集加 260 bar 前缀，请求窗口自
+iloc[260] 起——参照信号面在全量（含前缀）上求值后切窗口，与引擎
+「warmup 前扩装载+请求区间求值」同口径。
 """
 
 from __future__ import annotations
@@ -20,7 +24,8 @@ from tests.reference.fixture_gen import gen_ohlcv
 from tests.reference.reference_backtest import reference_backtest
 from tests.reference.reference_metrics import reference_metrics
 
-N = 300
+N = 560          # 300 有效窗 + 260 warmup 前缀（sandbox 前扩语义）
+WARMUP_CUT = 260
 
 
 @pytest.fixture(scope="module")
@@ -42,34 +47,47 @@ def journey(tmp_path_factory):
 
 
 def _reference_verdict(journey):
-    """裁判判定值：被测信号层产信号（共享面）→ 参照回测 → 参照指标。"""
+    """裁判判定值：被测信号层产信号（共享面）→ 参照回测 → 参照指标。
+
+    信号在全量（含 warmup 前缀）上求值后切请求窗口——与 sandbox
+    「warmup 前扩装载+请求区间求值」同口径；参照回测跑窗口切片。"""
     _, _, dna, data_dir, _ = journey
     ohlcv = gen_ohlcv("normal", seed=42, n=N)
     enhanced = compute_all_indicators(ohlcv)
     sig = dna_to_signal_set(dna, enhanced)
+    window = ohlcv.iloc[WARMUP_CUT:]
+    w0 = window.index[0]
     ref = reference_backtest(
-        ohlcv, sig.entries, sig.exits, adds=sig.adds, reduces=sig.reduces,
+        window, sig.entries.loc[w0:], sig.exits.loc[w0:],
+        adds=sig.adds.loc[w0:] if sig.adds is not None else None,
+        reduces=sig.reduces.loc[w0:] if sig.reduces is not None else None,
         entry_direction=sig.entry_direction,
         direction="long", position_size=0.5, leverage=1,
         stop_loss=0.05, take_profit=0.10,
         init_cash=100000.0, fee=0.001, slippage=0.0005, timeframe="4h",
     )
     m = reference_metrics(ref.equity, [t.pnl for t in ref.trades], 100000.0, "4h")
-    return m, ref, sig
+    return m, ref, sig, window
 
 
 def test_backtest_journey_l2_metrics_equal_reference(journey):
-    """全链 L2：API 响应五指标 = 参照判定值（trades 精确/浮点 1e-9）。"""
+    """全链 L2：sandbox 响应五指标 = 参照判定值（trades 精确/浮点 1e-9）。"""
     from fastapi.testclient import TestClient
 
-    app, payload_dna, dna, data_dir, _ = journey
-    m_ref, ref, sig = _reference_verdict(journey)
+    app, payload_dna, dna, data_dir, db_path = journey
+    m_ref, ref, sig, window = _reference_verdict(journey)
 
     with TestClient(app) as client:
-        r = client.post("/api/strategies/backtest", json={
-            "dna": payload_dna, "dataset_id": "BTCUSDT_4h",
-            "init_cash": 100000.0, "fee": 0.001, "slippage": 0.0005,
-            "symbol": "BTCUSDT", "timeframe": "4h",
+        created = client.post("/api/strategies", json={
+            "name": "journey-l2", "dna": payload_dna, "symbol": "BTCUSDT",
+            "timeframe": "4h", "source": "manual", "tags": "", "notes": "",
+        })
+        assert created.status_code == 201, created.text
+        sid = created.json()["strategy_id"]
+        r = client.post("/api/research/backtest-sandbox", json={
+            "strategy_id": sid, "symbol": "BTCUSDT", "timeframe": "4h",
+            "start": str(window.index[0].date()),
+            "end": str(window.index[-1].date()),
         })
     assert r.status_code == 200, r.text
     body = r.json()
@@ -77,51 +95,16 @@ def test_backtest_journey_l2_metrics_equal_reference(journey):
 
     assert_metrics_equal(
         {
-            "total_return": body["total_return"],
-            "sharpe_ratio": body["sharpe_ratio"],
-            "max_drawdown": body["max_drawdown"],
-            "win_rate": body["win_rate"],
-            "total_trades": body["total_trades"],
+            "total_return": body["metrics"]["total_return"],
+            "sharpe_ratio": body["metrics"]["sharpe_ratio"],
+            "max_drawdown": body["metrics"]["max_drawdown"],
+            "win_rate": body["metrics"]["win_rate"],
+            "total_trades": body["metrics"]["total_trades"],
         },
         {k: m_ref[k] for k in
          ("total_return", "sharpe_ratio", "max_drawdown", "win_rate", "total_trades")},
-        scenario="backtest-journey-l2",
+        scenario="sandbox-journey-l2",
     )
-    # 链路自洽：响应 result_id 落库可取（跨步数据引用一致）
-    assert body.get("result_id")
-    # （原 verify/history 落库取回断言已随旧验证会话体系退役——
-    # retire-verify-sessions；result_id 落库由 persistence 域覆盖）
-    # 评分存在（评分层在响应契约内）
-    assert body.get("total_score") is not None or body.get("score") is not None
-
-
-def test_backtest_journey_compare_entry_aligned(journey):
-    """C 链并入复验：compare 入口（DB 无关，策略需先创建）与直传指标全等。"""
-    from fastapi.testclient import TestClient
-
-    app, payload_dna, dna, data_dir, db_path = journey
-    with TestClient(app) as client:
-        created = client.post("/api/strategies", json={
-            "name": "journey-b", "dna": payload_dna, "symbol": "BTCUSDT",
-            "timeframe": "4h", "source": "manual", "tags": "", "notes": "",
-        })
-        assert created.status_code == 201
-        sid = created.json()["strategy_id"]
-
-        r1 = client.post("/api/strategies/backtest", json={
-            "dna": payload_dna, "dataset_id": "BTCUSDT_4h",
-            "init_cash": 100000.0, "fee": 0.001, "slippage": 0.0005,
-            "symbol": "BTCUSDT", "timeframe": "4h",
-        }).json()
-        r2 = client.post("/api/strategies/compare", json={
-            "strategy_ids": [sid], "dataset_id": "BTCUSDT_4h",
-            "init_cash": 100000.0, "fee": 0.001, "slippage": 0.0005,
-        }).json()
-    items = r2["results"] if isinstance(r2, dict) and "results" in r2 else r2
-    assert_metrics_equal(
-        {k: r1[k] for k in ("total_return", "sharpe_ratio", "max_drawdown",
-                            "win_rate", "total_trades")},
-        {k: items[0][k] for k in ("total_return", "sharpe_ratio", "max_drawdown",
-                                  "win_rate", "total_trades")},
-        scenario="journey-b-vs-c",
-    )
+    # 链路自洽（K1）：核算即落验证记录，明细三表随记录原子写入
+    assert body.get("record_id")
+    assert body.get("sandbox") is True

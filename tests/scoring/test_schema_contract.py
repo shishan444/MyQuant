@@ -15,9 +15,6 @@ from pydantic import ValidationError
 pytestmark = [pytest.mark.unit]
 
 from api.schemas import (
-    BacktestRequest,
-    CompareRequest,
-    EvolutionTaskCreate,
     RequirementsConfigModel,
     ScoreTemplateName,
     ScoringObjective,
@@ -63,24 +60,10 @@ class TestLiteralMirrorConsistency:
 
 
 class TestSchemaRejection:
-    """三模型 + RequirementsConfigModel 的非法值 422 拒绝（pydantic 层）。"""
-
-    def _backtest(self, **kw):
-        return dict(dataset_id="BTCUSDT_4h")
-
-    def test_backtest_request_invalid_template_rejected(self):
-        with pytest.raises(ValidationError):
-            BacktestRequest(dataset_id="BTCUSDT_4h", score_template="nonexistent")
-
-    def test_compare_request_invalid_template_rejected(self):
-        with pytest.raises(ValidationError):
-            CompareRequest(strategy_ids=["s1"], dataset_id="BTCUSDT_4h",
-                           score_template="explorer_x")
-
-    def test_evolution_task_invalid_template_rejected(self):
-        with pytest.raises(ValidationError):
-            EvolutionTaskCreate(symbol="BTCUSDT", timeframe="4h",
-                                score_template="bogus")
+    """RequirementsConfigModel 非法值 422 拒绝（pydantic 层）——
+    Backtest/Compare/EvolutionTaskCreate 三模型已随核算与进化端点
+    退役（retire-legacy 11.3），score_template 值域守护由
+    TestLiteralMirrorConsistency 承载。"""
 
     def test_requirements_invalid_objective_rejected(self):
         with pytest.raises(ValidationError):
@@ -94,9 +77,6 @@ class TestSchemaRejection:
         "template", ["explorer", "optimizer", "max_return", "profit_first", "risk_first"]
     )
     def test_legal_templates_accepted_including_aliases(self, template):
-        # 合法值（含别名）在全部三模型接受
-        assert BacktestRequest(dataset_id="X", score_template=template).score_template == template
-        assert CompareRequest(strategy_ids=["s"], dataset_id="X",
-                              score_template=template).score_template == template
-        assert EvolutionTaskCreate(symbol="BTCUSDT", timeframe="4h",
-                                   score_template=template).score_template == template
+        # 合法值（含别名）在 ScoreTemplateName 值域接受（三核算模型
+        # 退役后值域锚收缩至 Literal 本体）
+        assert template in get_args(ScoreTemplateName)
