@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import (AliasChoices, BaseModel, ConfigDict, Field,
-                      field_validator, model_validator)
+                      field_validator)
 
 # 值域单源引用（D4 家族/0.4.2 值域单源化）：sl_mode 取值域与杠杆红线
 # 的权威常量在 core 层，传输层只派生消费——改值单点生效，禁字面重复
@@ -382,56 +382,6 @@ class ConfigUpdate(BaseModel):
         return v
 
 
-# ---------------------------------------------------------------------------
-# Live Trading (demo mode) — 第8步 API schemas
-# ---------------------------------------------------------------------------
-
-
-class LiveTradingTaskCreate(BaseModel):
-    symbol: str
-    timeframe: str
-    dna_json: str
-    direction: str = "mixed"
-    config_json: Optional[str] = None
-
-
-class LiveTradingTaskUpdate(BaseModel):
-    # 状态机值域对齐 core/live_trading runner 全链（save 缺省 pending/
-    # runner 异常 error/paper_trading 同构先例 running/stopped）——
-    # 非法状态串原可入库（列表过滤与状态判定消费方失真），入站即拒
-    status: Optional[Literal["pending", "running", "stopped", "error"]] = None
-    config_json: Optional[str] = None
-    stop_reason: Optional[str] = None
-
-
-class LiveTradingTaskResponse(BaseModel):
-    task_id: str
-    symbol: str
-    timeframe: str
-    status: str
-    stop_reason: Optional[str] = None  # be-live-trading-chain 停止落因透传
-    config_json: Optional[str] = None
-    direction: str = "mixed"
-    position_side: str = ""
-    position_qty: float = 0.0
-    position_entry: float = 0.0
-    balance: float = 0.0
-    equity: float = 0.0
-    unrealized_pnl: float = 0.0
-    total_trades: int = 0
-    total_pnl: float = 0.0
-    last_bar_time: Optional[str] = None
-    heartbeat_at: Optional[str] = None
-    error_detail: Optional[str] = None  # be-live-trading-chain 2.2 透传
-    created_at: str
-    updated_at: str
-
-
-class LiveTradingTaskListResponse(BaseModel):
-    tasks: List[LiveTradingTaskResponse]
-    total: int
-
-
 # == research 域（add-ai-research-mcp 3.x）==
 
 
@@ -483,13 +433,6 @@ class ConditionItem(BaseModel):
     lookback: Optional[int] = None
 
 
-class HypothesisConditions(BaseModel):
-    """WHEN/THEN 结构化条件（机器判定唯一来源；陈述仅展示）。"""
-
-    when_conditions: List[ConditionItem]
-    then_conditions: List[ConditionItem]
-
-
 class DataRangeItem(BaseModel):
     """半开区间 [start, end)，UTC ISO8601。
 
@@ -519,131 +462,6 @@ class DataRangeItem(BaseModel):
                 "ISO8601 串（如 2024-01-01 或 2024-01-01T00:00:00Z），"
                 f"got {v!r}") from exc
         return v
-
-
-class AnalysisProvenance(BaseModel):
-    """分析谱系引用（complete-research-tooling GAP-10 泛化）：声明假设
-    来源的分析任务与候选指纹。
-
-    两类引用（ref_type）：
-    - screen_candidate：全谱扫描候选（旧形制=task_id+candidate_fingerprint
-      两键必填——旧调用方零适配，model_validator 补默认值）；
-    - analysis_task：网格/统计类分析任务来源（无指纹可引，指纹可选
-      ——GAP-10 主场景）。
-
-    两类同核（服务层）：task_id 存在性+任务记录区间事实核验保留
-    （防虚构来源——声明不供数，区间一律取自任务记录）；
-    不参与假设幂等键（同条件同区间重复登记命中同一假设）。
-    """
-
-    ref_type: Literal["screen_candidate", "analysis_task"] = "screen_candidate"
-    task_id: str
-    candidate_fingerprint: Optional[str] = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _legacy_two_keys_compat(cls, data: Any) -> Any:
-        """旧两键形制兼容读（GAP-10）：无 ref_type 键补默认
-        screen_candidate——旧记录/旧调用方零适配。"""
-        if isinstance(data, dict) and "ref_type" not in data:
-            return {**data, "ref_type": "screen_candidate"}
-        return data
-
-    @model_validator(mode="after")
-    def _fingerprint_conditionality(self) -> "AnalysisProvenance":
-        """指纹条件性：screen_candidate 指纹必填（候选定位语义）；
-        analysis_task 指纹可选（任务级引用无指纹可引）。"""
-        if (self.ref_type == "screen_candidate"
-                and not self.candidate_fingerprint):
-            raise ValueError(
-                "RESEARCH_PARAM_INVALID: ref_type=screen_candidate 须携带 "
-                "candidate_fingerprint（候选定位语义；analysis_task "
-                "任务级引用方可省略）")
-        return self
-
-
-# 兼容别名（GAP-10 泛化改名防导入断裂——旧导入方零适配）
-ScreenProvenance = AnalysisProvenance
-
-
-class HypothesisCreate(BaseModel):
-    conditions: HypothesisConditions
-    statement: str
-    data_ranges: List[DataRangeItem]
-    provenance: Optional[ScreenProvenance] = None
-    # 条件集整体级触发策略（trigger-policy 卡2）：弱形制对象键——
-    # mode 枚举/bars 参数的权威校验在服务层 validate_policy（422 附
-    # 合法枚举与参数要求，错误即文档；API 层只声明键存在与对象形）
-    trigger_policy: Optional[Dict[str, Any]] = None
-    # 策略层参数声明块（0.4.2 R1，strategy-param-declaration 规格）：
-    # 弱形制对象键（沿 trigger_policy 先例）——键白名单/值域分叉/
-    # D5 必填（含 stop_loss 键）的权威校验在服务层 3.6 步：None 与
-    # 空块 {} 均 422（传输层保持 Optional 形制，错误即文档）；不进
-    # conditions/不进 hash
-    strategy_params: Optional[Dict[str, Any]] = None
-    # 分批条件组三顶层键（0.4.2 R3/DC-13，scaled-position-actions 规格）：
-    # 路由层非 None 时并入 conditions dict（「归一非 None 才写键」——
-    # 缺省不写键保 conditions_hash 连续，trigger_policy 先例；不走
-    # HypothesisConditions 嵌套扩展——避 pydantic None 键 hash 断裂陷阱）
-    exit_partial_conditions: Optional[List[ConditionItem]] = None
-    add_trigger_conditions: Optional[List[ConditionItem]] = None
-    add_suppress_conditions: Optional[List[ConditionItem]] = None
-    # 交易方向键（add-direction-channel A1）：弱形制字符串键——值域
-    # {long, short} 的权威校验在服务层 3.7 步（422 错误即文档）；
-    # 缺省 None 与显式 "long" 语义相同（同指纹同实体）；归一形
-    # short 才写 conditions 顶层键（服务层写键进身份指纹）
-    direction: Optional[str] = None
-    # 组内逻辑键两枚（add-exit-group-or D1/D2）：弱形制字符串键——
-    # 值域 {and, or} 小写封闭枚举的权威校验在服务层（422 错误即
-    # 文档）；缺省 None 与显式 "and" 语义相同（归一形 "or" 才写
-    # conditions 顶层键进身份指纹）；exit_logic 作用于 then_conditions
-    # 全部离场组、partial_exit_logic 作用于 exit_partial_conditions
-    # 部分离场组（键传值而作用组缺失 422）
-    exit_logic: Optional[str] = None
-    partial_exit_logic: Optional[str] = None
-
-
-class HypothesisTransitionRequest(BaseModel):
-    target_status: str  # supported | refuted | superseded | abandoned
-    evidence_ref: str  # 验证 record_id / 接替假设 id / abandoned 时为放弃说明
-
-
-class HypothesisResponse(BaseModel):
-    hypothesis_id: str
-    status: str = "active"
-    duplicated: bool = False
-    # 交易方向回显（add-direction-channel）：实体属性键（每个假设都有
-    # 方向，存量即 long）——新建/幂等命中均携带，既有消费方零适配
-    direction: str = "long"
-    # 登记自动预检警告段（add-hypothesis-precheck D6）：预检成功时携带
-    # 三态结论与判定锚数值（锚=分析段实际触发数，多区间取最小值）；
-    # 纯增量可选键——既有消费方零适配；幂等命中/预检降级不携带。
-    precheck_warnings: Optional[Dict[str, Any]] = None
-    # 既有声明块摘要（0.4.2 R1）：仅幂等 duplicated 路径携带（纯增量，
-    # 沿 precheck_warnings 先例）；NULL 声明以 {} 呈现——旧调用方据此
-    # 可知既有假设的声明内容而无需二次查询。
-    existing_strategy_params: Optional[Dict[str, Any]] = None
-    # 阈值单位可疑警告（add-threshold-unit-warning C-3）：仅新建路径且
-    # 清单非空时携带（纯增量可选键——警告不阻断登记，语义独立于
-    # precheck_warnings 的数据预检三态）；幂等命中不携带
-    threshold_unit_warnings: Optional[List[Dict[str, Any]]] = None
-    # 浅收割形制警告（fr_fd5e89897f8d）：pct 档 take_profit<=stop_loss
-    # （R:R<1 高胜率浅收割）放行时的披露键（纯增量可选——service 返回
-    # 体与 REST 响应面同键透出）；仅新建路径且命中形制时携带
-    strategy_param_warnings: Optional[List[Dict[str, Any]]] = None
-    # 出场覆盖率警告（fix-executor-column-and-exit-guard D4）：then 组
-    # 最差区间覆盖率 ≥0.9 且非恒真时的披露键（恒真被 D3 硬拒绝不达
-    # 此面；纯增量可选——service 返回体与 REST 响应面同键透出）；仅
-    # 新建路径且命中阈值时携带，幂等命中不携带
-    exit_coverage_warnings: Optional[List[Dict[str, Any]]] = None
-
-
-class HypothesisListResponse(BaseModel):
-    items: List[Dict[str, Any]]
-    total: int
-    page: int = 1
-    page_size: int = 50
-    next_cursor: Optional[str] = None  # keyset 续页游标（末条 created_at|id）
 
 
 class SandboxBacktestRequest(BaseModel):
