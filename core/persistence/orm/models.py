@@ -348,6 +348,8 @@ class LiveTradingTask(Base):
     """
     实盘任务（demo mode）：持仓/余额/心跳运行状态，bar 轮询 runner
     的持久化面（B3c.1 收编自 live 轨）。
+    【已退役，schema 声明保留（D4）——retire-legacy-subsystems B2：
+    实盘域代码已删；ORM 保留防 alembic check 报 diff，行数据不动】
     """
     __tablename__ = "live_trading_task"
     __table_args__ = ()
@@ -992,6 +994,7 @@ class LiveDecision(Base):
     ——strategy_transition_event 同款）。reason_json 由 runner 写入端
     定义结构，查询端透传不解释。"""
 
+    # 【已退役，schema 声明保留（D4）——retire-legacy-subsystems B2】
     __tablename__ = "live_decisions"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     decision_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)

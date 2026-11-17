@@ -29,7 +29,6 @@ from core.persistence.db_ext import init_db_ext
 from .routes import config, data, evolution, strategies
 from .routes import validate as validate_route
 from .routes import scene as scene_route
-from .routes import live_trading as live_trading_route
 from .routes import paper_trading as paper_trading_route
 from .routes.research.common import research_error_to_http
 from .schemas import HealthResponse
@@ -101,11 +100,6 @@ def create_app(
         init_db_ext(db_path)
         warn_if_no_api_key()
 
-        # 存量凭据一次性迁移清理（fix-audit-disclosure-security S-01）：
-        # config.json 明文凭据键 → data/credentials.json 后物理删键
-        from .routes.config import migrate_legacy_credentials
-        migrate_legacy_credentials(db_path)
-
         # 进化域恢复：上次运行的中断/崩溃任务先回收再起 runner
         from .runner import EvolutionRunner, set_ws_push_fn, recover_stale_tasks, restart_crashed_tasks
 
@@ -155,10 +149,6 @@ def create_app(
         runner = EvolutionRunner(
             db_path=db_path, data_dir=data_dir, max_workers=_maxw)
         app.state.evolution_runner = runner
-        # be-live-trading-chain：live_runner 装配占位（内核待 D5 全链
-        # 设计卡——装配点先例形制：evolution_runner/paper_scheduler 同层）
-        app.state.live_runner = None
-
         # B8.2/8.4: socket.io 唯一实时通道（native WS 已退役）
         import os as _os
         from . import realtime
@@ -337,7 +327,6 @@ def create_app(
     app.include_router(strategies.router)
     app.include_router(evolution.router)
     app.include_router(data.router)
-    app.include_router(live_trading_route.router)
     # 纸盘交易新域端点族（rebuild-paper-trading 5.1）
     app.include_router(paper_trading_route.router)
     app.include_router(validate_route.router)
