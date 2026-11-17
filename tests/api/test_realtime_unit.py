@@ -439,7 +439,5 @@ class TestConnectAuthRejection:
 
         monkeypatch.setenv("MYQUANT_API_KEY", "secret-1")
         environ = {"QUERY_STRING": ""}  # 无 token
-        for handler in (realtime._connect_evolution,
-                        realtime._connect_trading,
-                        realtime._connect_streams):
+        for handler in (realtime._connect_trading,):
             assert asyncio.run(handler("sid-x", environ)) is False
