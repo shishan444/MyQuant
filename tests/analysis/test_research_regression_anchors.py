@@ -176,27 +176,35 @@ class TestA1NativeTranslation:
     RANGE = {"symbol": "BTCUSDT", "timeframe": "1h",
              "start": "2025-01-01", "end": "2026-04-01"}
 
+    def _translated_genes(self, db):
+        """翻译面写法（retire-legacy 后登记/translate 组装面退役）：
+        经 build_signal_genes（条件→基因翻译能力唯一存活单点）直译，
+        手构 DNA to_json 回 JSON 形——断言形制与旧 translate 产物逐键
+        一致（同一翻译内核，产物等价由本锚自证）。"""
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA)
+
+        genes, _sources = build_signal_genes(
+            when_conditions=[
+                {"subject": "close", "action": "lt",
+                 "target": "bb_lower_20_2"}],
+            then_conditions=[
+                {"subject": {"indicator": "EMA", "params": {"period": 20},
+                             "field": "ema"},
+                 "action": "gt", "target": 0}],
+            db_path=db, strategy_timeframe="1h")
+        dna = StrategyDNA(
+            signal_genes=list(genes), logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="1h"),
+            risk_genes=RiskGenes(sl_mode="pct", stop_loss=0.05))
+        return json.loads(dna.to_json())["signal_genes"]
+
     def _translate_and_count(self, db):
-        from core.analysis.hypothesis_service import register_hypothesis
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        from core.persistence.repository.strategy import get_strategy
         from core.strategy.executor import evaluate_condition
 
-        hid = register_hypothesis(
-            db,
-            conditions={
-                "when_conditions": [
-                    {"subject": "close", "action": "lt",
-                     "target": "bb_lower_20_2"}],
-                "then_conditions": [
-                    {"subject": {"indicator": "EMA", "params": {"period": 20},
-                                 "field": "ema"},
-                     "action": "gt", "target": 0}]},
-            statement="A1 native translation anchor",
-            data_ranges=[dict(self.RANGE)], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
-        sid = translate_hypothesis(db, hypothesis_id=hid)["strategy_id"]
-        genes = json.loads(get_strategy(db, sid)["dna_json"])["signal_genes"]
-        entry = [g for g in genes if g["role"] == "entry_trigger"][0]
+        entry = [g for g in self._translated_genes(db)
+                 if g["role"] == "entry_trigger"][0]
         # B1 契约：close 主体基因挂目标指标+price_below
         assert entry["indicator"] == "BB"
         assert entry["params"] == {"period": 20, "std": 2}
@@ -233,27 +241,29 @@ class TestA2NativeTranslation:
         {"subject": "close", "action": "lt", "target": "ema_20"},
     ]
 
-    def _register_and_translate(self, db):
-        from core.analysis.hypothesis_service import register_hypothesis
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        hid = register_hypothesis(
-            db,
-            conditions={"when_conditions": self.CONDS,
-                        "then_conditions": [
-                            {"subject": "close", "action": "gt",
-                             "target": "ema_20"}]},
-            statement="A2 native translation anchor",
-            data_ranges=[dict(self.RANGE)], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
-        sid = translate_hypothesis(db, hypothesis_id=hid)["strategy_id"]
-        return hid, sid
+    def _translated_genes(self, db):
+        """翻译面写法（retire-legacy 后组装面退役）：build_signal_genes
+        单点直译，手构 DNA to_json 回 JSON 形供逐键断言。"""
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA)
+
+        genes, _sources = build_signal_genes(
+            when_conditions=self.CONDS,
+            then_conditions=[
+                {"subject": "close", "action": "gt", "target": "ema_20"}],
+            db_path=db, strategy_timeframe="4h")
+        dna = StrategyDNA(
+            signal_genes=list(genes), logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(sl_mode="pct", stop_loss=0.05))
+        return json.loads(dna.to_json())["signal_genes"]
 
     def test_a2_translated_genes_and_count(self, _db):
-        """双基因 AND 掩码计数==213（翻译产物逐基因求值后 AND）。"""
-        from core.persistence.repository.strategy import get_strategy
+        """双基因 AND 掩码计数==141（翻译产物逐基因求值后 AND）。"""
         from core.strategy.executor import evaluate_condition
-        _, sid = self._register_and_translate(_db)
-        genes = json.loads(get_strategy(_db, sid)["dna_json"])["signal_genes"]
-        entries = [g for g in genes if g["role"] == "entry_trigger"]
+        entries = [g for g in self._translated_genes(_db)
+                   if g["role"] == "entry_trigger"]
         assert len(entries) == 2
         # 复合键断言（team3 reviewer 发现 1 修正：双基因 indicator 同为
         # EMA，单 indicator 键字典覆盖致 EMA5 基因断言落空——
@@ -279,48 +289,46 @@ class TestA2NativeTranslation:
         both = masks[0] & masks[1]
         assert int(both.fillna(False).sum()) == 141
 
-    def test_a2_full_chain_sandbox_and_isolated(self, _db):
-        """B1-T19 全链路验收锚：翻译 draft 沙盒烟测 total_trades>0；
-        隔离验证正常返回（无组件证据闸门拒——纯内置基因不触发该门）。
+    def test_a2_full_chain_sandbox(self, _db):
+        """B1-T19 全链路验收锚（retire-legacy 收缩：隔离验证编排退役，
+        链路验收随 sandbox 通道承载）：翻译产物手构 DNA 落库，沙盒烟测
+        total_trades>0；warmup 零改动锚随 sandbox 承载（同一推导单点
+        _derive_dna_warmup——EMA 挂基因主体按注册表上限 period=200×3
+        收敛 600，close 主体基因若未挂指标会退化到 floor 200）。
 
-        区间设计：登记区间即判定并集（研究协议——先偷看不获利），
-        隔离验证须用登记区间外数据段；区间随新域数据起点重设（锚
-        重录 2026-10-29）：沙盒段 2025-03~09、隔离段 2025-10~2026-03
-        （双段均在新域内不重叠，非零交集由断言自证）。出场条件用 B1 写法（close gt ema_20——回到均线上方
-        兑现离场），与入场 close lt ema_20 天然互斥，不经「同 bar
-        开平互斥保留 exit」规则吞掉全部入场。"""
-        from core.analysis.hypothesis_service import register_hypothesis
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        from core.analysis.validation_service import (
-            run_isolated_backtest, run_sandbox_backtest)
+        区间设计：沙盒段 2025-03~09（新域内）；出场条件用 B1 写法
+        （close gt ema_20——回到均线上方兑现离场），与入场 close lt
+        ema_20 天然互斥，不经「同 bar 开平互斥保留 exit」规则吞掉全部
+        入场。"""
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+        from core.analysis.validation_service import run_sandbox_backtest
+        from core.persistence.repository.strategy import save_strategy
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA)
 
-        reg_range = {"symbol": "BTCUSDT", "timeframe": "4h",
-                     "start": "2025-03-01", "end": "2025-09-01"}
-        hid = register_hypothesis(
-            _db,
-            conditions={"when_conditions": self.CONDS,
-                        "then_conditions": [
-                            {"subject": "close", "action": "gt",
-                             "target": "ema_20"}]},
-            statement="A2 full-chain anchor",
-            data_ranges=[dict(reg_range)], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
-        sid = translate_hypothesis(_db, hypothesis_id=hid)["strategy_id"]
+        genes, sources = build_signal_genes(
+            when_conditions=self.CONDS,
+            then_conditions=[
+                {"subject": "close", "action": "gt", "target": "ema_20"}],
+            db_path=_db, strategy_timeframe="4h")
+        dna = StrategyDNA(
+            signal_genes=list(genes), logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(sl_mode="pct", stop_loss=0.05,
+                                 direction="long"),
+            signal_sources=[{"type": "rule"},
+                            *(dict(t) for t in (sources or []))])
+        sid = "st_a2_anchor"
+        save_strategy(_db, strategy_id=sid, dna_json=dna.to_json(),
+                      symbol="BTCUSDT", timeframe="4h",
+                      name="A2 full-chain anchor")
 
         sb = run_sandbox_backtest(
             _db, MARKET_DIR, strategy_id=sid, symbol="BTCUSDT",
             timeframe="4h", start="2025-03-01", end="2025-09-01")
         assert sb["metrics"]["total_trades"] > 0, "沙盒须产真实非零交易"
-
-        iv = run_isolated_backtest(
-            _db, MARKET_DIR, hypothesis_id=hid, strategy_id=sid,
-            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": "2025-10-01", "end": "2026-03-01"})
-        assert iv["record_id"], "隔离验证被闸门拒（未产记录）"
-        assert iv["verdict"] in ("pass", "fail", "inconclusive")
-        # warmup 零改动锚：披露面为 {bars, derived, basis}——derived=600
-        # 即 EMA 注册表上限 period=200×3（指标挂基因主体被主路径收集的
-        # 数值证据；close 主体基因若未挂指标会退化到 floor 200）
-        warm = iv.get("warmup") or {}
-        assert warm.get("derived") == 600, (
-            f"warmup 推导须含挂基因指标（derived 期望 600）: {warm}")
-        assert warm.get("basis")
+        assert sb["record_id"], "沙盒验证记录在案"
+        # warmup 零改动锚（隔离通道退役后随 sandbox 通道承载）
+        assert sb["warmup_bars"] == 600, (
+            f"warmup 推导须含挂基因指标（期望 600）: "
+            f"{sb.get('warmup_bars')}")
