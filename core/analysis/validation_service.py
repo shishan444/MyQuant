@@ -312,7 +312,7 @@ def run_sandbox_backtest(
 
     纪律内嵌：每次沙盒强制落研究日志——挂 hypothesis_id 时区间进判定
     并集（封堵"先偷看后验证"），不挂时以 adhoc 日志留痕。
-    区间 bar 数超上限拒绝（防爆超时，引导走隔离验证协议）。
+    区间 bar 数超上限拒绝（防爆超时，引导分多次小区间 run_backtest）。
 
     验证记录统一流（add-sandbox-records-unified-flow R1）：每次执行
     同步写入 validation_records（level=sandbox_backtest 行——verdict 恒
@@ -337,11 +337,11 @@ def run_sandbox_backtest(
     if bars > SANDBOX_MAX_BARS:
         raise ResearchError(
             "RESEARCH_SANDBOX_LIMIT",
-            f"沙盒区间 {bars} bar 超上限 {SANDBOX_MAX_BARS}——隔离验证"
-            "协议支持任意区间（分区间验证）",
+            f"沙盒区间 {bars} bar 超上限 {SANDBOX_MAX_BARS}——分多次"
+            "小区间 run_backtest（单次上限内验证后并读结果）",
             status=422,
             detail={"bars": bars, "max": SANDBOX_MAX_BARS,
-                    "slow_path": "run_isolated_validation 支持大区间"})
+                    "slow_path": "分多次小区间 run_backtest"})
 
     # 假设存在性前置（ND1——三入口对称先例）：沙盒入表后假 id 会成为
     # 挂不存在假设的「证据」行，必须拦；None（adhoc 路径）跳过校验

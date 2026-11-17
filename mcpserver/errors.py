@@ -120,8 +120,8 @@ HINTS: Dict[str, str] = {
         "组合形制非法：检查 WHEN/THEN 组合结构（detail 含位置）",
     # ---- 沙盒回测
     "RESEARCH_SANDBOX_LIMIT":
-        "沙盒区间超 bar 上限：分区间验证（多次 run_backtest "
-        "支持大区间分区间验证）",
+        "沙盒区间超 bar 上限：分多次小区间 run_backtest（单次上限内"
+        "验证后并读结果）",
     # ---- 纸盘域（库内 JSON 列结构化解析——load_stored_json 经 code
     # 形参派发域码，抛出点 api/routes/paper_trading.py 与 core/
     # paper_trading/reporting.py）

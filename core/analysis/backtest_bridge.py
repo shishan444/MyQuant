@@ -101,9 +101,9 @@ def ensure_timeframe_consistent(
                 "dna_execution_timeframe": exec_tf,
                 "strategy_id": strategy_id,
                 "need_hint": (
-                    "验证请求周期须等于策略执行周期（策略定义轴）；"
-                    "换轴验证请回假设侧修改基准周期"
-                    "（data_ranges.timeframe）后重新转化"),
+                    "验证请求周期须等于策略执行周期（策略定义轴）——不传 "
+                    "timeframe 用策略行周期自洽验证；换轴须以目标执行"
+                    "周期重建策略"),
             })
 
 

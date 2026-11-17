@@ -5,9 +5,10 @@
 模式二（箱体模式）：交易清单 × 分位沿通道 → 先到对侧比例（箱体
 单子是不是先到对侧再触止损）＋三分类计数＋净均值 CI＋月频。
 
-交易清单来源唯一路：隔离验证记录（trade_source={kind:"validation",
-record_id}）——沙盒回测不落库逐笔（平台防污染纪律），kind="backtest"
-即 422 附指引；校验顺序=kind 值域拦截在前（纪律拦截优先于引用解析），
+交易清单来源唯一路：存量隔离验证记录（trade_source={kind:"validation",
+record_id}）——沙盒记录 params 形制无单区间（request_range），不可作
+对照来源，kind="backtest" 即 422 附指引；校验顺序=kind 值域拦截在前
+（形制拦截优先于引用解析），
 合法 kind 后做引用存在性校验。区间一致性双级校验：记录级（验证记录
 request_range 与评估区间时间戳归一后全值相等，不等 422 附两侧归一值
 ——不做静默截断）＋逐笔级（entry_time/exit_time 落评估区间，持仓中
@@ -54,8 +55,8 @@ DEFAULT_B = 3000
 DEFAULT_SEED = 42
 
 _BACKTEST_GUIDANCE = (
-    "沙盒回测不落库逐笔（防污染纪律）；对照指标请引用隔离验证记录 "
-    "record_id")
+    "沙盒记录 params 形制无单区间（request_range），不可作对照来源；"
+    "对照指标请引用存量隔离验证记录 record_id")
 
 
 # ----------------------------------------------------------- 数据来源与校验
@@ -90,7 +91,7 @@ def validate_trade_source(trade_source: Any) -> str:
             "RESEARCH_PARAM_INVALID",
             "trade_source.record_id 须为非空字符串",
             detail={"param": "trade_source.record_id",
-                    "legal_form": "隔离验证记录 record_id（rec_...）"})
+                    "legal_form": "存量隔离验证记录 record_id（rec_...）"})
     return record_id
 
 
@@ -119,7 +120,7 @@ def resolve_validation_record(
             "RESEARCH_PARAM_INVALID",
             f"验证记录不存在: {record_id!r}",
             detail={"param": "trade_source.record_id", "actual": record_id,
-                    "legal_form": "隔离验证记录 record_id（rec_...）"})
+                    "legal_form": "存量隔离验证记录 record_id（rec_...）"})
     try:
         params = json.loads(row["params"]) if row["params"] else {}
     except (json.JSONDecodeError, TypeError):

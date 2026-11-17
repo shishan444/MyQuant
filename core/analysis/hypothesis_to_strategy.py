@@ -548,8 +548,7 @@ def _translate_conditions(
                         " lt/gt 与编码列名 target 组合（价格与指标线的"
                         "严格比较）；ge/le 含等号形态暂不可表达",
                         detail={"condition": cond,
-                                "slow_path": "改用 gt/lt 或提交 "
-                                             "feature-requests"})
+                                "slow_path": "改用 gt/lt"})
                 # 其余动作（cross/breakout 族等）：穿下方既有基础列
                 # 拒绝段——price_* 无穿越形态为真边界，文案逐字节不变
             elif action in ("lt", "gt"):
@@ -562,8 +561,7 @@ def _translate_conditions(
                     f"（target 分类: {t_kind}）",
                     detail={"condition": cond,
                             "slow_path": "target 改用编码指标列名"
-                                         "（如 ema_20），或提交 "
-                                         "feature-requests"})
+                                         "（如 ema_20）"})
             # close+ge/le+非 decoded 及其余组合：穿既有基础列拒绝段
             # （维持现状文案，与三段格局边界一致）
 
@@ -585,7 +583,7 @@ def _translate_conditions(
             "RESEARCH_NOT_EXPRESSIBLE",
             f"{label}[{i}] 不可表达: {reason}",
             detail={"condition": cond,
-                    "slow_path": "提交 feature-requests 或改用结构化指标引用"})
+                    "slow_path": "改用结构化指标引用"})
     # WHEN 组至少一个可表达条件（无入场条件的策略无意义）；THEN 组空
     # = 无显式出场（出场基因可为零，不拒——此前空 then 被"无可表达条件"
     # 连坐拒绝，纯插件列假设的最小形态 when=[插件条件]/then=[] 需放行）

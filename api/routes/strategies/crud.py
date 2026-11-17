@@ -269,15 +269,17 @@ def update_strategy_endpoint(
 
     # draft 写锁（M4）：受保护字段（dna；status/parent_ids/source 不在
     # update schema 内天然锁死）对 PUT 不可写——"验证的就是出货的"由
-    # 机制保证而非约定；改 DNA 只能修改假设条件后重新 translate
+    # 机制保证而非约定；草稿 DNA 无修改通道（假设转化通道已退役），
+    # 需不同 DNA 形制时新建策略
     if existing.get("status") == "draft" and payload.dna is not None:
         raise HTTPException(status_code=409, detail={
             "code": "RESEARCH_DRAFT_IMMUTABLE",
             "message": "草稿策略的 DNA 不可直接修改",
             "detail": {
                 "strategy_id": strategy_id,
-                "note": "修改假设条件后重新转化（translate）产出新草稿；"
-                        "name/tags/notes 等元数据仍可更新"},
+                "note": "草稿 DNA 无修改通道（假设转化通道已退役）——"
+                        "需不同 DNA 形制时新建策略；name/tags/notes "
+                        "等元数据仍可更新"},
         })
 
     fields: Dict[str, Any] = {}
