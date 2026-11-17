@@ -455,23 +455,6 @@ def run_sandbox_backtest(
     return response
 
 
-    # 统一返回体（unify-tool-return-contract 规则①）：经单一映射函数
-    # 与幂等分支同构（staged 专有键由 base 参数化；duplicated 纯增量
-    # 键使两入口返回体形制一致）
-    return _validation_payload(
-        {"record_id": record_id, "verdict": verdict, "duplicated": False,
-         "strategy_id": strategy_id, "hypothesis_id": hypothesis_id,
-         "segmentation": segmentation, "request_range": request_range,
-         "warmup_bars": int(warmup_bars)},
-        {"segments": seg_results, "summary": summary,
-         "direction": dna.risk_genes.direction,
-         "risk_genes_disclosure": disclosure,
-         # 记录级门控计数（add-vr-signal-trace——与 result_json 同值；
-         # 幂等重放经 result 顶层化同构带出）
-         "mtf_gated_bars": _aggregate_mtf_gated_bars(mtf_gated_per_exec)},
-        judged=judged)
-
-
 def load_data_bounds(
     data_dir: Path, symbol: str, timeframe: str,
 ) -> tuple:
