@@ -1,0 +1,255 @@
+version: "1.0"
+generated_at: "2026-06-04T00:00:00+08:00"
+git_commit: "updated-20260604"
+
+modules:
+  - name: "策略DNA与执行"
+    domain_doc: "domain/策略DNA与执行.md"
+    source_paths:
+      - "core/strategy/"
+    contracts:
+      - type: "data"
+        name: "StrategyDNA"
+        doc_section: "#对外暴露的数据结构"
+      - type: "api"
+        name: "dna_to_signal_set"
+        doc_section: "#对外暴露的接口"
+
+  - name: "回测引擎"
+    domain_doc: "domain/回测引擎.md"
+    source_paths:
+      - "core/backtest/"
+    contracts:
+      - type: "api"
+        name: "BacktestEngine.run"
+        doc_section: "#对外暴露的接口"
+
+  - name: "数据层"
+    domain_doc: "domain/数据层.md"
+    source_paths:
+      - "core/data/"
+    contracts:
+      - type: "api"
+        name: "fetch_klines"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
+        name: "save_parquet"
+        doc_section: "#对外暴露的接口"
+
+  - name: "特征工程"
+    domain_doc: "domain/特征工程.md"
+    source_paths:
+      - "core/features/"
+    contracts:
+      - type: "data"
+        name: "INDICATOR_REGISTRY"
+        doc_section: "#对外暴露的数据结构"
+      - type: "api"
+        name: "compute_all_indicators"
+        doc_section: "#对外暴露的接口"
+
+  - name: "评分系统"
+    domain_doc: "domain/评分系统.md"
+    source_paths:
+      - "core/scoring/"
+    contracts:
+      - type: "api"
+        name: "score_strategy"
+        doc_section: "#对外暴露的接口"
+
+  - name: "进化引擎"
+    domain_doc: "domain/进化引擎.md"
+    source_paths:
+      - "core/evolution/"
+    contracts:
+      - type: "api"
+        name: "EvolutionEngine.evolve"
+        doc_section: "#对外暴露的接口"
+
+  - name: "模式发现"
+    domain_doc: "domain/模式发现.md"
+    source_paths:
+      - "core/discovery/"
+    contracts:
+      - type: "api"
+        name: "discover_patterns"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
+        name: "SimilarCaseEngine"
+        doc_section: "#对外暴露的接口"
+
+  - name: "假设验证"
+    domain_doc: "domain/假设验证.md"
+    source_paths:
+      - "core/validation/"
+    contracts:
+      - type: "api"
+        name: "validate_hypothesis"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
+        name: "evaluate_rules"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
+        name: "verify_scene"
+        doc_section: "#对外暴露的接口"
+
+  - name: "价格预测"
+    domain_doc: "domain/价格预测.md"
+    source_paths:
+      - "core/prediction/"
+    contracts:
+      - type: "api"
+        name: "PriceRangePredictor"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
+        name: "PredictionEvolver.evolve"
+        doc_section: "#对外暴露的接口"
+      - type: "data"
+        name: "PredictionDNA"
+        doc_section: "#对外暴露的数据结构"
+      - type: "data"
+        name: "PredictionResult"
+        doc_section: "#对外暴露的数据结构"
+
+  - name: "模拟交易"
+    domain_doc: "domain/模拟交易.md"
+    source_paths:
+      - "core/trading/"
+    contracts:
+      - type: "api"
+        name: "DecisionPipeline.process_bar"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
+        name: "ReplayRunner.run"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
+        name: "run_paper_trading"
+        doc_section: "#对外暴露的接口"
+      - type: "data"
+        name: "Order"
+        doc_section: "#对外暴露的数据结构"
+      - type: "data"
+        name: "PipelineResult"
+        doc_section: "#对外暴露的数据结构"
+      - type: "data"
+        name: "ReplayResult"
+        doc_section: "#对外暴露的数据结构"
+
+  - name: "持久化层"
+    domain_doc: "domain/持久化层.md"
+    source_paths:
+      - "core/persistence/"
+    contracts:
+      - type: "api"
+        name: "init_db"
+        doc_section: "#对外暴露的接口"
+      - type: "data"
+        name: "evolution_task"
+        doc_section: "#数据模型"
+
+  - name: "可视化"
+    domain_doc: "domain/可视化.md"
+    source_paths:
+      - "core/visualization/"
+    contracts:
+      - type: "api"
+        name: "build_champion_report"
+        doc_section: "#对外暴露的接口"
+
+  - name: "日志"
+    domain_doc: "domain/日志.md"
+    source_paths:
+      - "core/logging/"
+    contracts:
+      - type: "api"
+        name: "get_log_path"
+        doc_section: "#对外暴露的接口"
+
+  - name: "API接口层"
+    domain_doc: "domain/API接口层.md"
+    source_paths:
+      - "api/"
+    contracts:
+      - type: "api"
+        name: "FastAPI routes"
+        doc_section: "#对外暴露的接口"
+
+crosscuts:
+  - name: "数据库与存储"
+    doc: "crosscut/数据库与存储.md"
+    affected_modules:
+      - "持久化层"
+      - "数据层"
+      - "API接口层"
+      - "进化引擎"
+      - "模拟交易"
+
+  - name: "错误处理"
+    doc: "crosscut/错误处理.md"
+    affected_modules:
+      - "API接口层"
+      - "进化引擎"
+      - "模拟交易"
+      - "回测引擎"
+
+  - name: "日志与可观测性"
+    doc: "crosscut/日志与可观测性.md"
+    affected_modules:
+      - "日志"
+      - "API接口层"
+      - "进化引擎"
+      - "模拟交易"
+
+  - name: "配置管理"
+    doc: "crosscut/配置管理.md"
+    affected_modules:
+      - "API接口层"
+      - "数据层"
+      - "进化引擎"
+      - "模拟交易"
+
+flows:
+  - name: "策略进化流程"
+    doc: "flows/策略进化流程.md"
+    entry_point: "POST /api/evolution/tasks"
+    involved_modules:
+      - "API接口层"
+      - "进化引擎"
+      - "策略DNA与执行"
+      - "回测引擎"
+      - "评分系统"
+      - "持久化层"
+
+  - name: "策略回测流程"
+    doc: "flows/策略回测流程.md"
+    entry_point: "POST /api/strategies/backtest"
+    involved_modules:
+      - "API接口层"
+      - "策略DNA与执行"
+      - "回测引擎"
+      - "评分系统"
+
+  - name: "模拟纸盘交易流程"
+    doc: "flows/模拟纸盘交易流程.md"
+    entry_point: "POST /api/trading/tasks"
+    involved_modules:
+      - "API接口层"
+      - "模拟交易"
+      - "价格预测"
+      - "策略DNA与执行"
+      - "数据层"
+
+  - name: "假设验证流程"
+    doc: "flows/假设验证流程.md"
+    entry_point: "POST /api/validate/rules"
+    involved_modules:
+      - "API接口层"
+      - "假设验证"
+      - "特征工程"
+      - "数据层"
+
+metadata:
+  tech_stack:
+    frontend: null
+    backend: "FastAPI"
+  project_type: "single"

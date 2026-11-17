@@ -1,0 +1,144 @@
+version: "1.0"
+generated_at: "2026-05-12T00:00:00+08:00"
+git_commit: "ccbc26302be1c9bc377586642b871b882f8d5c10"
+
+modules:
+  - name: "页面层"
+    domain_doc: "domain/页面层.md"
+    source_paths:
+      - "web/src/pages/"
+    contracts:
+      - type: "api"
+        name: "Lab"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
+        name: "Evolution"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
+        name: "Trading"
+        doc_section: "#对外暴露的接口"
+
+  - name: "API服务层"
+    domain_doc: "domain/API服务层.md"
+    source_paths:
+      - "web/src/services/"
+    contracts:
+      - type: "api"
+        name: "api (axios instance)"
+        doc_section: "#对外暴露的接口"
+
+  - name: "ReactQueryHook层"
+    domain_doc: "domain/ReactQueryHook层.md"
+    source_paths:
+      - "web/src/hooks/"
+    contracts:
+      - type: "api"
+        name: "useEvolutionTasks"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
+        name: "useTradingWebSocket"
+        doc_section: "#对外暴露的接口"
+
+  - name: "状态管理"
+    domain_doc: "domain/状态管理.md"
+    source_paths:
+      - "web/src/stores/"
+    contracts:
+      - type: "api"
+        name: "useAppStore"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
+        name: "useLabStore"
+        doc_section: "#对外暴露的接口"
+
+  - name: "UI组件库"
+    domain_doc: "domain/UI组件库.md"
+    source_paths:
+      - "web/src/components/"
+    contracts:
+      - type: "api"
+        name: "AppLayout"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
+        name: "KlineChart"
+        doc_section: "#对外暴露的接口"
+
+  - name: "类型定义"
+    domain_doc: "domain/类型定义.md"
+    source_paths:
+      - "web/src/types/"
+    contracts:
+      - type: "data"
+        name: "DNA"
+        doc_section: "#对外暴露的数据结构"
+      - type: "data"
+        name: "Strategy"
+        doc_section: "#对外暴露的数据结构"
+
+  - name: "工具函数库"
+    domain_doc: "domain/工具函数库.md"
+    source_paths:
+      - "web/src/lib/"
+      - "web/src/utils/"
+    contracts:
+      - type: "api"
+        name: "generateDnaFromConditions"
+        doc_section: "#对外暴露的接口"
+      - type: "data"
+        name: "SYMBOL_OPTIONS"
+        doc_section: "#对外暴露的数据结构"
+
+crosscuts:
+  - name: "错误处理"
+    doc: "crosscut/错误处理.md"
+    affected_modules:
+      - "页面层"
+      - "API服务层"
+      - "UI组件库"
+
+  - name: "数据获取与缓存"
+    doc: "crosscut/数据获取与缓存.md"
+    affected_modules:
+      - "ReactQueryHook层"
+      - "API服务层"
+      - "页面层"
+
+  - name: "数据校验"
+    doc: "crosscut/数据校验.md"
+    affected_modules:
+      - "API服务层"
+      - "UI组件库"
+
+flows:
+  - name: "策略构建与回测流程"
+    doc: "flows/策略构建与回测流程.md"
+    entry_point: "Lab 页面验证/回测按钮"
+    involved_modules:
+      - "页面层"
+      - "ReactQueryHook层"
+      - "API服务层"
+      - "UI组件库"
+
+  - name: "进化监控流程"
+    doc: "flows/进化监控流程.md"
+    entry_point: "Evolution 页面创建进化按钮"
+    involved_modules:
+      - "页面层"
+      - "ReactQueryHook层"
+      - "API服务层"
+      - "UI组件库"
+
+  - name: "模拟交易管理流程"
+    doc: "flows/模拟交易管理流程.md"
+    entry_point: "Trading 页面创建任务按钮"
+    involved_modules:
+      - "页面层"
+      - "ReactQueryHook层"
+      - "API服务层"
+      - "UI组件库"
+
+metadata:
+  tech_stack:
+    frontend: "React 19 + TypeScript 6"
+    backend: null
+  project_type: "single"
