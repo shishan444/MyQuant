@@ -9,6 +9,12 @@
 未覆盖或未验证范围，四向可追溯。维护义务：研究域每个版本交付新能力时同步登记
 对应行；共享机制消费关系变化时更新守护清单（`research-test-evidence` spec 约束）。
 
+## 退役分拣存档（retire-legacy-subsystems，2026-11-16）
+
+- 全量对账：main 9066 → 分支 6490（`--collect-only` 逐目录差集）——整目录退役 evolution −914/live −188/prediction −55；分拣收缩 analysis −689/api −446/validation −80/persistence −78/mcpserver −54/strategy −44/consistency −21/backtest −17/infra −13/paper_trading −5/lifecycle −4/journeys −3/scoring −3/trading −3；data +45−4（worktree 双身份 45 例经 tests/conftest.py 探测式补丁恢复可收集，hour_utc 登记面 4 例随退役收缩）
+- 终态批次：`-n 3` 全量 6490 passed / 0 failed / 0 error（coverage 95.15%——较 96% 闸门的结构性缺口披露：engine.py 367 行 missing 占 54%，退役 mtf/scene/batch 守护用例曾驱动的保留分支）
+- worktree 双身份补丁单点在 tests/conftest.py（五目录 conftest 顶层名撞车教训：xdist 全量下裸 `from conftest import` 被劫持）
+
 ## 执行说明
 
 - 全量基线（唯一生成 `coverage.json` 的入口）：`./venv/bin/python -m pytest --ignore=tests/e2e --cov-report=json:coverage.json`（e2e 批次需前后端服务 + chromium）
