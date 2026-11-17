@@ -162,6 +162,22 @@ class TestSandboxBacktest:
         adhoc_rows = rr.list_validation_records(db, hypothesis_id="adhoc")
         assert any(r["record_id"] == out["record_id"] for r in adhoc_rows)
 
+    def test_adhoc_sandbox_not_in_any_union(self, fresh_env, data_dir):
+        """无假设请求不落账（retire-legacy ADDED「判定并集账本与
+        sandbox 记账」场景 2 的并集面收紧）：不携带 hypothesis_id 的
+        沙盒执行照常跑，其执行区间不得进入任何假设的判定并集——
+        并集读侧按 hypothesis_id 归集，adhoc 留痕（hypothesis_id=None）
+        不被任何假设的现算吸收。"""
+        db, sid = fresh_env
+        out = run_sandbox_backtest(
+            db, data_dir, strategy_id=sid, symbol="BTCUSDT",
+            timeframe="4h", start="2023-03-01", end="2023-03-10")
+        assert out["hypothesis_id"] is None
+        hid = _hyp(db)  # 自报区间 2022-11~12，与执行区间不相交
+        union = judged_ranges_union(db, hid)
+        assert all(not str(r.get("start", "")).startswith("2023-03")
+                   for r in union), "adhoc 沙盒区间不得进入判定并集"
+
 
 @pytest.fixture()
 def fresh_env(tmp_path: Path):

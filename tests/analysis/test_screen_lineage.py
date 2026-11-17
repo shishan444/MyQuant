@@ -123,3 +123,37 @@ class TestScreenLogTrail:
         assert all(e["entry_type"] == "screen"
                    for e in rr.list_research_log(db))
 
+
+class TestLegacyScreenUseReadOnly:
+    """存量 screen_use 只读（retire-legacy ADDED「扫描留痕与候选指纹」
+    场景 3）：历史回链事实保留——存量条目照常可查；新写入通道已随
+    登记链退役（构造经通用 append_research_log 仓储函数，模拟 D4
+    存量行，非生产新写入路径）。"""
+
+    def test_legacy_screen_use_entries_queryable(self, tmp_path):
+        db = _db(tmp_path)
+        rr.append_research_log(
+            db, hypothesis_id="hyp_legacy",
+            entry_type="screen_use",
+            ref_id="ant_screen000002",
+            data_ranges=json.dumps([SCAN_RANGE]),
+            summary=json.dumps({"screen_task": "ant_screen000002"}))
+        entries = rr.list_research_log(db, entry_type="screen_use")
+        assert len(entries) == 1
+        e = entries[0]
+        assert e["hypothesis_id"] == "hyp_legacy"
+        assert e["ref_id"] == "ant_screen000002"
+        ranges = json.loads(e["data_ranges"])
+        assert ranges == [SCAN_RANGE]
+
+    def test_screen_use_excluded_from_screen_filter(self, tmp_path):
+        """类型过滤面互斥：entry_type="screen" 查询不吸收 screen_use
+        存量条目（两类记录各自存在，审计通道语义不串）。"""
+        db = _db(tmp_path)
+        _log_screen(db, _make_screen_task(db), ["abc"])
+        rr.append_research_log(
+            db, hypothesis_id="hyp_legacy", entry_type="screen_use",
+            ref_id="ant_screen000002", data_ranges=json.dumps([SCAN_RANGE]))
+        assert len(rr.list_research_log(db, entry_type="screen")) == 1
+        assert len(rr.list_research_log(db, entry_type="screen_use")) == 1
+

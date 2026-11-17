@@ -244,6 +244,49 @@ class TestEmbeddedAndMissing:
 
 
 
+class TestPollutionCauseLegacyDisclosure:
+    """存量污染标注查询（retire-legacy ADDED 条款·响应披露面）：
+    历史回扫标注数据为 D4 行数据不动的事实——pollution_cause 带值
+    行经列表端点如实返回（历史标注事实照常可查）；未标注行 NULL
+    语义由既有 test_params_result_json_embedded_and_null(:243) 承载。"""
+
+    _CAUSE = "gene_tf_drift"
+
+    @pytest.fixture()
+    def polluted_client(self, tmp_path: Path):
+        from core.persistence.db_ext import init_db_ext
+        from core.analysis.executor import ensure_research_tables
+        from api.app import create_app
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from core.persistence.orm.models import ValidationRecord
+        db = tmp_path / "q.db"
+        init_db_ext(db)
+        ensure_research_tables(db)
+        Session = sessionmaker(bind=create_engine(f"sqlite:///{db}"))
+        with Session() as sess:
+            for rid, cause in (("vr_pol", self._CAUSE),
+                               ("vr_clean", None)):
+                sess.add(ValidationRecord(
+                    record_id=rid, hypothesis_id="fr_wb", strategy_id=None,
+                    level="isolated_backtest", segmentation="", verdict="pass",
+                    range_hash=f"rh_{rid}", pollution_cause=cause,
+                    params="{}", result=None,
+                    created_at="2026-11-01T00:00:00+00:00"))
+            sess.commit()
+        app = create_app(db_path=db, data_dir=tmp_path / "data")
+        with TestClient(app, raise_server_exceptions=False) as c:
+            yield c
+
+    def test_pollution_cause_value_returned_as_is(self, polluted_client):
+        """带标注行：pollution_cause 原样返回（历史标注可查）。"""
+        rows = polluted_client.get(
+            "/api/research/validation-records").json()["records"]
+        by_id = {r["record_id"]: r for r in rows}
+        assert by_id["vr_pol"]["pollution_cause"] == self._CAUSE
+        assert by_id["vr_clean"]["pollution_cause"] is None
+
+
 class TestStagedLevelFilter:
     """B3 值域修正（add-hypothesis-cards 任务 1，tester A3 组）：
     _LEVELS 补 staged_validation——staged 过滤从 422 转绿；五值全合法
