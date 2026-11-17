@@ -18,33 +18,12 @@ HINTS: Dict[str, str] = {
     "RESEARCH_CONDITION_INVALID":
         "条件形制非法：检查 when/then 是否逐条 {subject, action, target}，"
         "subject 须经 list_signal_columns 校验",
-    "RESEARCH_RANGE_INVALID":
-        "data_ranges 形制非法：每条须为 {symbol, timeframe, start, end} "
-        "半开区间（start < end）",
     "RESEARCH_SYMBOL_NOT_FOUND":
         "品种/周期无数据：先调 list_data_sources 确认目录内条目后更正",
     "RESEARCH_HYPOTHESIS_NOT_FOUND":
-        "假设不存在：检查 hypothesis_id，或用 list_hypotheses 查询",
-    # ---- 状态迁移
-    "RESEARCH_HYPOTHESIS_TERMINAL":
-        "假设已终态：不可再迁移或验证；登记新假设（可在新假设中引用旧假设）",
-    "RESEARCH_TRANSITION_INVALID":
-        "迁移非法：检查目标状态与证据——supported 须引用 verdict=pass、"
-        "refuted 须引用 verdict=fail 的验证记录（evidence_ref 填 record_id）",
-    "RESEARCH_EVIDENCE_NOT_FOUND":
-        "证据记录不存在：evidence_ref 用 sandbox 回测（run_backtest）返回的 "
-        "record_id（接替迁移填新假设 id）",
-    "RESEARCH_HYPOTHESIS_UNVALIDATED":
-        "假设尚无 pass 验证记录：先对草稿策略跑 sandbox 回测（run_backtest）",
+        "假设不存在：检查 hypothesis_id——存量假设为只读，可经 "
+        "get_research_log 核对",
     # ---- 验证执行
-    "RESEARCH_RANGE_OVERLAP":
-        "验证区间与判定并集重叠：查看 detail 的 judged_ranges/overlaps 明细，"
-        "换到并集之外的区间（通常把 start 推移到已判定区间之后）",
-    "SCREEN_CANDIDATE_REUSE":
-        "条件精确复用已扫描区间的候选（该区间数据已被扫描看过）：查看 "
-        "detail 的 screen_task_id，实质修改条件（改阈值/参数）登记新假设，"
-        "或换到未扫描区间验证；历史扫描可用 get_research_log("
-        "entry_type=\"screen\") 自查",
     "RESEARCH_STRATEGY_NOT_FOUND":
         "策略不存在：检查 strategy_id，或用 list_strategies 查询",
     # add-validation-detail B2（HTTP 面专用端点的 404 码——MCP 面不
@@ -66,18 +45,7 @@ HINTS: Dict[str, str] = {
         "模板内部错误：附 detail 的 template/exception_type/summary "
         "提交问题报告；同参数重试大概率无效（0.3.2 卡4/卡5——诊断字段 "
         "保留异常文本，message 通道已保持干净）",
-    # ---- 出场条件覆盖率防线（fix-executor-column-and-exit-guard D3）
-    "RESEARCH_EXIT_ALWAYS_TRUE":
-        "出场条件（then_conditions）在登记区间内全 bar 触发（恒真出场）"
-        "——同 bar 开平互斥清洗将抹杀全部进场信号，回测必然零进场；"
-        "按 detail.range 核对该区间 then 条件语义（实录形制：空头版误写 "
-        "close price_above BB lower——close 永远在下轨上方），改写为"
-        "非常驻形出场条件后重新登记",
     # ---- 多周期条件（0.2.14）
-    "TIMEFRAME_ON_THEN":
-        "THEN 条件不接受 timeframe 键（前向收益对照以基准 bar 计，"
-        "跨周期归属未定义）——去掉 then 条目的 timeframe，跨周期方向"
-        "表达放 when 条件",
     "TIMEFRAME_UNKNOWN":
         "周期键非法：用合法键集内的周期（detail.legal_range）；高周期"
         "数据可达性以 list_data_sources 实际清单为准",
@@ -86,21 +54,19 @@ HINTS: Dict[str, str] = {
         "该低周期、其余条件挂高周期——聚合歧义不可自证",
     "RESEARCH_TIMEFRAME_MISMATCH":
         "验证请求周期≠策略执行周期（异轴执行语义未定义）：不传 "
-        "timeframe 用策略行周期自洽验证；换轴验证请回假设侧修改基准"
-        "周期（data_ranges.timeframe）后重新转化（translate）",
+        "timeframe 用策略行周期自洽验证；显式传轴须与策略执行周期"
+        "一致（detail 披露两侧值）",
     "RESEARCH_MTF_CONTEXT_MISSING":
         "求值入口未构建多周期上下文（调用方接线缺陷非输入错误）："
         "经 run_analysis/inspect_cases/api/validate 正规入口重试；"
         "持续出现属工程缺陷，附 detail 提交问题报告",
-    "RESEARCH_COMPONENT_EVIDENCE_MISSING":
-        "组合假设缺组件证据：对每个组件条件分别取得验证记录后再组合",
     # ---- 转化与表达
     "RESEARCH_DRAFT_IMMUTABLE":
-        "草稿策略受保护字段不可改：修改假设条件后重新转化（translate）"
-        "产出新草稿；转正走 transition(supported) 原子路径",
+        "草稿策略受保护字段不可改：DNA 对更新入口锁死（name/tags/notes "
+        "等元数据仍可更新）；需不同 DNA 形制时新建策略",
     "RESEARCH_NOT_EXPRESSIBLE":
-        "条件超出策略表达边界：查看 detail 的不可表达位置；拆解为可表达"
-        "子集重登记，或用 submit_feature_request 走慢通道",
+        "条件超出策略表达边界：查看 detail 的不可表达位置，拆解为可表达"
+        "子集重试",
     # ---- 分析模板
     # 清单静态抄录自 api/routes/research/analysis.py 的 _TEMPLATES（权威源，
     # 同 _SUPPORTED_ACTIONS 锚定 engine 惯例）；漂移防线在
@@ -156,8 +122,6 @@ HINTS: Dict[str, str] = {
     "RESEARCH_SANDBOX_LIMIT":
         "沙盒区间超 bar 上限：分区间验证（多次 run_backtest "
         "支持大区间分区间验证）",
-    "FEATURE_REQUEST_NOT_FOUND":
-        "需求单不存在：核对 request_id 或用 list_feature_requests 查询",
     # ---- 纸盘域（库内 JSON 列结构化解析——load_stored_json 经 code
     # 形参派发域码，抛出点 api/routes/paper_trading.py 与 core/
     # paper_trading/reporting.py）
@@ -180,8 +144,8 @@ HINTS: Dict[str, str] = {
         "响应）；仍失败时查看 API 服务日志",
 }
 
-DEFAULT_HINT = ("未注册错误码：查看 detail 字段定位问题；无法解决时用 "
-                "submit_feature_request 提交慢通道需求单")
+DEFAULT_HINT = ("未注册错误码：查看 detail 字段定位问题；持续出现属工程"
+                "缺陷，附 detail 提交问题报告")
 
 
 def hint_for(code: str) -> str:
@@ -248,13 +212,14 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
                          "未配置=不启用）",
     "trade_source": "交易清单来源形制非法：唯一合法 {kind:"
                     "\"validation\", record_id:\"rec_...\"}"
-                    "（隔离验证记录）",
-    "trade_source.kind": "kind 拒绝：沙盒回测不落库逐笔（防污染纪律）"
-                        "——对照指标请引用隔离验证记录 record_id"
+                    "（存量隔离验证记录）",
+    "trade_source.kind": "kind 拒绝：仅 kind=\"validation\" 合法（沙盒"
+                        "记录 params 无单区间形制，不可对照）——对照"
+                        "指标请引用存量隔离验证记录 record_id"
                         "（未知 kind 附合法形制）",
-    "trade_source.record_id": "验证记录不存在：record_id 须为隔离验证"
-                             "记录（rec_...）——run_isolated_backtest "
-                             "产物",
+    "trade_source.record_id": "验证记录不存在：record_id 须为存量隔离"
+                             "验证记录（rec_... 前缀，经验证记录列表"
+                             "查询核对）",
     "trade_source.record.range": "验证记录区间与评估区间不一致（归一后"
                                 "须全值相等，不静默截断）——改用一致"
                                 "区间重试",
@@ -358,12 +323,6 @@ _PARAM_HINT_SCENARIOS: Dict[str, str] = {
     "grid.modes[].sl_series_source.column": "fx 形制列名非法：column 须为"
                                            "fx_ 前缀精确列名（exit_sweep "
                                            "grid 校验面与登记面同判）",
-    # 主任务卡片状态筛选（add-hypothesis-cards B1）：HTTP 面内联校验的
-    # detail.field 面（MCP 面不暴露该端点——场景表按 parity 登记机制
-    # 补位，detail.field="status" 分派）
-    "status": "假设状态值域外：status ∈ {active, supported, refuted,"
-              " superseded, abandoned}（状态机五值——supported 存量"
-              "零仍属合法；查看 detail.legal_range）",
     # 信号组合参数面（fix-silent-degradation R-7）：combine_signals
     # 未知 logic 显式拒绝的 detail.param 面（原静默首信号副本收口）
     "logic": "logic 取值非法：检查 DNA logic_genes 的 entry_logic/"
