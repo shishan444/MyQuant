@@ -4,9 +4,24 @@ All data generation is delegated to tests.helpers.data_factory.
 Individual test files may define local fixtures with custom parameters.
 """
 
+import sys as _sys
 from pathlib import Path
 
 import pytest
+
+# worktree 双身份解析（retire-legacy 终波五目录 conftest 合并单点）：
+# pytest 从 worktree 根启动时 prepend 短路使仓库父目录不进 sys.path，
+# `from MyQuant.api.app import create_app` 双身份导入面全灭。三种布局
+# 探测——主 checkout（仓库父目录直含 MyQuant 包）/worktree 内挂
+# worktrees/MyQuant 自引用/共享 .claude/worktrees/MyQuant 引用，取实含
+# MyQuant 的候选目录注入；幂等无害。原五目录各置一份的同款补丁因顶层
+# conftest 名撞车（劫持 mcpserver 目录裸 `from conftest import
+# _FakeMcp` 解析，xdist 全量 27 红）合并至此。
+_HERE = Path(__file__).resolve()
+for _cand in (_HERE.parents[2], _HERE.parents[1] / "worktrees",
+              _HERE.parents[3]):
+    if (_cand / "MyQuant").exists() and str(_cand) not in _sys.path:
+        _sys.path.insert(0, str(_cand))
 
 
 # Re-export data_factory helpers as fixtures for backward compatibility.
