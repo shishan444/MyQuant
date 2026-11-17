@@ -21,6 +21,8 @@ from mcpserver.api_client import (
 from mcpserver.errors import HINTS, error_payload, hint_for, payload_from
 from mcpserver.tools import tool_safe
 
+pytestmark = [pytest.mark.integration]
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
