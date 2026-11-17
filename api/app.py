@@ -26,9 +26,7 @@ logger = logging.getLogger("app")
 
 from core.analysis.errors import ResearchError
 from core.persistence.db_ext import init_db_ext
-from .routes import config, data, evolution, strategies
-from .routes import validate as validate_route
-from .routes import scene as scene_route
+from .routes import config, data, strategies
 from .routes import paper_trading as paper_trading_route
 from .routes.research.common import research_error_to_http
 from .schemas import HealthResponse
@@ -100,12 +98,6 @@ def create_app(
         init_db_ext(db_path)
         warn_if_no_api_key()
 
-        # 进化域恢复：上次运行的中断/崩溃任务先回收再起 runner
-        from .runner import EvolutionRunner, set_ws_push_fn, recover_stale_tasks, restart_crashed_tasks
-
-        recover_stale_tasks(db_path)
-        restart_crashed_tasks(db_path)
-
         # Research executor（add-ai-research-mcp 1.4）：研究域表自愈 →
         # 中断任务回收 → 线程池执行器单例（SIGTERM 时随进程释放）
         from core.analysis.executor import (
@@ -122,33 +114,6 @@ def create_app(
         app.state.db_path = db_path
         app.state.data_dir = data_dir
 
-        # 受限并发（research-tooling-data-quality 卡 B）：config
-        # evolution.max_concurrent_tasks 可配（缺省 2 上限 4——runner
-        # 内钳制）；config 无段时用缺省
-        import yaml as _yaml
-        try:
-            with open(project_root / "config.yaml") as _f:
-                _cfg = _yaml.safe_load(_f) or {}
-        except (OSError, _yaml.YAMLError) as _exc:
-            # config 缺失/损坏：降级缺省并留痕（宽捕获会静默吞掉编程错误）
-            _cfg = {}
-            logger.warning(
-                "config.yaml 读取失败（%s: %s），max_concurrent_tasks 用缺省 2",
-                type(_exc).__name__, _exc,
-            )
-        # 文档层非映射（如整文档裸标量）：与 or {} 防 None 同族的类型面
-        # 防御——否则 _cfg.get 处 AttributeError 启动崩溃
-        if not isinstance(_cfg, dict):
-            logger.warning(
-                "config.yaml 文档层非映射（%s），max_concurrent_tasks 用缺省 2",
-                type(_cfg).__name__,
-            )
-            _cfg = {}
-        _maxw = (_cfg.get("evolution") or {}).get(
-            "max_concurrent_tasks", 2)
-        runner = EvolutionRunner(
-            db_path=db_path, data_dir=data_dir, max_workers=_maxw)
-        app.state.evolution_runner = runner
         # B8.2/8.4: socket.io 唯一实时通道（native WS 已退役）
         import os as _os
         from . import realtime
@@ -164,10 +129,6 @@ def create_app(
             def _push(task_id: str, payload: dict) -> None:
                 realtime.broadcast(namespace, room=task_id, event=payload.get("type", "message"), payload=payload)
             return _push
-        _ws_push_evolution = _make_push("/evolution")
-
-        set_ws_push_fn(_ws_push_evolution)
-
         # 纸盘交易新域调度器（rebuild-paper-trading 组 3）：启动期恢复
         # 扫描（running 残态：可信续跑/不可信转 error）→ 守护线程拾取。
         # 摆位纪律：本段须在 runner.start() 之前——段的延迟 import 链与
@@ -263,18 +224,11 @@ def create_app(
             paper_scheduler.registry.guardian = fapi_guardian
             fapi_guardian.start_background()
 
-        runner.start()
-
         yield
 
-        # 关停序：先断推送（避免 runner 停止后回调打到空目标），再停
-        # evolution runner 与纸盘调度器，再停 fapi 流/建库，随后停
-        # 保鲜守护器（守护器停于 flush 前——避免 flush 后守护器再
-        # 写），最后清落盘缓冲（SIGTERM 关停序——分级落盘的停机清
-        # 缓冲面）
-        set_ws_push_fn(None)
-        runner.stop()
-        runner.join(timeout=5.0)
+        # 关停序：先停纸盘调度器，再停 fapi 流/建库，随后停保鲜
+        # 守护器（守护器停于 flush 前——避免 flush 后守护器再写），
+        # 最后清落盘缓冲（SIGTERM 关停序——分级落盘的停机清缓冲面）
         paper_scheduler.stop()
         paper_scheduler.join(timeout=5.0)
         if fapi_backfill is not None:
@@ -325,16 +279,13 @@ def create_app(
     # 挂载全部业务路由（研究域路由因包内延迟装配置于其后）
     app.include_router(config.router)
     app.include_router(strategies.router)
-    app.include_router(evolution.router)
     app.include_router(data.router)
     # 纸盘交易新域端点族（rebuild-paper-trading 5.1）
     app.include_router(paper_trading_route.router)
-    app.include_router(validate_route.router)
     from api.routes import workbench as workbench_route
     from api.routes import integrity_workbench as integrity_route
     app.include_router(workbench_route.router)
     app.include_router(integrity_route.router)
-    app.include_router(scene_route.router)
 
     # 研究域路由（add-ai-research-mcp）
     from api.routes import research as research_route
