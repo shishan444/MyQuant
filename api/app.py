@@ -1,7 +1,7 @@
 """FastAPI 应用装配点：生命周期、CORS、路由挂载与 socket.io 桥。
 
 职能：create_app 是全工程唯一的应用工厂——初始化 DB schema、装配
-evolution runner、research executor 与 socket.io 实时通道，
+research executor 与 socket.io 实时通道，
 挂载全部 REST 路由；模块尾把 FastAPI 与 socket.io 组合为单一 ASGI
 应用供 uvicorn 启动。
 服务对象：全部 /api/* 路由（经 app.state 注入依赖）与 web 前端
