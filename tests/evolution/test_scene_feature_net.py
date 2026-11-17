@@ -1390,7 +1390,7 @@ class TestRunSceneVerificationFeature:
         注意：API 端点 /api/validate/scene 对该错误的兜底属 CARD-05，
         此处只锚核心层行为。
         """
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.validation.scene.scene_engine import run_scene_verification
         with pytest.raises(ResearchError) as exc_info:
             run_scene_verification(
@@ -1469,14 +1469,14 @@ class TestDetectorParamValidationFeature:
         ],
     )
     def test_volume_spike_bad_multiplier_rejected(self, bad_value):
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.validation.scene.volume_spike import VolumeSpikeDetector
         with pytest.raises(ResearchError, match="multiplier 须为数值"):
             VolumeSpikeDetector().detect(self._df(), {"multiplier": bad_value})
 
     def test_volume_spike_int_key_rejects_decimal_string(self):
         """现状记录：int 键对 '10.5' 拒绝不截断（cast 保留类型语义）。"""
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.validation.scene.volume_spike import VolumeSpikeDetector
         with pytest.raises(ResearchError, match="avg_period 须为数值"):
             VolumeSpikeDetector().detect(self._df(), {"avg_period": "10.5"})
@@ -1491,7 +1491,7 @@ class TestDetectorParamValidationFeature:
         assert triggers[0].bar_index == 30
 
     def test_cross_timeframe_bad_period_rejected(self):
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.validation.scene.cross_timeframe import CrossTimeframeDetector
         n = 60
         df = _base_frame(
@@ -1501,7 +1501,7 @@ class TestDetectorParamValidationFeature:
             CrossTimeframeDetector().detect(df, {"fast_period": None})
 
     def test_mean_reversion_bad_deviation_rejected(self):
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.validation.scene.mean_reversion import MeanReversionDetector
         with pytest.raises(ResearchError, match="deviation_pct 须为数值"):
             MeanReversionDetector().detect(
@@ -1510,7 +1510,7 @@ class TestDetectorParamValidationFeature:
 
     def test_run_scene_verification_empty_horizons_rejected(self, tmp_path):
         """CARD-05 锚：horizons=[] 结构化拒绝（旧实现 max([]) 裸 ValueError）。"""
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.validation.scene.scene_engine import run_scene_verification
         with pytest.raises(ResearchError, match="horizons 不能为空"):
             run_scene_verification(
@@ -1545,7 +1545,7 @@ class TestDetectorParamRangeFeature:
     )
     def test_positive_keys_reject_zero_and_negative(self, detector_name, key, bad_value):
         """正值语义键：0 与负均拒绝（0 值恒触发/静默无结果同拒）。"""
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         import importlib
         mod = importlib.import_module(f"core.validation.scene.{detector_name}")
         cls = {
@@ -1571,7 +1571,7 @@ class TestDetectorParamRangeFeature:
     )
     def test_period_spacing_keys_reject_below_one(self, detector_name, cls_name, key, bad_value):
         """period/window/spacing 类键：<1 拒绝（与 lookback window>=1 同款）。"""
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         import importlib
         mod = importlib.import_module(f"core.validation.scene.{detector_name}")
         with pytest.raises(ResearchError, match=f"{key} 须为 >= 1"):
@@ -1673,14 +1673,14 @@ class TestParamNonFiniteFeature:
     )
     def test_float_key_non_finite_rejected(self, bad_value):
         """NaN 比较恒 False 漏过值域、inf 恒触发/静默无结果，同拒。"""
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.validation.scene.volume_spike import VolumeSpikeDetector
         with pytest.raises(ResearchError, match="multiplier 须为有限数"):
             VolumeSpikeDetector().detect(self._df(), {"multiplier": bad_value})
 
     def test_int_key_infinity_rejected(self):
         """int(inf) OverflowError 裸穿面收口：经 except 扩捕 → 须为数值。"""
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.validation.scene.volume_spike import VolumeSpikeDetector
         for bad in (float("inf"), float("-inf")):
             with pytest.raises(ResearchError, match="avg_period 须为数值"):
@@ -1689,7 +1689,7 @@ class TestParamNonFiniteFeature:
     def test_json_nan_literal_end_to_end(self):
         """端到端：json.loads 接受 NaN 字面量（API 原始体可达路径）。"""
         import json
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.validation.scene.volume_spike import VolumeSpikeDetector
         payload = json.loads('{"multiplier": NaN}')
         with pytest.raises(ResearchError, match="multiplier 须为有限数"):
@@ -1697,7 +1697,7 @@ class TestParamNonFiniteFeature:
 
     def test_json_infinity_literal_end_to_end(self):
         import json
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.validation.scene.volume_spike import VolumeSpikeDetector
         payload = json.loads('{"multiplier": Infinity}')
         with pytest.raises(ResearchError, match="multiplier 须为有限数"):

@@ -47,6 +47,9 @@ logger = logging.getLogger(__name__)
 # hypothesis_service.ResearchError 与 errors.ResearchError 为同一类对象
 # ——既有全域 ``from core.analysis.hypothesis_service import ResearchError``
 # 面（38+ 文件）零适配，isinstance/except 同身份。
+# 【退役倒计时（retire-legacy-subsystems 任务 3.3）】全域改指已完成
+# （2026-11-16，129 处 import 行改指 core.analysis.errors）；本模块随
+# 假设强制流程退役（任务 9 整删），届时此 re-export 与兼容声明一并消失。
 
 
 def hash_json(obj: Any) -> str:

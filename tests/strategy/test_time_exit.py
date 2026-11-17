@@ -24,7 +24,8 @@ class TestDomainValidation:
         from core.analysis.executor import ensure_research_tables
         init_db_ext(tmp_path / "q.db")
         ensure_research_tables(tmp_path / "q.db")
-        from core.analysis.hypothesis_service import ResearchError, register_hypothesis
+        from core.analysis.errors import ResearchError
+        from core.analysis.hypothesis_service import register_hypothesis
         conds = {"when_conditions": [
             {"subject": {"indicator": "RSI", "params": {"period": 14}},
              "action": "lt", "target": 35}],

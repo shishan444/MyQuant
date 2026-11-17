@@ -67,7 +67,7 @@ def build_result(
         raise ValueError(
             f"sample_size 须为 int（编程错误）: {type(sample_size).__name__}")
     if sample_size < min_samples:
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
 
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",

@@ -50,7 +50,7 @@ from core.analysis.condition_kernel import (
     collect_condition_refs,
     stat_window_mask,
 )
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.param_guard import _require_int_range
 from core.analysis.registry_meta import WARMUP_RULE_TEXT, derive_warmup_full
 from core.analysis.result import build_result

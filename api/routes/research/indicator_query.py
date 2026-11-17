@@ -24,7 +24,7 @@ from api.deps import get_data_dir
 from api.routes.research.common import require_known_timeframe
 from api.schemas import QueryIndicatorRequest
 from core.analysis import indicator_query as iq
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 
 router = APIRouter()
 

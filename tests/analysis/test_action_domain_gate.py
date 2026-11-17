@@ -192,14 +192,9 @@ class TestR1ThreeActionTranslation:
     _SPECIAL_BRANCH_ACTIONS = frozenset(
         {"within_bars_after", "touch_bounce", "role_reversal"})
 
-    def test_f1_single_source_exact_equality(self):
-        """⑥单源恰等断言落地（2.7 生效）：RESEARCH_EXPRESSIBLE_
-        ACTIONS == frozenset(_ACTION_MAP) ∪ 专门分支键集（14=11+3
-        ——design 卡 E：touch_bounce/role_reversal/wthin_bars_after
-        走专门分支不进 map；扩动作漏改任一侧即红）。"""
-        from core.analysis.hypothesis_to_strategy import _ACTION_MAP
-        assert RESEARCH_EXPRESSIBLE_ACTIONS == (
-            frozenset(_ACTION_MAP) | self._SPECIAL_BRANCH_ACTIONS)
+    # test_f1（单源恰等断言）随 RESEARCH_EXPRESSIBLE_ACTIONS 守护对象
+    # 退役删除（retire-legacy-subsystems 任务 3.2）——保留面重建锚在
+    # tests/strategy/test_executor.py：_ACTION_MAP ⊆ STATISTICS_ACTION_KEYS
 
     def test_d1_backtest_evaluable(self, tmp_path):
         """D1 四层贯通末段：产物基因经 executor 求值可触发（eq 条件

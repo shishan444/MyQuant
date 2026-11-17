@@ -141,7 +141,7 @@ class TestDomainReject:
         （detail={condition, ref_tf, hint} 形制）。"""
         from core.persistence.db_ext import init_db_ext
         from core.analysis.executor import ensure_research_tables
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.analysis.hypothesis_to_strategy import _translate_conditions
         from core.strategy.dna import SignalRole
         db = tmp_path / "q.db"
@@ -171,7 +171,7 @@ class TestDomainReject:
         人工核算：23:59→23.9833 为域上确界内值、24 归次日 0:00 出域）。"""
         from core.persistence.db_ext import init_db_ext
         from core.analysis.executor import ensure_research_tables
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.analysis.hypothesis_to_strategy import _translate_conditions
         from core.strategy.dna import SignalRole
         db = tmp_path / "q.db"

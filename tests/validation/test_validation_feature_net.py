@@ -328,7 +328,7 @@ class TestValidateHypothesis:
 
     def test_mtf_condition_without_context_raises(self, tmp_path):
         """现状记录：带 timeframe 的条件在无 MtfEvalContext 时结构化拒绝。"""
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.validation.engine import validate_hypothesis
         _write_parquet(tmp_path, "TESTUSDT_4h", _sine_ohlcv(n=100))
         _write_parquet(tmp_path, "TESTUSDT_1d", make_ohlcv(n=40, freq="1d"))
@@ -417,7 +417,7 @@ class TestValidateHypothesis:
 
     def test_unknown_timeframe_raises_research_error(self, tmp_path):
         """CARD-03 锚：未知 tf 结构化拒绝（旧实现静默空结果）。"""
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.validation.engine import validate_hypothesis
         with pytest.raises(ResearchError) as exc_info:
             validate_hypothesis(
@@ -660,7 +660,7 @@ class TestEvaluateSingleCondition:
     def test_touch_bounce_bad_param_raises_research_error(self):
         """现状记录：SNR 动作数值键坏值结构化拒绝（ResearchError）。"""
         from core.validation.engine import _evaluate_single_condition
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         df = pd.DataFrame(
             {"close": [100.0, 99.0, 101.0], "volume": [1.0, 1.0, 1.0]},
             index=pd.date_range("2024-01-01", periods=3, freq="4h"),
@@ -839,7 +839,7 @@ class TestCheckThenBoundary:
         """CARD-02 转正：cond.window=0 经 _cond_window 结构化拒绝
         （原行为：裁空窗 → continue 落默认分支，静默跳过条件）。"""
         from core.validation.engine import _check_then_conditions
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         window = self._window([100.0, 108.0])
         with pytest.raises(ResearchError) as ei:
             _check_then_conditions(
@@ -967,7 +967,7 @@ class TestEvaluateRules:
 
     def test_unknown_timeframe_raises_research_error(self, tmp_path):
         """CARD-03 锚：未知 tf 结构化拒绝（旧实现静默空结果 + warning）。"""
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.validation.rule_engine import evaluate_rules
         with pytest.raises(ResearchError) as exc_info:
             evaluate_rules(
@@ -1176,7 +1176,7 @@ class TestLookbackWindowValidation:
         ],
     )
     def test_bad_window_rejected(self, bad_window):
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.validation.engine import _evaluate_single_condition
         df = pd.DataFrame(
             {"close": [100.0, 90.0, 110.0]},
@@ -1203,7 +1203,7 @@ class TestStage4BlindSpotFill:
         结构化拒绝（原行为：裁空窗跳主判定，默认分支 float 失败静默
         归 0 → rise 8% >= 0 判 True 的失真匹配）。"""
         from core.validation.engine import _check_then_conditions
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         window = pd.DataFrame(
             {"close": [100.0, 108.0]},
             index=pd.date_range("2024-01-01", periods=2, freq="4h"),

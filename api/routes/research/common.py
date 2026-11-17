@@ -16,7 +16,7 @@ from typing import Optional, Tuple
 
 from fastapi import HTTPException
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 
 
 def research_error_to_http(exc: ResearchError) -> HTTPException:

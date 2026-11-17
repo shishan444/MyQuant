@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.result import build_result
 from core.analysis.templates.param_guard import (
     _require_float_range, _require_int_range)

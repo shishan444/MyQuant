@@ -17,7 +17,7 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 from core.analysis.condition_kernel import MtfEvalContext, mask_for
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from tests.helpers.data_factory import make_ohlcv
 
 SYMBOL = "BTCUSDT"

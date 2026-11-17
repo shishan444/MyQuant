@@ -19,7 +19,8 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.analysis.hypothesis_service import ResearchError, register_hypothesis
+from core.analysis.errors import ResearchError
+from core.analysis.hypothesis_service import register_hypothesis
 from core.analysis.validation_service import (
     run_isolated_backtest,
     run_staged_validation,

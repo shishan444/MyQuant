@@ -6,7 +6,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.correlation_scan import correlation_scan
 from core.analysis.templates.distribution_compare import distribution_compare
 
@@ -186,7 +186,7 @@ class TestGapClosureVariants:
                                horizon=4, max_lag=200, min_samples=50)
         assert "peak_lag" in res.payload  # 合法 lag 族产出
         # 全族不足：样本需求超出数据量
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         with pytest.raises(ResearchError, match="可用配对不足") as ei:
             correlation_scan(df, signal_column="close", data_ranges=RANGES,
                              horizon=4, max_lag=4, min_samples=299)

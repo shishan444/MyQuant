@@ -13,7 +13,8 @@ pytestmark = [pytest.mark.integration]
 import numpy as np
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError, register_hypothesis
+from core.analysis.errors import ResearchError
+from core.analysis.hypothesis_service import register_hypothesis
 from core.persistence.repository.strategy import save_strategy
 from core.analysis.validation_service import (
     random_window_test, run_isolated_backtest, run_staged_validation,

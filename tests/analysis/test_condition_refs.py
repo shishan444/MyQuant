@@ -18,7 +18,7 @@ from core.analysis.condition_kernel import (
     _ensure_target_column,
     _mask_base,
 )
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 
 
 def _work(n: int = 60) -> pd.DataFrame:

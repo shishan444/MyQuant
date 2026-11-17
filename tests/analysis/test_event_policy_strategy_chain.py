@@ -20,7 +20,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.event_policy import mask_to_events
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.strategy.dna import (
     ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA,
 )

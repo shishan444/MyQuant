@@ -7,7 +7,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.result import build_result
 from core.analysis.templates import condition_stats
 
@@ -60,7 +60,7 @@ class TestBuildResultThreeElements:
 
     def test_small_sample_rejected(self) -> None:
         # CARD-10 收编：小样本属业务拒绝 422（原裸 ValueError→500）
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         with pytest.raises(ResearchError, match="小样本") as ei:
             build_result("t", sample_size=10,
                          confidence={"method": "m", "interval": [0, 1]},
@@ -117,7 +117,7 @@ class TestConditionStats:
         # RESEARCH_PARAM_INVALID，由 test_forward_bars_invalid_rejected 覆盖。）
         df = _make_df(20)
         # CARD-10 收编：模板级同款 422（detail 披露有效信号数口径）
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         with pytest.raises(ResearchError, match="小样本") as ei:
             condition_stats(
                 df, indicator="EMA", params={"period": 5},
@@ -274,7 +274,7 @@ class TestTimeframeKey:
 
         # 带键：4h 轴全 False → 0 命中 → 小样本拒绝（投影路径生效；
         # CARD-10 收编后为 422，sample_size=0 经公共层 detail 披露）
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         with pytest.raises(ResearchError, match="小样本") as ei:
             hit({"subject": "close", "action": "gt",
                  "target": beyond, "timeframe": "4h"})

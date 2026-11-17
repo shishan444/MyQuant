@@ -27,7 +27,8 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.analysis.hypothesis_service import ResearchError, register_hypothesis
+from core.analysis.errors import ResearchError
+from core.analysis.hypothesis_service import register_hypothesis
 from core.persistence.db_ext import init_db_ext
 
 BB_UPPER = {"indicator": "BB", "params": {"period": 20, "std": 2},

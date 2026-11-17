@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from core.analysis.condition_identity import canonical_condition_hash
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.result import AnalysisResult, build_result
 
 # 阈值刻度已提升分析域共享（add-param-sweep 兑现 D7；扫描与检查两域网格同源）

@@ -23,7 +23,8 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.executor import ensure_research_tables
-from core.analysis.hypothesis_service import ResearchError, register_hypothesis
+from core.analysis.errors import ResearchError
+from core.analysis.hypothesis_service import register_hypothesis
 from core.analysis.hypothesis_to_strategy import translate_hypothesis
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository.research import get_hypothesis

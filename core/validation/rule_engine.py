@@ -109,7 +109,7 @@ def evaluate_rules(
     # ------------------------------------------------------------------
     # B4.1 共享路径发现：safe_symbol 归一 + 别名兜底；未知 timeframe
     # 结构化拒绝而非静默空结果
-    from core.analysis.hypothesis_service import ResearchError
+    from core.analysis.errors import ResearchError
     from core.data.mtf_loader import safe_symbol, find_parquet
 
     try:

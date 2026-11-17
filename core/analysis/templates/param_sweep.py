@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 
 from core.analysis.condition_identity import canonical_condition_hash
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.param_guard import _require_int_range
 from core.analysis.result import AnalysisResult, build_result
 from core.analysis.condition_kernel import MtfEvalContext, mask_for, p_value_for, stat_window_mask

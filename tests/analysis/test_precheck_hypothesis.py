@@ -24,7 +24,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.registry_meta import derive_warmup_full
 from core.analysis.templates.precheck_hypothesis import (
     _load_precheck_df,

@@ -25,7 +25,8 @@ from core.analysis.condition_identity import (
     canonical_condition_hash, legacy_compatible_hash,
 )
 from core.analysis.condition_kernel import MtfEvalContext, mask_for
-from core.analysis.hypothesis_service import ResearchError, register_hypothesis
+from core.analysis.errors import ResearchError
+from core.analysis.hypothesis_service import register_hypothesis
 from core.data.mtf_alignment import project_completed, project_completed_bool
 from core.data.timeframes import TF_SECONDS
 from tests.helpers.data_factory import make_ohlcv

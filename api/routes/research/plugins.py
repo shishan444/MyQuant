@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from api.deps import get_data_dir, get_db_path
 from core.analysis import plugin_service as ps
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.persistence.repository import research as rr
 
 logger = logging.getLogger(__name__)

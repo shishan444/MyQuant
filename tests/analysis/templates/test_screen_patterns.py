@@ -14,7 +14,7 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 from core.analysis.condition_identity import canonical_condition_hash
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.condition_stats import condition_stats
 from core.analysis.templates.screen_patterns import screen_patterns
 from tests.helpers.regime_factory import (
@@ -222,7 +222,7 @@ class TestGapClosureScreen:
         """Q3 摘牌（2026-10-14）后引用摘牌名 features=["VWAP"] →
         RESEARCH_PARAM_INVALID 显式拒绝（不静默空结果——G5-T04 分入口
         断言之显式 indicator 参数入口）。"""
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         with pytest.raises(ResearchError, match="未知指标.*VWAP"):
             screen_patterns(
                 _random_walk(1), data_ranges=_RANGES, timeframe="1h",

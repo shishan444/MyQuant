@@ -61,7 +61,7 @@ class TestBuildResultGates:
         assert build_result("t", sample_size=10, min_samples=5,
                             **kwargs).sample_size == 10
         # 下限收紧后 100 不可构造（CARD-10 收编：业务拒绝 422）
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         with pytest.raises(ResearchError, match="小样本") as ei:
             build_result("t", sample_size=100, min_samples=200, **kwargs)
         assert ei.value.code == "RESEARCH_PARAM_INVALID"

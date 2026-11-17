@@ -60,7 +60,7 @@ class TestDomainAndCombination:
     def test_v4k_risk_fraction_domain(self, tmp_path):
         from core.persistence.db_ext import init_db_ext
         from core.analysis.executor import ensure_research_tables
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         db = tmp_path / "q.db"
         init_db_ext(db); ensure_research_tables(db)
         # 0 拒 / 0.5 放 / 0.51 拒（0.5 放行组合带齐 stop_loss+mode）
@@ -79,7 +79,7 @@ class TestDomainAndCombination:
     def test_v4k_mode_illegal_and_combination(self, tmp_path):
         from core.persistence.db_ext import init_db_ext
         from core.analysis.executor import ensure_research_tables
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         db = tmp_path / "q.db"
         init_db_ext(db); ensure_research_tables(db)
         with pytest.raises(ResearchError, match="position_mode"):

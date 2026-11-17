@@ -119,7 +119,7 @@ def run_scene_verification(
         horizons = [6, 12, 24, 48]
     if not horizons:
         # 空列表无统计意义（forward_stats 的 max(horizons) 直接 ValueError 穿 500）
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
 
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
@@ -138,7 +138,7 @@ def run_scene_verification(
 
     # 数据装载（B4.1 共享路径发现：safe_symbol 归一 + 别名兜底；
     # 未知 timeframe 结构化拒绝而非静默空结果）
-    from core.analysis.hypothesis_service import ResearchError
+    from core.analysis.errors import ResearchError
     from core.data.mtf_loader import safe_symbol, find_parquet
 
     try:

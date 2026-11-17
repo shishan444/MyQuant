@@ -18,7 +18,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.executor import ensure_research_tables
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.plugin_service import register_formula_plugin
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr

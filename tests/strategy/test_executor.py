@@ -1066,26 +1066,17 @@ class TestActionSetSingleSource:
     与翻译面同源引用）。
     """
 
-    def test_expressible_subset_evaluable(self):
-        """①可表达 ⊆ 执行合法（可表达必可执行——按翻译产物 type
-        投影：breakout/breakdown 为翻译层别名，产物 type 归一为
-        cross_above/cross_below 后须全部在执行合法集）。"""
-        from core.analysis.hypothesis_service import (
-            RESEARCH_EXPRESSIBLE_ACTIONS)
-        _ALIAS = {"breakout": "cross_above", "breakdown": "cross_below"}
-        projected = {_ALIAS.get(a, a) for a in RESEARCH_EXPRESSIBLE_ACTIONS}
-        assert projected <= EVALUABLE_CONDITION_TYPES
+    # ①④（可表达集恰等/统计键集==并集）随 RESEARCH_EXPRESSIBLE_ACTIONS
+    # 守护对象退役删除（retire-legacy-subsystems 任务 3.2）；②原位重建
+    # 为保留面双操作数断言（_ACTION_MAP ⊆ STATISTICS_ACTION_KEYS）
 
     def test_action_map_subset_expressible(self):
-        """②翻译 _ACTION_MAP ⊆ 可表达集（11 ⊆ 14——eq 入 map 后；
-        单源恰等断言 RESEARCH_EXPRESSIBLE_ACTIONS == frozenset(
-        _ACTION_MAP) ∪ 专门分支 3 键（within_bars_after/touch_bounce/
-        role_reversal）已落 tests/analysis/test_action_domain_gate.py
-        test_f1（14=11+3）——本超集断言作为恒成立底线保持）。"""
-        from core.analysis.hypothesis_service import (
-            RESEARCH_EXPRESSIBLE_ACTIONS)
+        """②翻译 _ACTION_MAP ⊆ 统计面键集（retire-legacy 重建锚——
+        两操作数均保留面符号：翻译内核与求值内核的动作收录包含关系；
+        统计面新增动作不进翻译 map 即红）。"""
         from core.analysis.hypothesis_to_strategy import _ACTION_MAP
-        assert frozenset(_ACTION_MAP) <= RESEARCH_EXPRESSIBLE_ACTIONS
+        from core.analysis.condition_eval import STATISTICS_ACTION_KEYS
+        assert frozenset(_ACTION_MAP) <= STATISTICS_ACTION_KEYS
 
     def test_registry_union_subset_evaluable(self):
         """③registry 并集 ⊆ 执行合法（S6b 主断言为更强双向相等——
@@ -1096,19 +1087,10 @@ class TestActionSetSingleSource:
             union.update(reg.supported_conditions)
         assert union <= EVALUABLE_CONDITION_TYPES
 
-    def test_statistics_keys_equal_union(self):
-        """④统计面键集 == 可表达 ∪ STATISTICS_ONLY（恰等——差集
-        显式化非静默；统计面新增动作不同步两常量即红）。"""
-        from core.analysis.hypothesis_service import (
-            RESEARCH_EXPRESSIBLE_ACTIONS, STATISTICS_ONLY_ACTIONS)
-        from core.validation.engine import STATISTICS_ACTION_KEYS
-        assert STATISTICS_ACTION_KEYS == (
-            RESEARCH_EXPRESSIBLE_ACTIONS | STATISTICS_ONLY_ACTIONS)
-
     def test_case_inspection_subset_statistics(self):
         """⑤case_inspection 通道集 ⊆ 统计面键集（可达子集声明）。"""
         from core.analysis.case_inspection import _SUPPORTED_ACTIONS
-        from core.validation.engine import STATISTICS_ACTION_KEYS
+        from core.analysis.condition_eval import STATISTICS_ACTION_KEYS
         assert _SUPPORTED_ACTIONS <= STATISTICS_ACTION_KEYS
 
     def test_history_heterogeneous_sets_exempt(self):

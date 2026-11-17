@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.registry_meta import derive_warmup
 from core.data.timeframes import TF_SECONDS
 

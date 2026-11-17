@@ -19,7 +19,7 @@ from api.deps import get_data_dir, get_db_path
 from api.routes.research.common import require_known_timeframe
 from api.schemas import AnalysisRunRequest
 from core.analysis.executor import get_executor
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.persistence.repository import research as rr
 
 logger = logging.getLogger(__name__)

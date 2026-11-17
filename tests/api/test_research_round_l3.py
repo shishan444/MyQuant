@@ -18,7 +18,7 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.validation_service import (
     query_union_balance, run_isolated_backtest)
 from core.persistence.db_ext import init_db_ext

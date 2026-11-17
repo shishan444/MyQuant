@@ -30,7 +30,7 @@ from core.analysis.case_inspection import (
     inspect_cases,
 )
 from core.analysis.condition_identity import canonical_condition_hash
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.registry_meta import derive_warmup
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr

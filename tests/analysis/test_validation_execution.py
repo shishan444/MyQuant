@@ -15,7 +15,8 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.analysis.hypothesis_service import ResearchError, register_hypothesis
+from core.analysis.errors import ResearchError
+from core.analysis.hypothesis_service import register_hypothesis
 from core.analysis.templates.condition_stats import condition_stats
 from core.analysis.templates.correlation_scan import correlation_scan
 from core.analysis.templates.event_study import event_study

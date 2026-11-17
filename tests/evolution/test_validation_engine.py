@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 
 pytestmark = [pytest.mark.unit]
 

@@ -271,7 +271,8 @@ class TestFiveDomainIntegration:
 
     def test_encoded_string_rejected_at_registration(self, db_path):
         from core.analysis.executor import ensure_research_tables
-        from core.analysis.hypothesis_service import ResearchError, register_hypothesis
+        from core.analysis.errors import ResearchError
+        from core.analysis.hypothesis_service import register_hypothesis
         ensure_research_tables(db_path)
         rng = [{"symbol": "BTCUSDT", "timeframe": "4h",
                 "start": "2024-01-01", "end": "2024-02-01"}]

@@ -17,7 +17,7 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.counter_profile import counter_profile
 from core.analysis.templates.event_study import event_study
 from tests.helpers.data_factory import make_ohlcv

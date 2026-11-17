@@ -24,7 +24,7 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.validation.engine import _evaluate_conditions, _evaluate_single_condition
 from tests.helpers.data_factory import make_ohlcv
 

@@ -82,7 +82,7 @@ def test_g5_t04_explicit_rejection_two_entries():
     import numpy as np
     import pandas as pd
     from core.analysis.column_ref import ColumnRefError, resolve_column_ref
-    from core.analysis.hypothesis_service import ResearchError
+    from core.analysis.errors import ResearchError
     from core.analysis.templates.condition_stats import condition_stats
 
     idx = pd.date_range("2024-01-01", periods=300, freq="1h", tz="UTC")

@@ -17,7 +17,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 import core.analysis.backtest_bridge as bb
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.isolation import judged_ranges_union
 from core.analysis.templates.exit_sweep import exit_sweep
 from core.persistence.db_ext import init_db_ext

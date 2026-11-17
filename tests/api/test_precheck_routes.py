@@ -230,7 +230,7 @@ class TestPrecheckRangeEligibility:
 
     def test_prechecked_range_passes_judged_union(
             self, api_client, precheck_env):
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.analysis.validation_service import (
             _hypothesis_precheck, _range_hash,
         )

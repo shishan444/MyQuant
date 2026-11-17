@@ -111,7 +111,7 @@ def _param_number(params: Dict[str, Any], key: str, cast=float, min_value=None,
     """
     import math
 
-    from core.analysis.hypothesis_service import ResearchError
+    from core.analysis.errors import ResearchError
 
     raw = params[key]
     try:

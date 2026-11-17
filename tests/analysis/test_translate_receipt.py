@@ -192,7 +192,7 @@ class TestIntentionalBoundaryNote:
 
     def test_s10_cross_symbol_note_present(self, db):
         """跨品种拒绝 detail 附「有意设计边界」标注短语（纯文案锚）。"""
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         from core.persistence.repository import research as rr
         import json as _json
         ranges_multi = [

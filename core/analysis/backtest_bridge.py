@@ -15,7 +15,7 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.registry_meta import WARMUP_RULE_TEXT
 from core.analysis.warmup_loader import TF_MINUTES, to_utc
 

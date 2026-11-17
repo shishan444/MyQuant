@@ -16,7 +16,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.condition_kernel import collect_condition_refs
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
 
@@ -127,7 +127,7 @@ class TestCollectRefsUnit:
                    for ind, p in refs), "target 侧 sma(200) 并入 refs"
 
     def test_strict_unresolvable_target_rejected(self):
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         cond = {"subject": "rsi_14", "action": "gt",
                 "target": "不存在列_x"}
         with pytest.raises(ResearchError) as ei:

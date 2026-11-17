@@ -18,7 +18,7 @@ from core.analysis.executor import (
     ResearchExecutor,
     recover_stale_analysis_tasks,
 )
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.persistence.repository import research as rr
 
 
@@ -60,7 +60,7 @@ class TestFastPath:
         """0.3.2 卡5 后行为：快路径失败 raise 结构化 500（D9——原伪
         task dict 断言随缺陷裁定改写：RESEARCH_TEMPLATE_INTERNAL 直传，
         无 fast_* task_id、任务表查无）。"""
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         ex = ResearchExecutor(db_path)
         try:
             def boom(stop):

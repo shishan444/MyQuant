@@ -68,7 +68,7 @@ def correlation_scan(
     if not lags:
         # 卡10 收编（distribution_compare 先例形制）：小样本属业务
         # 拒绝 422 非内部错误
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
 
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",

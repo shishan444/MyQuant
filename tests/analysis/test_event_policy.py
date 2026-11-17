@@ -16,7 +16,7 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 from core.analysis.event_policy import mask_to_events, validate_policy
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 
 
 class TestValidatePolicy归一契约:

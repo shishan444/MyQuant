@@ -10,7 +10,8 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.analysis.hypothesis_service import ResearchError, register_hypothesis
+from core.analysis.errors import ResearchError
+from core.analysis.hypothesis_service import register_hypothesis
 from core.analysis.hypothesis_to_strategy import translate_hypothesis
 from core.analysis.signal_assembly import assemble_signal_set
 from core.analysis.validation_service import run_isolated_backtest

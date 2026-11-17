@@ -17,7 +17,7 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.templates.segment_narrative import (
     CROSS_PAIRS, segment_narrative)
 from core.features.indicators import _compute_indicator

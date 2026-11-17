@@ -125,7 +125,7 @@ def validate_hypothesis(
         ValidationResult 全量统计
     """
     from pathlib import Path
-    from core.analysis.hypothesis_service import ResearchError
+    from core.analysis.errors import ResearchError
     from core.data.mtf_loader import safe_symbol, find_parquet
     from core.validation.mtf import enrich_with_mtf
 

@@ -16,7 +16,7 @@ from api.schemas import (
     HypothesisTransitionRequest,
 )
 from core.analysis import hypothesis_service as hs
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.persistence.repository import research as rr
 
 logger = logging.getLogger(__name__)

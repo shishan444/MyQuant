@@ -226,7 +226,7 @@ class TestMinSpacing:
     def test_min_spacing_zero_rejected(self, detector):
         """CARD-05 增量契约：min_spacing=0 结构化拒绝（旧行为全触发已退役）。"""
         import pytest as _pytest
-        from core.analysis.hypothesis_service import ResearchError
+        from core.analysis.errors import ResearchError
         n = 100
         dates = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC")
         closes = np.full(n, 60000.0)

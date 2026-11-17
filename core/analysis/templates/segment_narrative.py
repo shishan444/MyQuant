@@ -35,7 +35,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.analysis.result import AnalysisResult, build_result
 
 # 封闭交叉对清单（spec 契约——扩项走常量更新+spec 版本化）

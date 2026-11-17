@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 from uuid import uuid4
 
-from core.analysis.hypothesis_service import ResearchError
+from core.analysis.errors import ResearchError
 from core.persistence.repository import research as rr
 
 logger = logging.getLogger(__name__)
