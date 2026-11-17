@@ -19,10 +19,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.executor import ensure_research_tables
-from core.analysis.hypothesis_service import register_hypothesis
-from core.analysis.hypothesis_to_strategy import (
-    _dna_equivalent, translate_hypothesis,
-)
+from tests.helpers.vr_factory import insert_hypothesis
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository.strategy import get_strategy
 from core.strategy.dna import (
@@ -165,48 +162,42 @@ class TestSignatureSplitsIdentity:
         ensure_research_tables(d)
         return d
 
-    def _register(self, db, exit_logic=None) -> str:
-        out = register_hypothesis(
-            db,
-            conditions={
-                "when_conditions": [
-                    {"subject": {"indicator": "RSI",
-                                 "params": {"period": 14},
-                                 "field": "rsi"},
-                     "action": "lt", "target": 30}],
-                "then_conditions": [
-                    {"subject": {"indicator": "RSI",
-                                 "params": {"period": 14},
-                                 "field": "rsi"},
-                     "action": "gt", "target": 70}],
-            },
-            statement="签名分流测试",
-            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
-                          "start": "2024-01-01T00:00:00Z",
-                          "end": "2024-06-01T00:00:00Z"}],
-            strategy_params={"stop_loss": 0.05}, exit_logic=exit_logic)
-        return out["hypothesis_id"]
+    _WHEN = [{"subject": {"indicator": "RSI", "params": {"period": 14},
+                          "field": "rsi"}, "action": "lt", "target": 30}]
+    _THEN = [{"subject": {"indicator": "RSI", "params": {"period": 14},
+                          "field": "rsi"}, "action": "gt", "target": 70}]
 
-    def _product_signature(self, db, h) -> str:
-        t = translate_hypothesis(db, hypothesis_id=h)
-        dna_json = get_strategy(db, t["strategy_id"])["dna_json"]
-        return StrategyDNA.from_json(dna_json).gene_signature
+    def _product_signature(self, db, h=None, *, exit_logic=None,
+                           extra_groups=None) -> str:
+        """产物签名（retire-legacy 后经 build_signal_genes 翻译入口+
+        手构 LogicGenes——exit_logic 进 xlor 段、分批组 partial_exit_
+        logic 进 rlor 段的签名语义不变）。"""
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+        genes, _sources = build_signal_genes(
+            when_conditions=self._WHEN, then_conditions=self._THEN,
+            db_path=db, strategy_timeframe="4h")
+        logic = LogicGenes()
+        if exit_logic:
+            logic.exit_logic = str(exit_logic).upper()
+        if extra_groups:
+            for k, v in extra_groups.items():
+                setattr(logic, k, str(v).upper())
+        # 注：rlor 段消费 reduce_logic 通道（DNA 签名编码面单源——
+        # 登记链原 partial_exit_logic 归一映射已随登记域退役）
+        dna = StrategyDNA(
+            signal_genes=list(genes), logic_genes=logic,
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes())
+        return _sig(dna)
 
     def test_or_and_products_signature_split(self, db):
         """同条件 or/and 两假设翻译产物签名异（xlor 段）——库去重/
         分流按签名天然分开，双实体自动建立。"""
-        h_and = self._register(db)
-        h_or = self._register(db, exit_logic="or")
-        sig_and = self._product_signature(db, h_and)
-        sig_or = self._product_signature(db, h_or)
+        sig_and = self._product_signature(db)
+        sig_or = self._product_signature(db, exit_logic="or")
         assert sig_or != sig_and
         assert "xlor:or" in sig_or
         assert "xlor:or" not in sig_and
-
-        # 双实体：两产物策略 id 不同（签名异化 → 互不命中）
-        t_and = translate_hypothesis(db, hypothesis_id=h_and)
-        t_or = translate_hypothesis(db, hypothesis_id=h_or)
-        assert t_or["strategy_id"] != t_and["strategy_id"]
 
     def test_partial_or_product_signature_contains_rlor(self, db):
         """partial 通道翻译产物级锚（scaled delta scenario「部分
@@ -235,39 +226,10 @@ class TestSignatureSplitsIdentity:
                    "start": "2024-01-01T00:00:00Z",
                    "end": "2024-06-01T00:00:00Z"}]
 
-        def _register_with(partial_exit_logic=None) -> str:
-            out = register_hypothesis(
-                db, conditions=json.loads(json.dumps(cond)),
-                statement="rlor 产物签名测试", data_ranges=ranges,
-                strategy_params={"stop_loss": 0.05},
-                partial_exit_logic=partial_exit_logic)
-            return out["hypothesis_id"]
-
-        h_plain = _register_with()
-        h_or = _register_with(partial_exit_logic="or")
-        sig_plain = self._product_signature(db, h_plain)
-        sig_or = self._product_signature(db, h_or)
+        sig_plain = self._product_signature(db)
+        sig_or = self._product_signature(
+            db, extra_groups={"reduce_logic": "or"})
         assert "rlor:or" in sig_or
         assert "rlor:or" not in sig_plain
         assert sig_or != sig_plain
 
-
-class TestDnaEquivalentCoversLogicKeys:
-    """④_dna_equivalent 第二道复核含逻辑键（to_dict 全量比对）。"""
-
-    def test_logic_only_difference_not_equivalent(self):
-        """仅 logic_genes.exit_logic 异的两 DNA（其余逐键同）——全量
-        复核必不等价（logic_genes 含于 to_dict 比对集）。"""
-        dna_and = _dna(LogicGenes())
-        dna_or = _dna(LogicGenes(exit_logic="OR"))
-        assert not _dna_equivalent(dna_or, dna_and.to_json())
-
-    def test_identical_logic_equivalent(self):
-        dna_a = _dna(LogicGenes(exit_logic="OR"))
-        dna_b = _dna(LogicGenes(exit_logic="OR"))
-        assert _dna_equivalent(dna_a, dna_b.to_json())
-
-    def test_reduce_logic_difference_not_equivalent(self):
-        dna_a = _dna(LogicGenes(reduce_logic="OR"))
-        dna_b = _dna(LogicGenes())
-        assert not _dna_equivalent(dna_a, dna_b.to_json())

@@ -114,7 +114,7 @@ class TestSegmentNarrativeRoute:
         """留痕两态：不挂假设=analysis 条目 hypothesis_id 空；挂假设=
         区间进该假设判定并集（沿既有语义）。"""
         import sqlite3
-        from core.analysis.hypothesis_service import register_hypothesis
+        from tests.helpers.vr_factory import insert_hypothesis
         _wire(api_client, sn_env)
         rng = {"start": "2023-02-01T00:00:00Z", "end": "2023-03-01T00:00:00Z"}
 
@@ -131,7 +131,7 @@ class TestSegmentNarrativeRoute:
 
         cond = {"subject": {"indicator": "RSI", "params": {"period": 14},
                             "field": "rsi"}, "action": "gt", "target": 55}
-        reg = register_hypothesis(
+        hyp_id = insert_hypothesis(
             sn_env["db"],
             conditions={"when_conditions": [cond],
                         "then_conditions": [dict(cond)]},
@@ -139,7 +139,6 @@ class TestSegmentNarrativeRoute:
                 "symbol": SYMBOL, "timeframe": "1h",
                 "start": "2023-06-01T00:00:00Z",
                 "end": "2023-07-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
-        hyp_id = reg["hypothesis_id"]
         resp = api_client.post("/api/research/analysis", json={
             "template": "segment_narrative",
             "params": {"indicators": ["OBV"]},

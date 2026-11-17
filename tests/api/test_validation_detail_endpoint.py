@@ -18,7 +18,7 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.analysis.hypothesis_service import register_hypothesis
+from tests.helpers.vr_factory import insert_hypothesis
 from core.analysis.validation_service import run_sandbox_backtest
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
@@ -64,7 +64,7 @@ def tmp_data_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def hypothesis_id(db_path) -> str:
-    return register_hypothesis(
+    return insert_hypothesis(
         db_path,
         conditions={
             "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
@@ -74,7 +74,7 @@ def hypothesis_id(db_path) -> str:
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2023-01-01T00:00:00Z",
                       "end": "2023-02-01T00:00:00Z"}],
-        strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+        strategy_params={"stop_loss": 0.05})
 
 
 @pytest.fixture()

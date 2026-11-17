@@ -246,10 +246,3 @@ class TestPrivateSymbolStability:
         assert isinstance(empty, SignalSet)
         assert not bool(empty.entries.any())
         assert not bool(empty.exits.any())
-
-    def test_evolution_evaluation_module_imports_clean(self):
-        """进化评估链模块装载（含延迟 import 定义体）零 ImportError。"""
-        import importlib
-
-        mod = importlib.import_module("core.evolution.evaluation")
-        assert mod is not None

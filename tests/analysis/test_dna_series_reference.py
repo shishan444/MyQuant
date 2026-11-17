@@ -29,8 +29,6 @@ import random
 from core.analysis.hypothesis_to_strategy import build_signal_genes
 from core.analysis.errors import ResearchError
 from core.analysis.validation_service import _dna_indicator_names
-from core.evolution import operators
-from core.evolution.operators import crossover
 from core.features.indicators import INDICATOR_REGISTRY
 from core.persistence.db_ext import init_db_ext
 from core.analysis.executor import ensure_research_tables
@@ -259,119 +257,6 @@ def _dna_with_series_gene() -> StrategyDNA:
         risk_genes=RiskGenes(),
     )
 
-
-class TestEvolutionCrossoverSeriesKeys:
-    """进化抽验场景一：交叉整体搬运基因对象——series 形新键保留。"""
-
-    def test_base_layer_entry_carries_series_keys(self):
-        """基础层交叉：entry 侧取亲代 a（确定性路径），series 形
-        condition 的 target_* 三键逐键保留、无 threshold 混入。"""
-        a = _dna_with_series_gene()
-        b = StrategyDNA(
-            signal_genes=[
-                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
-                           "rsi_14", {"type": "lt", "threshold": 30}),
-                SignalGene("EMA", {"period": 20}, SignalRole.EXIT_TRIGGER,
-                           "ema_20", {"type": "gt", "threshold": 0}),
-            ],
-            logic_genes=LogicGenes(),
-            execution_genes=ExecutionGenes(timeframe="4h"),
-            risk_genes=RiskGenes(),
-        )
-        for seed in range(10):
-            random.seed(seed)
-            child = crossover(a, b)
-            entries = [g for g in child.signal_genes
-                       if g.role == SignalRole.ENTRY_TRIGGER]
-            assert len(entries) == 1
-            assert entries[0].condition == _SERIES_COND
-
-    def test_mtf_layer_crossover_carries_series_keys(self):
-        """MTF 层交叉（同位层 entry 取 a 方引用搬运）：层内 series 形
-        基因的 condition 逐键保留（list 级引用传递不逐字段重建）。"""
-        a = StrategyDNA(
-            layers=[TimeframeLayer(
-                timeframe="1d",
-                signal_genes=[SignalGene(
-                    "EMA", {"period": 5}, SignalRole.ENTRY_TRIGGER,
-                    "ema_5", dict(_SERIES_COND))],
-                logic_genes=LogicGenes())],
-            execution_genes=ExecutionGenes(timeframe="1d"),
-            risk_genes=RiskGenes(),
-        )
-        b = StrategyDNA(
-            layers=[TimeframeLayer(
-                timeframe="1d",
-                signal_genes=[SignalGene(
-                    "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
-                    "rsi_14", {"type": "gt", "threshold": 70})],
-                logic_genes=LogicGenes())],
-            execution_genes=ExecutionGenes(timeframe="1d"),
-            risk_genes=RiskGenes(),
-        )
-        random.seed(0)
-        child = crossover(a, b)
-        assert child.layers is not None and len(child.layers) == 1
-        entries = [g for g in child.layers[0].signal_genes
-                   if g.role == SignalRole.ENTRY_TRIGGER]
-        assert len(entries) == 1
-        assert entries[0].condition == _SERIES_COND
-
-
-class TestEvolutionMutationSeriesKeys:
-    """进化抽验场景二：变异按键写入不删除未知键——series 形
-    condition 的 target_* 键经各变异算子后不丢。"""
-
-    # 不替换 condition 的变异算子（结构性增删基因的算子不在此列——
-    # 它们移除整个基因，与「删 condition 未知键」是不同语义）
-    @pytest.mark.parametrize("mut_name", [
-        "mutate_params", "mutate_logic", "mutate_risk",
-        "mutate_cross_logic", "mutate_confluence_threshold",
-        "mutate_proximity_mult",
-    ])
-    def test_mutations_preserve_series_condition(self, mut_name):
-        mut = getattr(operators, mut_name)
-        for seed in range(10):
-            random.seed(seed)
-            child = mut(_dna_with_series_gene())
-            series_genes = [g for g in child.signal_genes
-                            if g.indicator == "EMA" and g.role == SignalRole.ENTRY_TRIGGER]
-            assert len(series_genes) == 1
-            assert series_genes[0].condition == _SERIES_COND
-
-    def test_mutate_indicator_replacement_valid_forms(self):
-        """mutate_indicator 整体替换 condition：替换产物必为合法形
-        （阈值四族带 threshold / cross_*_series 带 target_indicator），
-        未被替换的 series 形基因原样保留——不产断裂形（无 threshold
-        亦无 target_* 的四族）。"""
-        for seed in range(20):
-            random.seed(seed)
-            child = operators.mutate_indicator(_dna_with_series_gene())
-            for g in child.signal_genes:
-                c = g.condition
-                if c.get("type") in ("lt", "gt", "le", "ge", "eq"):
-                    assert ("threshold" in c) or ("target_indicator" in c), (
-                        f"断裂形 condition: {c}")
-
-
-class TestEvolutionRandomNoSeriesForm:
-    """进化抽验场景三：generate_random_condition 不主动产 series 形
-    （阈值四族恒写 threshold——翻译产物专属形制不被随机生成器倒灌）。"""
-
-    def test_threshold_family_always_has_threshold(self):
-        random.seed(0)
-        for name in INDICATOR_REGISTRY:  # 注册表全量 47 指标
-            for _ in range(10):
-                cond = operators.generate_random_condition(name)
-                if cond["type"] in ("lt", "gt", "le", "ge", "eq"):
-                    assert "threshold" in cond, f"{name}: {cond}"
-                    assert "target_indicator" not in cond, f"{name}: {cond}"
-
-
-# ---------------------------------------------------------------------------
-# 穿越族序列形 executor 消费（翻译产物 cross_above_series/cross_below_
-# series 的求值与信号组装链路——八键映射的 cross/break 面）
-# ---------------------------------------------------------------------------
 
 class TestCrossSeriesExecution:
     """穿越族序列形：翻译产物在 executor 的实际消费。"""
@@ -609,7 +494,7 @@ class TestLegacyBacktestMainParity:
 
 
 class TestSandboxBacktestSeriesForm:
-    """沙盒回测链路级：翻译产物序列形 DNA 经 run_isolated_backtest
+    """沙盒回测链路级：翻译产物序列形 DNA 经 run_sandbox_backtest
     全链（warmup 并集推导 → 前扩装载 → 回测）触发密度非零（C6.2
     完成标准「回测不得为零」+C6.3 warmup 并集链路级观测）。"""
 
@@ -626,9 +511,9 @@ class TestSandboxBacktestSeriesForm:
         return {"data_dir": data_dir, "db": db, "df": df}
 
     def _register(self, db) -> str:
-        from core.analysis.hypothesis_service import register_hypothesis
-        out = register_hypothesis(
-            db,
+        from tests.helpers.vr_factory import insert_hypothesis
+        return insert_hypothesis(
+            db, hypothesis_id="hyp_c6_series",
             conditions={"when_conditions": [
                 {"subject": {"indicator": "EMA", "params": {"period": 5},
                              "field": "ema"},
@@ -636,12 +521,10 @@ class TestSandboxBacktestSeriesForm:
                 "then_conditions": [
                     {"subject": "close", "action": "gt", "target": 0}]},
             statement="C6 序列形沙盒链路测试假设",
-            # 自报数据区间与请求区间不重叠（判定并集求交前置——
-            # data_ranges 是研究自报，回测请求区间须在其外）
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1h",
                           "start": "2020-01-01T00:00:00Z",
-                          "end": "2020-01-10T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
-        return out["hypothesis_id"]
+                          "end": "2020-01-10T00:00:00Z"}],
+            strategy_params={"stop_loss": 0.05})
 
     def test_series_form_sandbox_nonzero_and_warmup_union(self, sandbox):
         """序列形 DNA 沙盒回测全链：total_trades 非零（触发密度不为
@@ -652,7 +535,7 @@ class TestSandboxBacktestSeriesForm:
         derived 停在 200；target MACD lookback 110（fast 30+slow 60
         +signal 20 注册表上限和）→ 110×3=330 > 200，并集生效时
         derived == 330（target 指标进推导的链路级观测）。"""
-        from core.analysis.validation_service import run_isolated_backtest
+        from core.analysis.validation_service import run_sandbox_backtest
         from core.persistence.repository.strategy import save_strategy
         db, data_dir, df = (sandbox["db"], sandbox["data_dir"],
                             sandbox["df"])
@@ -672,11 +555,14 @@ class TestSandboxBacktestSeriesForm:
         save_strategy(db, strategy_id="c6_series", dna_json=dna.to_json(),
                       symbol="BTCUSDT", timeframe="1h")
         hyp_id = self._register(db)
-        # 请求区间从第 500 根起（> warmup 330，余 2300 bar 请求段）
-        out = run_isolated_backtest(
-            db, data_dir, hypothesis_id=hyp_id, strategy_id="c6_series",
-            request_range={"symbol": "BTCUSDT", "timeframe": "1h",
-                           "start": df.index[500].isoformat(),
-                           "end": df.index[-1].isoformat()})
+        # 请求区间从第 500 根起（> warmup 330，余 2300 bar 请求段）；
+        # retire-legacy 后编排入口经 run_sandbox_backtest（同链消费
+        # _derive_dna_warmup——warmup 并集推导链路等价承载）
+        from core.analysis.validation_service import run_sandbox_backtest
+        out = run_sandbox_backtest(
+            db, data_dir, strategy_id="c6_series", symbol="BTCUSDT",
+            timeframe="1h",
+            start=df.index[500].isoformat(),
+            end=df.index[-1].isoformat(), hypothesis_id=hyp_id)
         assert out["metrics"]["total_trades"] > 0
-        assert out["warmup"]["derived"] == 330
+        assert out["warmup_bars"] == 330

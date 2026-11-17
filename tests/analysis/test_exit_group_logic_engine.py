@@ -22,13 +22,14 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.executor import ensure_research_tables
-from core.analysis.hypothesis_service import register_hypothesis
-from core.analysis.hypothesis_to_strategy import translate_hypothesis
+from tests.helpers.vr_factory import insert_hypothesis
+from core.analysis.hypothesis_to_strategy import build_signal_genes
 from core.analysis.plugin_service import register_formula_plugin
 from core.analysis.signal_assembly import assemble_signal_set
 from core.persistence.db_ext import init_db_ext
-from core.persistence.repository.strategy import get_strategy
-from core.strategy.dna import StrategyDNA
+from core.persistence.repository.strategy import save_strategy
+from core.strategy.dna import (
+    ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA)
 
 N = 40
 
@@ -74,22 +75,34 @@ def _ranges() -> list:
              "start": "2024-01-01T00:00:00Z", "end": "2024-01-05T00:00:00Z"}]
 
 
+_DNA_SEQ = [0]
+
+
 def _register_and_translate(db, data_dir, *, then, exit_logic=None):
-    """登记（when 占位可表达条件）→ 翻译 → 产物 StrategyDNA。"""
-    conditions = {
-        "when_conditions": [
-            {"subject": {"indicator": "SMA", "params": {"period": 5},
-                         "field": "sma"}, "action": "lt", "target": 61000}],
-        "then_conditions": then,
-    }
-    h = register_hypothesis(
-        db, conditions=conditions, statement="回测行为锚",
-        data_ranges=_ranges(), strategy_params={"stop_loss": 0.05},
-        exit_logic=exit_logic)
-    t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"],
-                             data_dir=data_dir)
-    dna_json = get_strategy(db, t["strategy_id"])["dna_json"]
-    return StrategyDNA.from_json(dna_json)
+    """占位 when 条件经存活翻译入口产基因 + 手构 StrategyDNA
+    （retire-legacy 后 translate_hypothesis 退役——then→出场基因经
+    build_signal_genes 同路径，exit_logic 进 LogicGenes，draft 落库
+    走 save_strategy）。"""
+    when = [
+        {"subject": {"indicator": "SMA", "params": {"period": 5},
+                     "field": "sma"}, "action": "lt", "target": 61000}]
+    genes, _sources = build_signal_genes(
+        when_conditions=when, then_conditions=then, db_path=db,
+        strategy_timeframe="4h")
+    _DNA_SEQ[0] += 1
+    sid = f"st_egx_{_DNA_SEQ[0]}"
+    dna = StrategyDNA(
+        signal_genes=list(genes),
+        logic_genes=LogicGenes(
+            exit_logic=str(exit_logic).upper()) if exit_logic
+        else LogicGenes(),
+        execution_genes=ExecutionGenes(timeframe="4h"),
+        risk_genes=RiskGenes(stop_loss=0.05),
+        signal_sources=[{"type": "rule"}, *(
+            dict(t) for t in (_sources or []))])
+    save_strategy(db, strategy_id=sid, dna_json=dna.to_json(),
+                  symbol="BTCUSDT", timeframe="4h")
+    return dna
 
 
 # 出场两条件（正交可控对）：A=价格面 SMA(5)、B=波动面 ATR(14)

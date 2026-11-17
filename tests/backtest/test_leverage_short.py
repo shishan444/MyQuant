@@ -14,8 +14,6 @@ from core.strategy.validator import validate_dna
 from core.backtest.engine import (
     BacktestEngine, BacktestResult, _apply_funding_costs,
 )
-from core.evolution.operators import mutate_risk
-from core.evolution.population import create_random_dna, init_population
 from api.schemas import RiskGenesModel
 
 def _make_dna(
@@ -229,58 +227,6 @@ class TestStopLossTakeProfit:
 
 # ---------------------------------------------------------------------------
 # Phase 3: Evolution
-# ---------------------------------------------------------------------------
-
-class TestMutateRiskLeverage:
-    def test_leverage_can_mutate(self):
-        """Run many mutations to verify leverage sometimes changes."""
-        dna = _make_dna(leverage=3)
-        changed = False
-        for _ in range(100):
-            mutated = mutate_risk(dna)
-            if mutated.risk_genes.leverage != dna.risk_genes.leverage:
-                changed = True
-                assert 1 <= mutated.risk_genes.leverage <= 10
-                break
-        # 30% chance per mutation, high probability we hit it in 100 tries
-
-    def test_leverage_stays_in_range(self):
-        dna = _make_dna(leverage=1)
-        for _ in range(50):
-            dna = mutate_risk(dna)
-            assert 1 <= dna.risk_genes.leverage <= 10
-
-class TestMutateRiskDirection:
-    def test_direction_can_flip(self):
-        dna = _make_dna(direction="long")
-        for _ in range(100):
-            mutated = mutate_risk(dna)
-            if mutated.risk_genes.direction != dna.risk_genes.direction:
-                assert mutated.risk_genes.direction in ("short", "mixed")
-                return
-
-    def test_direction_values_valid(self):
-        dna = _make_dna()
-        for _ in range(50):
-            dna = mutate_risk(dna)
-            assert dna.risk_genes.direction in ("long", "short", "mixed")
-
-class TestPopulationInit:
-    def test_random_dna_has_leverage_and_direction(self):
-        dna = create_random_dna()
-        assert hasattr(dna.risk_genes, "leverage")
-        assert hasattr(dna.risk_genes, "direction")
-        assert 1 <= dna.risk_genes.leverage <= 10
-        assert dna.risk_genes.direction in ("long", "short")
-
-    def test_population_includes_both_directions(self):
-        """With 30+ individuals, both long and short should appear."""
-        pop = init_population(size=30)
-        directions = {ind.risk_genes.direction for ind in pop}
-        assert "long" in directions
-
-# ---------------------------------------------------------------------------
-# Phase 4: API Schema
 # ---------------------------------------------------------------------------
 
 class TestApiSchemaValidation:

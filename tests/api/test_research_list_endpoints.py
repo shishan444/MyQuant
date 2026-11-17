@@ -18,86 +18,26 @@ CONDITIONS = {
 }
 
 
-def _register(client, start: str, statement: str = "特征网假设"):
-    return client.post("/api/research/hypotheses", json={
-        "strategy_params": {"stop_loss": 0.05}, "conditions": CONDITIONS, "statement": statement,
-        "data_ranges": [{"symbol": "BTCUSDT", "timeframe": "4h",
-                         "start": start, "end": "2024-03-01T00:00:00Z"}]})
-
-
-class TestHypothesesPagination:
-    """钳制语义：page<1→1；page_size 越界（<1 或 >200）→50；total=当前页长度。"""
-
-    def test_page_zero_clamped_to_one(self, api_client):
-        _register(api_client, "2024-01-01T00:00:00Z")
-        body = api_client.get("/api/research/hypotheses",
-                              params={"page": 0}).json()
-        assert body["page"] == 1 and body["page_size"] == 50
-        assert len(body["items"]) == 1 and body["total"] == 1
-
-    @pytest.mark.parametrize("page_size", [0, -1, 201])
-    def test_pagesize_out_of_range_clamped_to_50(self, api_client, page_size):
-        _register(api_client, "2024-01-01T00:00:00Z")
-        body = api_client.get("/api/research/hypotheses",
-                              params={"page_size": page_size}).json()
-        assert body["page_size"] == 50, f"page_size={page_size} 应钳制为 50"
-
-    def test_pagesize_cap_boundary_kept(self, api_client):
-        body = api_client.get("/api/research/hypotheses",
-                              params={"page_size": 200}).json()
-        assert body["page_size"] == 200, "上限 200 本身合法，不应被改写"
-
-    def test_beyond_last_page_empty_with_true_total(self, api_client):
-        """CARD-07 后：超尾页 items 空，total 为过滤口径真总数（非 0），
-        next_cursor 空页为 None。"""
-        _register(api_client, "2024-01-01T00:00:00Z")
-        body = api_client.get("/api/research/hypotheses",
-                              params={"page": 99}).json()
-        assert body["items"] == [] and body["total"] == 1
-        assert body["next_cursor"] is None
-
-    def test_pagination_slices_items(self, api_client):
-        """CARD-07 后：total=真总数（不再随页变）；缺省 desc 最新在前。"""
-        ids_in_order = []
-        for i in range(3):
-            resp = _register(api_client, f"2024-01-0{i + 1}T00:00:00Z")
-            assert resp.status_code == 200, resp.text
-            ids_in_order.append(resp.json()["hypothesis_id"])
-
-        page1 = api_client.get("/api/research/hypotheses",
-                               params={"page_size": 2}).json()
-        page2 = api_client.get("/api/research/hypotheses",
-                               params={"page": 2, "page_size": 2}).json()
-        assert len(page1["items"]) == 2 and page1["total"] == 3
-        assert len(page2["items"]) == 1 and page2["total"] == 3
-        ids1 = [h["hypothesis_id"] for h in page1["items"]]
-        ids2 = {h["hypothesis_id"] for h in page2["items"]}
-        assert not set(ids1) & ids2, "分页窗口不应重叠"
-        assert ids1[0] == ids_in_order[-1], "缺省 desc：最后登记（最新）在前"
-
-    def test_status_filter(self, api_client):
-        r = _register(api_client, "2024-01-01T00:00:00Z").json()
-        active = api_client.get("/api/research/hypotheses",
-                                params={"status": "active"}).json()
-        assert any(h["hypothesis_id"] == r["hypothesis_id"]
-                   for h in active["items"])
-        refuted = api_client.get("/api/research/hypotheses",
-                                 params={"status": "refuted"}).json()
-        assert refuted["items"] == []
-
-    def test_items_decode_structured_json_fields(self, api_client):
-        _register(api_client, "2024-01-01T00:00:00Z")
-        body = api_client.get("/api/research/hypotheses").json()
-        item = body["items"][0]
-        assert isinstance(item["conditions"], dict), "conditions 库存 JSON 串应在响应解码"
-        assert isinstance(item["data_ranges"], list)
+def _register(db, start: str, statement: str = "特征网假设"):
+    """直插假设+登记日志（retire-legacy 后登记端点退役——读通道
+    测试的种子构造改 vr_factory SQL 直插；register 日志行手动补齐
+    对齐原登记面自动双写的过滤计数锚）。"""
+    from tests.helpers.vr_factory import insert_hypothesis
+    hid = insert_hypothesis(
+        db, conditions=CONDITIONS, statement=statement,
+        data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
+                      "start": start, "end": "2024-03-01T00:00:00Z"}],
+        strategy_params={"stop_loss": 0.05})
+    rr.append_research_log(db, hypothesis_id=hid, entry_type="register",
+                           summary=statement)
+    return {"hypothesis_id": hid}
 
 
 class TestResearchLogEndpoint:
     """entry_type / hypothesis_id 过滤组合与脏 data_ranges 容错。"""
 
-    def test_entry_type_filter_hit_and_miss(self, api_client):
-        r = _register(api_client, "2024-01-01T00:00:00Z").json()
+    def test_entry_type_filter_hit_and_miss(self, api_client, db_path):
+        r = _register(db_path, "2024-01-01T00:00:00Z")
         hit = api_client.get("/api/research/log",
                              params={"entry_type": "register"}).json()
         assert any(e["hypothesis_id"] == r["hypothesis_id"]
@@ -106,8 +46,8 @@ class TestResearchLogEndpoint:
                               params={"entry_type": "nope"}).json()
         assert miss["items"] == [] and miss["total"] == 0
 
-    def test_combined_filter(self, api_client):
-        r = _register(api_client, "2024-01-01T00:00:00Z").json()
+    def test_combined_filter(self, api_client, db_path):
+        r = _register(db_path, "2024-01-01T00:00:00Z")
         body = api_client.get("/api/research/log", params={
             "hypothesis_id": r["hypothesis_id"],
             "entry_type": "register"}).json()
@@ -117,16 +57,16 @@ class TestResearchLogEndpoint:
         assert empty["items"] == []
 
     @pytest.mark.parametrize("page_size", [0, 201])
-    def test_page_size_out_of_range_clamped(self, api_client, page_size):
+    def test_page_size_out_of_range_clamped(self, api_client, db_path, page_size):
         """/log 的 page_size 越界钳 50（闸门②补强：此前只测 page 维度）。"""
-        _register(api_client, "2024-01-01T00:00:00Z")
+        _register(db_path, "2024-01-01T00:00:00Z")
         body = api_client.get("/api/research/log",
                               params={"page_size": page_size}).json()
         assert body["page_size"] == 50 and len(body["items"]) == 1
 
-    def test_page_clamped_and_beyond_tail(self, api_client):
+    def test_page_clamped_and_beyond_tail(self, api_client, db_path):
         """CARD-07 后：超尾页 items 空、total=过滤口径真总数、cursor None。"""
-        _register(api_client, "2024-01-01T00:00:00Z")
+        _register(db_path, "2024-01-01T00:00:00Z")
         clamped = api_client.get("/api/research/log",
                                  params={"page": 0}).json()
         assert clamped["page"] == 1
@@ -155,31 +95,32 @@ class TestKeysetCursorPagination:
     真总数；缺省 desc 最新在前；坏 cursor 结构化 422 不静默回首页。
     """
 
-    def _create_five(self, api_client):
+    def _create_five(self, db_path):
         ids = []
         for i in range(5):
-            resp = _register(api_client, f"2024-01-0{i + 1}T00:00:00Z")
-            assert resp.status_code == 200, resp.text
-            ids.append(resp.json()["hypothesis_id"])
+            ids.append(_register(
+                db_path, f"2024-01-0{i + 1}T00:00:00Z")["hypothesis_id"])
         return ids
 
-    def test_cursor_supplies_page_is_ignored(self, api_client):
-        """cursor 提供时 page 被忽略（offset=0）——page=99 不产生空页。"""
-        self._create_five(api_client)
-        first = api_client.get("/api/research/hypotheses",
+    def test_cursor_supplies_page_is_ignored(self, api_client, db_path):
+        """cursor 提供时 page 被忽略（offset=0）——page=99 不产生空页
+        （retire-legacy 后 hypotheses 列表端点退役，keyset 契约经
+        存活 /log 端点承载——_apply_keyset 共用单点）。"""
+        self._create_five(db_path)
+        first = api_client.get("/api/research/log",
                                params={"page_size": 2}).json()
         cursor = first["next_cursor"]
 
-        with_page = api_client.get("/api/research/hypotheses", params={
+        with_page = api_client.get("/api/research/log", params={
             "page_size": 2, "cursor": cursor, "page": 99}).json()
-        without_page = api_client.get("/api/research/hypotheses", params={
+        without_page = api_client.get("/api/research/log", params={
             "page_size": 2, "cursor": cursor}).json()
         assert with_page["items"] == without_page["items"]
         assert len(with_page["items"]) == 2, "page=99 未被采用（否则空页）"
 
-    def test_malformed_cursor_rejected_structured(self, api_client):
+    def test_malformed_cursor_rejected_structured(self, api_client, db_path):
         for bad in ("no-pipe", "lead|", "|tail", ""):
-            resp = api_client.get("/api/research/hypotheses",
+            resp = api_client.get("/api/research/log",
                                   params={"cursor": bad})
             assert resp.status_code == 422, f"cursor={bad!r} 应 422"
             detail = resp.json()["detail"]
@@ -187,19 +128,16 @@ class TestKeysetCursorPagination:
             assert detail["detail"]["legal_form"] == "created_at|id"
 
     @pytest.mark.parametrize(("endpoint", "setup"), [
-        pytest.param("/api/research/hypotheses",
-                     lambda c: [_register(c, f"2024-01-0{i + 1}T00:00:00Z")
-                                for i in range(5)], id="假设"),
         pytest.param("/api/research/log",
-                     lambda c: [_register(c, f"2024-01-0{i + 1}T00:00:00Z")
+                     lambda c, dbp: [_register(dbp, f"2024-01-0{i + 1}T00:00:00Z")
                                 for i in range(5)], id="日志"),
     ])
-    def test_cursor_walk_property_all_endpoints(self, api_client, endpoint,
-                                                setup):
+    def test_cursor_walk_property_all_endpoints(self, api_client, db_path,
+                                                endpoint, setup):
         """闸门④属性补强：cursor 翻页无重无漏性质三端点同持
         （_apply_keyset 共用，端点层 encode/decode/组装各自实现——
         性质须逐端点独立成立，不能由共用推定）。"""
-        setup(api_client)
+        setup(api_client, db_path)
 
         seen = []
         cursor = None
@@ -217,51 +155,13 @@ class TestKeysetCursorPagination:
         assert body["items"] == [] and cursor is None
         assert len(seen) == len(set(seen)) == 5, "翻页无重无漏"
 
-    def test_hypotheses_and_log_same_contract(self, api_client):
-        """契约同款抽查：desc 首页 + cursor 续页 + total 真总数。"""
-        for i in range(3):
-            resp = _register(api_client, f"2024-01-0{i + 1}T00:00:00Z")
-            assert resp.status_code == 200, resp.text
-
-        hyp1 = api_client.get("/api/research/hypotheses",
-                              params={"page_size": 1}).json()
-        assert hyp1["total"] == 3 and len(hyp1["items"]) == 1
-        hyp2 = api_client.get("/api/research/hypotheses", params={
-            "page_size": 1, "cursor": hyp1["next_cursor"]}).json()
-        assert len(hyp2["items"]) == 1 and hyp2["total"] == 3
-        assert (hyp2["items"][0]["hypothesis_id"]
-                != hyp1["items"][0]["hypothesis_id"]), "续页前进"
-
-        log1 = api_client.get("/api/research/log",
-                              params={"entry_type": "register",
-                                      "page_size": 2}).json()
-        assert log1["total"] == 3, "entry_type 过滤口径真总数"
-        assert len(log1["items"]) == 2 and log1["next_cursor"]
-
-
 class TestCorruptedJsonPassthrough:
     """CARD-12 修复资产：库存 JSON 列损坏时端点不 500。
 
-    四端点兜底语义：hypotheses/log/plugins 损坏保留原字符串（审计
-    可读）；validation report 的 params 损坏归 {}（range=None——原始
-    串不泄入人话摘要，同文件 _parse 先例形制）。
+    兜底语义（retire-legacy 后 hypotheses 端点族退役）：plugins 损坏
+    保留原字符串（审计可读）；validation report 的 params 损坏归 {}
+    （range=None——原始串不泄入人话摘要，同文件 _parse 先例形制）。
     """
-
-    def test_hypotheses_list_and_detail_keep_raw(self, api_client, db_path):
-        rr.save_hypothesis_with_log(
-            db_path, hypothesis_id="hyp_dirty", conditions="{corrupted",
-            conditions_hash="cd", statement="脏数据",
-            data_ranges="not-json", ranges_hash="rd")
-        listed = api_client.get("/api/research/hypotheses").json()
-        dirty = next(h for h in listed["items"]
-                     if h["hypothesis_id"] == "hyp_dirty")
-        assert dirty["conditions"] == "{corrupted", "列表损坏列保留原串"
-        assert dirty["data_ranges"] == "not-json"
-
-        detail = api_client.get("/api/research/hypotheses/hyp_dirty").json()
-        assert detail["conditions"] == "{corrupted"
-        assert detail["data_ranges"] == "not-json"
-
 
     def test_formula_output_columns_keeps_raw(self, api_client, db_path):
         rr.save_plugin_with_registry(
@@ -286,15 +186,8 @@ class TestCorruptedJsonPassthrough:
         assert row["output_columns"] == ""
 
 
-
 class TestNotFoundChannels:
     """三处 404 错误通道的结构化 code。"""
-
-    def test_hypothesis_not_found(self, api_client):
-        resp = api_client.get("/api/research/hypotheses/hyp_nope")
-        assert resp.status_code == 404
-        assert resp.json()["detail"]["code"] == "RESEARCH_HYPOTHESIS_NOT_FOUND"
-
 
     def test_analysis_task_not_found(self, api_client):
         resp = api_client.get("/api/research/analysis/tasks/ant_nope")

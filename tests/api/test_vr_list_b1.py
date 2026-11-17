@@ -25,7 +25,7 @@ pytestmark = [pytest.mark.integration]
 from fastapi.testclient import TestClient
 
 from api.app import app
-from core.analysis.hypothesis_service import register_hypothesis
+from tests.helpers.vr_factory import insert_hypothesis
 from core.analysis.executor import ensure_research_tables
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
@@ -51,7 +51,7 @@ def env(tmp_path_factory):
     ]
     # rec_i 陈述不含检索词（q miss 面）——statement 逐条定制见下
     for rid, rec_sym, base_sym, verdict, ret, k in specs:
-        hid = register_hypothesis(
+        hid = insert_hypothesis(
             db,
             conditions={
                 "when_conditions": [{"subject": {"indicator": "RSI",
@@ -64,7 +64,7 @@ def env(tmp_path_factory):
             data_ranges=[{"symbol": base_sym, "timeframe": "4h",
                           "start": "2024-01-01T00:00:00Z",
                           "end": "2024-02-01T00:00:00Z"}],
-            strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+            strategy_params={"stop_loss": 0.05})
         dna_d = json.loads(s["dna"].to_json())
         dna_d["execution_genes"] = {"timeframe": "4h", "symbol": rec_sym}
         for g in dna_d["signal_genes"]:
@@ -242,7 +242,7 @@ def benv(tmp_path):
     db = d / "b1b.db"
     init_db_ext(db)
     ensure_research_tables(db)
-    hid = register_hypothesis(
+    hid = insert_hypothesis(
         db,
         conditions={
             "when_conditions": [{"subject": {"indicator": "RSI",
@@ -254,7 +254,7 @@ def benv(tmp_path):
         data_ranges=[{"symbol": "ETHUSDT", "timeframe": "4h",
                       "start": "2024-01-01T00:00:00Z",
                       "end": "2024-02-01T00:00:00Z"}],
-        strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+        strategy_params={"stop_loss": 0.05})
     from core.persistence.orm.models import Strategy, ValidationRecord
     from sqlalchemy import create_engine, text
     from sqlalchemy.orm import sessionmaker
@@ -406,7 +406,7 @@ def bareenv(tmp_path):
     db = d / "b1bare.db"
     init_db_ext(db)
     ensure_research_tables(db)
-    hid = register_hypothesis(
+    hid = insert_hypothesis(
         db,
         conditions={
             "when_conditions": [{"subject": {"indicator": "RSI",
@@ -418,8 +418,8 @@ def bareenv(tmp_path):
         data_ranges=[{"symbol": "ETHUSDT", "timeframe": "4h",
                       "start": "2024-01-01T00:00:00Z",
                       "end": "2024-02-01T00:00:00Z"}],
-        strategy_params={"stop_loss": 0.05})["hypothesis_id"]
-    hid2 = register_hypothesis(
+        strategy_params={"stop_loss": 0.05})
+    hid2 = insert_hypothesis(
         db,
         conditions={
             "when_conditions": [{"subject": {"indicator": "RSI",
@@ -431,7 +431,7 @@ def bareenv(tmp_path):
         data_ranges=[{"symbol": "SOLUSDT", "timeframe": "4h",
                       "start": "2024-01-01T00:00:00Z",
                       "end": "2024-02-01T00:00:00Z"}],
-        strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+        strategy_params={"stop_loss": 0.05})
     from core.persistence.orm.models import Strategy, ValidationRecord
     from sqlalchemy import create_engine, text
     from sqlalchemy.orm import sessionmaker

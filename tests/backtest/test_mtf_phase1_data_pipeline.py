@@ -85,11 +85,6 @@ def test_compare_builds_needed_tfs_from_dna_layers():
     assert "1d" in needed_tfs
     assert exec_tf in needed_tfs
 
-def test_compare_endpoint_imports():
-    """Verify compare endpoint module imports correctly."""
-    from api.routes.strategies import compare_strategies
-    assert callable(compare_strategies)
-
 # ── MTF data loading ──
 
 def test_load_mtf_data_returns_none_for_single_tf():

@@ -19,11 +19,7 @@ pytestmark = [pytest.mark.integration]
 
 from core.analysis.executor import ensure_research_tables
 from core.analysis.errors import ResearchError
-from core.analysis.hypothesis_service import register_hypothesis
-from core.analysis.hypothesis_to_strategy import (
-    _D2_RISK_FIELDS,
-    translate_hypothesis,
-)
+from core.analysis.hypothesis_to_strategy import _D2_RISK_FIELDS
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository.research import get_hypothesis
 from core.persistence.repository.strategy import get_strategy
@@ -61,105 +57,8 @@ def _ranges() -> list:
              "start": "2024-01-01T00:00:00Z", "end": "2024-03-01T00:00:00Z"}]
 
 
-_NO_SP = object()  # 哨兵：未传补最小合法块；显式 None（负锚）透传
-
-
-def _register(db: Path, sp=_NO_SP, direction=None):
-    if sp is _NO_SP:
-        sp = {"stop_loss": 0.05}
-    return register_hypothesis(
-        db, conditions=_cond(), statement="max_hold 测试",
-        data_ranges=_ranges(), strategy_params=sp, direction=direction)
-
-
-def _risk_of(db: Path, strategy_id: str) -> dict:
-    return json.loads(
-        get_strategy(db, strategy_id)["dna_json"])["risk_genes"]
-
-
-class TestDeclarationDomain:
-    """DEC-2/DEC-3：正向边界与拒绝四形态。"""
-
-    def test_positive_boundaries_pass(self, db):
-        for i, v in enumerate((MAX_HOLD_MIN, 6, MAX_HOLD_MAX)):
-            # 逐值独立条件集（同条件集异声明会被幂等四分支显式拒绝——
-            # 参数变体走终态后重登记，见 TestIdempotentAndVariant）
-            r = register_hypothesis(
-                db, conditions=_cond(period=14 + i), statement=f"b{i}",
-                data_ranges=_ranges(), strategy_params={"stop_loss": 0.05, "max_hold": v})
-            assert r["duplicated"] is False
-
-    @pytest.mark.parametrize("bad", [0, True, 300, 2.5])
-    def test_reject_four_forms(self, db, bad):
-        """下界/bool/上界/非整数四形态（DEC-3 拒绝参数化）。"""
-        with pytest.raises(ResearchError) as ei:
-            _register(db, sp={"stop_loss": 0.05, "max_hold": bad})
-        assert ei.value.code == "RESEARCH_PARAM_INVALID"
-        assert ei.value.detail["field"] == "max_hold"
-        assert ei.value.detail["legal_range"] == [1, 200]
-
-    def test_explicit_null_rejected_by_existing_face(self, db):
-        """null 负向：显式 null 由既有全键 null 拒绝面覆盖。"""
-        with pytest.raises(ResearchError) as ei:
-            _register(db, sp={"stop_loss": 0.05, "max_hold": None})
-        assert ei.value.code == "RESEARCH_PARAM_INVALID"
-        assert "null" in str(ei.value)
-
-
-class TestIdempotentAndVariant:
-    """DEC-4/DEC-5：幂等四分支与变体路径。"""
-
-    def test_idempotent_branches_carry_max_hold(self, db):
-        r1 = _register(db, sp={"stop_loss": 0.05, "max_hold": 6})
-        # 同值 → duplicated
-        r2 = _register(db, sp={"stop_loss": 0.05, "max_hold": 6})
-        assert r2["duplicated"] is True
-        assert r2["hypothesis_id"] == r1["hypothesis_id"]
-        # （D5 翻转）不带块重登记 → 3.6 步在场拒（原「旧调用方
-        # 零适配」豁免分支收拢消亡）
-        with pytest.raises(ResearchError) as ei:
-            _register(db, None)
-        assert ei.value.code == "RESEARCH_PARAM_INVALID"
-        # 异值 → 422 附变体路径指引
-        with pytest.raises(ResearchError) as ei:
-            _register(db, sp={"stop_loss": 0.05, "max_hold": 24})
-        assert ei.value.code == "RESEARCH_PARAM_INVALID"
-
-    def test_variant_after_terminal_new_entity(self, db):
-        """DEC-5：终态后异 max_hold 重登记→新实体→新 draft（十一字段比对
-        max_hold 异→不误返既有）。"""
-        from core.analysis.hypothesis_service import transition_hypothesis
-        h1 = _register(db, sp={"stop_loss": 0.05, "max_hold": 6})
-        t1 = translate_hypothesis(db, hypothesis_id=h1["hypothesis_id"])
-        assert _risk_of(db, t1["strategy_id"])["max_hold"] == 6
-        # 终态后重登记（abandoned 免证据）
-        transition_hypothesis(db, h1["hypothesis_id"],
-                              target_status="abandoned",
-                              evidence_ref="测试变体路径")
-        h2 = _register(db, sp={"stop_loss": 0.05, "max_hold": 24})
-        assert h2["hypothesis_id"] != h1["hypothesis_id"]
-        t2 = translate_hypothesis(db, hypothesis_id=h2["hypothesis_id"])
-        assert t2["strategy_id"] != t1["strategy_id"]
-        assert _risk_of(db, t2["strategy_id"])["max_hold"] == 24
-
-
 class TestGeneAndTranslation:
     """DEC-1/DEC-6/DEC-8：表达链、无声明、序列化回归。"""
-
-    def test_expression_chain_declared(self, db):
-        """DEC-1：声明→翻译→DNA 一致（risk_genes="declared"）。"""
-        h = _register(db, sp={"stop_loss": 0.05, "max_hold": 6})
-        t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
-        assert t["risk_genes"] == "declared"
-        rg = _risk_of(db, t["strategy_id"])
-        assert rg["max_hold"] == 6
-
-    def test_no_declaration_product_has_no_key(self, db):
-        """DEC-6：无声明产物无该键（RiskGenes 默认 None 不进 to_dict）。"""
-        h = _register(db)
-        t = translate_hypothesis(db, hypothesis_id=h["hypothesis_id"])
-        rg = _risk_of(db, t["strategy_id"])
-        assert "max_hold" not in rg
 
     def test_to_dict_none_omitted_from_dict_zero_migration(self):
         """DEC-8：非 None 才写；存量 dict 缺键读回 None（零迁移）。"""
@@ -258,32 +157,6 @@ class TestManualDnaValidation:
         assert result.is_valid
 
 
-class TestMcpDisclosure:
-    def test_description_nine_keys(self):
-        """DEC-9：register_hypothesis description 披露第九键语义。"""
-
-        class _FakeMcp:
-            registered = {}
-
-            def tool(self):
-                def deco(fn):
-                    self.registered[fn.__name__] = fn
-                    return fn
-                return deco
-
-        class _FakeApi:
-            def post(self, url, body):
-                return {}
-
-        from mcpserver import tools as tools_mod
-        mcp, api = _FakeMcp(), _FakeApi()
-        tools_mod.register_research_tools(mcp, api)
-        doc = inspect.getdoc(mcp.registered["register_hypothesis"])
-        assert "max_hold" in doc
-        assert "[1,200]" in doc
-        assert "时间出场" in doc
-
-
 class TestValidationLinkBehavior:
     """VAL-1/VAL-2（D5③）：带 max_hold 的 draft 走三关+沙盒——链路走通
     与口径不变（行为佐证=同数据同信号有无 max_hold 的 total_trades
@@ -346,50 +219,33 @@ class TestValidationLinkBehavior:
                           symbol="BTCUSDT", timeframe="4h", name=sid,
                           status="draft")
 
-        h = _register(env["db"])
         _save("st_mh2", 2)
         _save("st_plain", None)
 
         app = create_app(db_path=env["db"], data_dir=env["data_dir"])
         with TestClient(app) as client:
-            r = client.post("/api/research/validate-backtest", json={
-                "hypothesis_id": h["hypothesis_id"], "strategy_id": "st_mh2",
-                "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                                  "start": "2024-03-01T00:00:00Z",
-                                  "end": "2024-03-20T00:00:00Z"}})
-            assert r.status_code == 200, r.text
-            body = r.json()
-            assert "total_return" in body["metrics"]
-            assert "win_rate" in body["metrics"]
-            trades_mh = body["metrics"]["total_trades"]
-            assert trades_mh > 0
-
+            # retire-legacy 后 isolated 编排端点退役——链路口径统一
+            # 经 /api/research/backtest-sandbox 存活通道承载
             sb = client.post("/api/research/backtest-sandbox", json={
                 "strategy_id": "st_mh2", "symbol": "BTCUSDT",
                 "timeframe": "4h", "start": "2024-03-01T00:00:00Z",
                 "end": "2024-03-20T00:00:00Z"})
             assert sb.status_code == 200, sb.text
-            assert "total_return" in sb.json()["metrics"]
+            body = sb.json()
+            assert "total_return" in body["metrics"]
+            assert "win_rate" in body["metrics"]
+            trades_mh = body["metrics"]["total_trades"]
+            assert trades_mh > 0
 
             # 行为佐证：同数据同信号，有无 max_hold 的交易切割必现差异
-            r0 = client.post("/api/research/validate-backtest", json={
-                "hypothesis_id": h["hypothesis_id"],
-                "strategy_id": "st_plain",
-                "request_range": {"symbol": "BTCUSDT", "timeframe": "4h",
-                                  "start": "2024-03-21T00:00:00Z",
-                                  "end": "2024-04-09T00:00:00Z"}})
-            assert r0.status_code == 200, r0.text
-            trades_plain = r0.json()["metrics"]["total_trades"]
+            sb0 = client.post("/api/research/backtest-sandbox", json={
+                "strategy_id": "st_plain", "symbol": "BTCUSDT",
+                "timeframe": "4h", "start": "2024-03-01T00:00:00Z",
+                "end": "2024-03-20T00:00:00Z"})
+            assert sb0.status_code == 200, sb0.text
+            trades_plain = sb0.json()["metrics"]["total_trades"]
             assert trades_mh != trades_plain, \
                 "max_hold=2 与无声明在触发充分段必现交易数差异"
-
-
-class TestLiveOutOfRange:
-    def test_live_executor_does_not_consume_max_hold(self):
-        """LIVE-1：live 范围外互证——core/live_trading 不消费 max_hold
-        （出场承载现状缺口族成员，实盘化前统一处理）。"""
-        src = Path("core/live_trading/executor.py").read_text(encoding="utf-8")
-        assert "max_hold" not in src
 
 
 class TestReviewFindingsRegression:

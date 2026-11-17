@@ -50,6 +50,10 @@ RETIRED_ENDPOINTS = [
     ("GET", "/api/strategies/verify/history"),
     ("GET", "/api/strategies/verify/sessions"),
     ("GET", "/api/strategies/verify/sessions/sess-legacy/results"),
+    # retire-legacy 追加：三核算路由退役并入 404 断言面
+    ("POST", "/api/strategies/backtest"),
+    ("POST", "/api/strategies/compare"),
+    ("POST", "/api/strategies/batch-backtest/stream"),
 ]
 
 # ── C1-2 星级五列（Q1 选项 A：冻结快照）──
@@ -60,20 +64,15 @@ STAR_COLUMNS = (
 # 种子非空星级值（与 lifecycle revalidate 测试的种子形制同源）
 _SEED_STAR_ROW = (4, 71.5, 88.25, "2026-10-01T00:00:00", 3)
 
-# ── C1-4 四兄弟路由 ──
+# ── C1-4 存活路由（retire-legacy 后 backtest/compare/batch 三核算
+# 路由退役——兄弟面收缩为 crud，三路由并入 404 断言面）──
 SIBLING_MODULES = (
     "MyQuant.api.routes.strategies.crud",
-    "MyQuant.api.routes.strategies.compare",
-    "MyQuant.api.routes.strategies.backtest",
-    "MyQuant.api.routes.strategies.batch",
 )
 SIBLING_MOUNTED_PATHS = (
     "/api/strategies",                        # crud 列表/创建
     "/api/strategies/{strategy_id}",          # crud 详情/更新/删除
     "/api/strategies/{strategy_id}/revalidate",
-    "/api/strategies/backtest",               # backtest
-    "/api/strategies/compare",                # compare
-    "/api/strategies/batch-backtest/stream",  # batch 流式
 )
 
 # ── 退役完整性三形制（tasks.md 任务 1 分拣形制 B/C）──
@@ -178,98 +177,6 @@ class TestStarColumnsFrozen:
         finally:
             conn.close()
 
-    def test_star_columns_frozen_across_normal_ops(
-        self, api_client: TestClient,
-    ) -> None:
-        """种子带非空星级值 → 普通操作族 → 五列逐列不变。"""
-        sid = self._create_strategy(api_client)
-        self._write_seed_star_row(api_client, sid)
-        before = self._read_star_row(api_client, sid)
-        assert before == _SEED_STAR_ROW  # 种子自证（防 UPDATE 未生效）
-
-        # 读面（列表/详情——前端星标排序/展示消费面）
-        assert api_client.get("/api/strategies").status_code == 200
-        detail = api_client.get(f"/api/strategies/{sid}")
-        assert detail.status_code == 200
-        # 响应读面五列原样呈现（冻结快照对调用方可见）
-        body = detail.json()
-        assert (body["verify_star"], body["verify_avg_score"],
-                body["verify_best_score"], body["verify_count"]) == (
-            4, 71.5, 88.25, 3)
-
-        # 更新面（PUT 白名单通道——五列不在 StrategyUpdate schema）
-        put = api_client.put(f"/api/strategies/{sid}",
-                             json={"name": "FrozenStarRenamed"})
-        assert put.status_code == 200, put.text[:300]
-
-        # 回测面（旧 verify 体系的写入语义面——退役后回测不回写星级）
-        with patch("MyQuant.api.routes.strategies.backtest._bt_engine_mod") as bt_mod, \
-                patch("MyQuant.api.routes.strategies.backtest.score_strategy") as mock_score:
-            mock_result = MagicMock()
-            mock_result.total_return = 0.25
-            mock_result.sharpe_ratio = 1.8
-            mock_result.max_drawdown = -0.12
-            mock_result.win_rate = 0.62
-            mock_result.total_trades = 150
-            mock_result.equity_curve = MagicMock()
-            mock_result.trades_df = None
-            mock_result.total_funding_cost = 0.0
-            mock_result.funding = {
-                "mode": "perpetual", "total_cost": 12.5,
-                "total_received": 0.0,
-                "coverage": {"status": "not_loaded", "covered": None,
-                             "gaps": []},
-                "caliber_note": "回测为逐 bar 连续折算（8h 口径差披露）"}
-            mock_result.liquidated = False
-            mock_result.metrics_dict = {
-                "benchmark_return": 0.15, "excess_return": 0.10,
-                "alpha": 0.05, "market_annual_return": 0.20,
-                "profit_factor": 1.6,
-            }
-            bt_mod.BacktestEngine.return_value.run.return_value = mock_result
-            mock_score.return_value = {
-                "total_score": 82.1,
-                "dimension_scores": {"return": 90, "risk": 80},
-                "template_name": "profit_first", "threshold": 75.0,
-            }
-            resp = api_client.post("/api/strategies/backtest", json={
-                "strategy_id": sid, "dataset_id": "BTCUSDT_4h",
-                "init_cash": 100000, "fee": 0.001, "slippage": 0.0005,
-            })
-            assert resp.status_code == 200, resp.text[:300]
-
-        # 批回测流式面（batch 共享设施——结果落库不触碰星级）
-        with patch("core.backtest.engine.BacktestEngine") as engine_cls, \
-                patch("core.data.mtf_loader.load_and_prepare_df",
-                      return_value=make_ohlcv(50, "4h")):
-            engine_cls.return_value.batch_run.return_value = [
-                _stream_engine_stub()]
-            resp = api_client.post(
-                "/api/strategies/batch-backtest/stream",
-                json={"strategy_ids": [sid],
-                      "data_ranges": [{"start": "2024-01-01",
-                                       "end": "2024-06-01"}]})
-            assert resp.status_code == 200, resp.text[:300]
-            session_id = resp.json()["session_id"]
-            assert session_id.startswith("batch_")
-            # 等待后台完成（结果落库——unregister 在 finally 之后可见）
-            from core.persistence.repository.backtest_result import (
-                list_backtest_results)
-            deadline = time.monotonic() + 15.0
-            rows = []
-            while time.monotonic() < deadline:
-                rows = [r for r in list_backtest_results(
-                    api_client.app.state.db_path,
-                    run_source="batch_backtest", limit=5)
-                    if r.get("strategy_id") == sid]
-                if rows:
-                    break
-                time.sleep(0.05)
-            assert rows, "后台批回测未在时限内落库"
-
-        # 冻结断言：五列逐列与种子相等（sqlite 直读对照）
-        assert self._read_star_row(api_client, sid) == _SEED_STAR_ROW
-
     def test_new_strategy_star_columns_default(
         self, api_client: TestClient,
     ) -> None:
@@ -321,12 +228,11 @@ class TestRetiredSymbolsAbsent:
             importlib.import_module("MyQuant.api.routes.strategies.verify")
 
     def test_schemas_verify_family_removed(self) -> None:
-        """Verify 族十类删除；BacktestDateRange 保留（去冠名——
-        batch 请求在用）。"""
+        """Verify 族十类删除（BacktestDateRange 亦随 batch 域退役——
+        retire-legacy 后无消费方，不再断言其在场）。"""
         import api.schemas as schemas
         leaked = [n for n in REMOVED_SCHEMA_CLASSES if hasattr(schemas, n)]
         assert leaked == []
-        assert hasattr(schemas, "BacktestDateRange")
 
     def test_strategies_pkg_no_verify_reexports(self) -> None:
         """strategies 包 __init__ 的 re-export 三处已清。"""
@@ -384,57 +290,3 @@ def _stream_engine_stub() -> SimpleNamespace:
                       "win_rate": None, "profit_factor": 0.0},
     )
 
-
-class TestBatchStreamSequenceComplete:
-    """C1-7：batch 流式事件序列完整（delta-3 Scenario——verify 退役
-    后流式比对面=batch：N 次 progress 后恰一次 complete/error）。"""
-
-    def test_progress_runs_then_single_complete(
-        self, api_client: TestClient, monkeypatch,
-    ) -> None:
-        """两区间=两步：progress×2（total 声明一致、current 递增）后
-        恰一次 complete 收尾，无丢序无重复。"""
-        from api import realtime
-        from core.persistence.repository.strategy import save_strategy
-
-        save_strategy(
-            api_client.app.state.db_path, strategy_id="s-seq",
-            dna_json=make_dna().to_json(), symbol="BTCUSDT",
-            timeframe="4h", name="SeqProbe",
-        )
-        events: list[tuple[str, dict]] = []
-
-        def _record(channel, room, event, payload) -> None:
-            events.append((event, payload))
-
-        monkeypatch.setattr(realtime, "broadcast", _record)
-        with patch("core.backtest.engine.BacktestEngine") as engine_cls, \
-                patch("core.data.mtf_loader.load_and_prepare_df",
-                      return_value=make_ohlcv(50, "4h")):
-            engine_cls.return_value.batch_run.return_value = [
-                _stream_engine_stub()]
-            resp = api_client.post(
-                "/api/strategies/batch-backtest/stream",
-                json={"strategy_ids": ["s-seq"],
-                      "data_ranges": [
-                          {"start": "2024-01-01", "end": "2024-03-01"},
-                          {"start": "2024-04-01", "end": "2024-06-01"},
-                      ]})
-            assert resp.status_code == 200, resp.text[:300]
-            session_id = resp.json()["session_id"]
-            assert session_id.startswith("batch_")
-            deadline = time.monotonic() + 15.0
-            while time.monotonic() < deadline:
-                if events and events[-1][0] in ("complete", "error"):
-                    break
-                time.sleep(0.05)
-
-        names = [e for e, _ in events]
-        assert names, "流式通道零事件（broadcast 未被调用）"
-        assert names[-1] == "complete", f"序列未以 complete 收尾: {names}"
-        assert names.count("complete") == 1, f"complete 不止一次: {names}"
-        progress_payloads = [p for e, p in events if e == "progress"]
-        assert len(progress_payloads) == 2, names
-        # progress.total 声明的步数与实际 progress 次数一致
-        assert all(p["total"] == 2 for p in progress_payloads)
-        assert [p["current"] for p in progress_payloads] == [1, 2]

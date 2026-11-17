@@ -284,13 +284,3 @@ class TestQualifiedDeadColumnNoRegression:
         positive = "conn.execute(text(\"UPDATE strategy SET qualified=1\"))"
         assert "UPDATE strategy SET qualified" in positive
 
-    def test_backtest_result_qualified_flow_untouched(self):
-        """同名异列守护锚：batch.py 的 qualified 流（backtest_result.
-        qualified 真数据活列）符号级在场——save_batch_results 调用带
-        qualified 实参未被死列处置误伤（行为锚=
-        tests/api/test_batch_backtest_feature.py 批量回测既有断言复跑）。"""
-        batch_path = _REPO_ROOT / "api" / "routes" / "strategies" / "batch.py"
-        src = batch_path.read_text(encoding="utf-8")
-        assert "qualified" in src, "batch.py qualified 流失踪（死列误伤）"
-        assert re.search(r"qualified\s*=", src), \
-            "backtest_result.qualified 写入实参不在场"

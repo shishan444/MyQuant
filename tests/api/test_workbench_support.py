@@ -38,8 +38,8 @@ def _now_iso() -> str:
 
 
 def _add_hypothesis(db):
-    from core.analysis.hypothesis_service import register_hypothesis
-    return register_hypothesis(
+    from tests.helpers.vr_factory import insert_hypothesis
+    return insert_hypothesis(
         db,
         conditions={"when_conditions": [
             {"subject": {"indicator": "RSI", "params": {"period": 14}},
@@ -49,7 +49,7 @@ def _add_hypothesis(db):
         strategy_params={"stop_loss": 0.05},
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2026-01-01T00:00:00Z",
-                      "end": "2026-02-01T00:00:00Z"}])["hypothesis_id"]
+                      "end": "2026-02-01T00:00:00Z"}])
 
 
 def _make_pt_task(db, *, status="running", created_at=None,
