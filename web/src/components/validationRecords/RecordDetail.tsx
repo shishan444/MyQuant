@@ -17,6 +17,7 @@ import { useStrategy } from "@/hooks/useStrategies";
 import { InputNumber, Select, Switch, Tabs } from "antd";
 import { FileSearch } from "lucide-react";
 import { KlineChart, type KlineChartHandle } from "@/components/charts/KlineChart";
+import { ReplayDetailPanel } from "./ReplayDetailPanel";
 import { attachSegmentBand, toSegmentBands } from "@/components/charts/primitives/segmentBand";
 import { formatPercent, formatTimestamp } from "@/lib/utils";
 import { ApiError } from "@/services/api";
@@ -1036,6 +1037,12 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
   if (q.isError) return <p className="text-xs text-loss">详情源暂不可达（稍后自动重试）</p>;
   if (q.isLoading) return <p className="text-xs text-text-muted">装载中…</p>;
   const d: ValidationDetailResponse = q.data!;
+  // level=replay 专属面板（fe-replay-presentation）：明细经纸盘端点
+  // 自取（pt_* 四明细 task_id 引用——vr 细节三表不适用），先于
+  // detail_available 空骨架分支
+  if (record.level === "replay") {
+    return <ReplayDetailPanel record={record} />;
+  }
   if (!d.detail_available) {
     return (
       <p className="text-xs text-text-muted">
