@@ -458,10 +458,15 @@ function extractRawSymbolTimeframe(row: ValidationRecordRow): {
     };
   }
   return {
-    symbol: rr?.symbol ?? (result.request_range as
+    // 形制兼容根治（fe-replay-presentation 任务 1.1）：params 顶层
+    // symbol/timeframe（引擎落库新形制——level=replay/sandbox 两用）
+    // 与 params.request_range 内嵌（旧形制）统一识别，顶层优先。
+    symbol: (params.symbol as string | undefined)
+      ?? rr?.symbol ?? (result.request_range as
       | { symbol?: string }
       | undefined)?.symbol ?? null,
-    timeframe: rr?.timeframe ?? (result.request_range as
+    timeframe: (params.timeframe as string | undefined)
+      ?? rr?.timeframe ?? (result.request_range as
       | { timeframe?: string }
       | undefined)?.timeframe ?? null,
   };

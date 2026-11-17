@@ -753,3 +753,40 @@ describe("markerSide/legacySide 侧位口径（契约 4，判定公式单源）"
     expect(legacySide("exit")).toBe("aboveBar");
   });
 });
+
+// ── fe-replay-presentation 任务 1.1：request_range 形制兼容根治 ──
+describe("request_range 形制兼容（顶层 vs 内嵌统一识别）", () => {
+  it("FORM-01 params 顶层 symbol/timeframe（引擎落库新形制——level=replay）", () => {
+    const row = {
+      level: "replay",
+      params: { symbol: "BTCUSDT", timeframe: "4h", fee: 0.001 },
+      result: { replay: { task_id: "t1", status: "completed" } },
+    } as unknown as Parameters<typeof recordSymbolTimeframe>[0];
+    const got = recordSymbolTimeframe(row);
+    expect(got.symbol).toBe("BTCUSDT");
+    expect(got.timeframe).toBe("4h");
+  });
+  it("FORM-02 顶层优先于内嵌 request_range（两形制并存时）", () => {
+    const row = {
+      level: "sandbox_backtest",
+      params: {
+        symbol: "ETHUSDT", timeframe: "1d",
+        request_range: { symbol: "BTCUSDT", timeframe: "4h" },
+      },
+      result: {},
+    } as unknown as Parameters<typeof recordSymbolTimeframe>[0];
+    const got = recordSymbolTimeframe(row);
+    expect(got.symbol).toBe("ETHUSDT");
+    expect(got.timeframe).toBe("1d");
+  });
+  it("FORM-03 仅内嵌形制（旧形制回退不破坏）", () => {
+    const row = {
+      level: "sandbox_backtest",
+      params: { request_range: { symbol: "BTCUSDT", timeframe: "4h" } },
+      result: {},
+    } as unknown as Parameters<typeof recordSymbolTimeframe>[0];
+    const got = recordSymbolTimeframe(row);
+    expect(got.symbol).toBe("BTCUSDT");
+    expect(got.timeframe).toBe("4h");
+  });
+});
