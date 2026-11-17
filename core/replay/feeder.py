@@ -196,11 +196,6 @@ class ReplayFeeder:
         funding_rates 同签名同语义）。"""
         return {p: self._funding_index.get(p) for p in points}
 
-    def aux_timeframes(self) -> List[str]:
-        """辅轴周期清单（dna.timeframes 去主轴）。"""
-        return [
-            tf for tf in self.dna.timeframes if tf != self.timeframe]
-
     def parquet_exists(self, tf: str) -> bool:
         """数据可行性检查（装载链 4——find_parquet 公共入口含
         safe_symbol 规整与 TF 别名回退，不自拼路径）。"""

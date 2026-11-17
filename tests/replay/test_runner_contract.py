@@ -54,6 +54,65 @@ class TestEndToEnd:
             assert a["kind"] == b["kind"]
 
 
+class TestBranchCoverage:
+    """主体路径补面：atr 档补列/funding 归档索引/坏 dna 拒绝。"""
+
+    def test_atr_mode_loads_and_runs(self, tmp_path):
+        """atr 档策略：装载链补 atr_{period} 列+回放走通。"""
+        import dataclasses
+
+        from tests.helpers.data_factory import make_dna
+
+        dna = make_dna()
+        atr_dna = dataclasses.replace(
+            dna, risk_genes=dataclasses.replace(
+                dna.risk_genes, sl_mode="atr", atr_period=14,
+                stop_loss=2.0, take_profit=4.0))  # ATR 倍数值域
+        env = ReplayEnv(tmp_path, dna=atr_dna, n_bars=400)
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=200)
+        res = rr.run(env.db, env.strategy_id, start, end, task_id="atr01")
+        assert res.status in ("completed", "stopped")
+        assert res.bars_processed > 0
+
+    def test_funding_archive_indexed(self, tmp_path):
+        """funding 归档在案：装载建索引+结算行走 settled（非全挂起）。"""
+        import pandas as pd
+
+        env = ReplayEnv(tmp_path, n_bars=400)
+        # 造 8h 网格 funding 归档（区间内每 48h 一个结算点）
+        idx = pd.date_range(
+            env.df.index[0], env.df.index[-1], freq="48h", tz="UTC")
+        frame = pd.DataFrame({"funding_rate": [0.0001] * len(idx)},
+                             index=idx)
+        from core.data.storage import save_parquet
+
+        save_parquet(frame, env.data_dir / "BTCUSDT_funding.parquet")
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=200)
+        res = rr.run(env.db, env.strategy_id, start, end, task_id="fund01")
+        records = paper.list_funding_records(
+            env.db, "fund01", limit=1000)
+        assert records, "结算点在案"
+        settled = [r for r in records if r["status"] == "settled"]
+        assert settled, "归档在案时结算非全挂起"
+        assert settled[0]["rate"] == pytest.approx(0.0001)
+
+    def test_bad_dna_rejected(self, tmp_path):
+        """坏 dna 快照：RESEARCH_STORED_DATA_INVALID 拒绝（行不建）。"""
+        env = ReplayEnv(tmp_path, n_bars=300)
+        from core.persistence.repository.strategy import save_strategy
+
+        save_strategy(env.db, strategy_id="st_bad",
+                      dna_json="{not-valid-json", symbol="BTCUSDT",
+                      timeframe="4h", status="draft")
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=100)
+        with pytest.raises(ReplayError) as ei:
+            rr.run(env.db, "st_bad", start, end)
+        assert ei.value.code == "RESEARCH_STORED_DATA_INVALID"
+
+
 class TestPerformanceAnchor:
     """L3-A1 性能锚：半年级 1h 区间（≥4,400 根）单任务分钟级
     （≤60s 上限断言——实测预期秒级；超限即红，CI 超限单进程复跑
