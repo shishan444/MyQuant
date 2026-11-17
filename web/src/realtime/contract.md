@@ -2,7 +2,7 @@
 
 > 本文档是前端消费与后端端点实现的**共同权威**（refactor-myquant-frontend-f1-f7 · G2 契约先行；
 > 后端容器 B8 批照此实现 socket.io 端点）。
-> 字段全部从当前代码实证（实证位置随条目标注）：evolution=api/runner.py、trading=core/paper_trading/runtime/executor.py+api/realtime.py、
+> 字段全部从当前代码实证（实证位置随条目标注）：trading=core/paper_trading/runtime/executor.py+api/realtime.py、
 > 连接层=api/realtime.py、流式=web/src/services/strategies.ts。
 > 当前载体为原生 WebSocket + fetch/SSE；**事件模型按目标态 socket.io 语义表达**，切换由 B8 双端同批完成。
 
@@ -16,7 +16,6 @@
 
 | 通道 | 当前载体 | socket.io 目标形态 | 订阅粒度 |
 |---|---|---|---|
-| evolution | `WS /ws/evolution/{task_id}` | namespace `/evolution`，room `task_id` | 每任务 |
 | trading | `WS /ws/trading/{task_id}` | namespace `/trading`，room `task_id` | 每任务 |
 | verify 流 | `POST /api/strategies/verify/stream`（SSE 响应） | 同端点改 emit `verify:{session}` 事件族 | 每请求 |
 | batch 流 | `POST /api/strategies/batch-backtest/stream`（SSE 响应） | 同端点改 emit `batch:{session}` 事件族 | 每请求 |
@@ -29,58 +28,8 @@
 | `ping` | `{ type: "ping" }` | C→S（心跳，20s 间隔，适配层职责） | ws.py:118 |
 | `pong` | `{ type: "pong" }` | S→C | ws.py:120 |
 
-## evolution 通道业务事件（S→C）
-
-均为 JSON 单帧，`type` 为判别字段。
-
-### task_started（runner.py:374）
-```json
-{ "type": "task_started", "task_id": string, "status": "running",
-  "target_score": number, "max_generations": number }
-```
-
-### task_snapshot（ws.py:75，重连恢复快照，仅活跃/近期任务下发）
-```json
-{ "type": "task_snapshot", "task_id": string, "status": "running"|"paused"|"pending"|"stopped",
-  "current_generation": number, "best_score": number|null,
-  "target_score": number|null, "max_generations": number|null, "current_phase": string|null }
-```
-
-### phase_changed（runner.py:108）
-```json
-{ "type": "phase_changed", "task_id": string, "phase": string }
-```
-
-### population_started（runner.py:694，连续进化新种群开始）
-```json
-{ "type": "population_started", "task_id": string, "population_count": number,
-  "best_score_ever": number, "total_generations_so_far": number }
-```
-
-### strategy_discovered（runner.py:631）
-```json
-{ "type": "strategy_discovered", "task_id": string, "strategy_id": string,
-  "score": number, "fitness": number, "qualified": boolean,
-  "name": string|null, "generation": number }
-```
-
-### generation_complete（runner.py:645）
-```json
-{ "type": "generation_complete", "task_id": string, "generation": number,
-  "best_score": number, "best_fitness": number, "avg_score": number,
-  "target_score": number, "max_generations": number,
-  "qualified_count": number?, "champion_dna": DNA? }
-```
-`champion_dna` 为 DNA dict（与 HTTP DNAModel-Output 同形）；`qualified_count`/`champion_dna` 视种群诊断存在。
-
-### evolution_complete（runner.py:807）
-```json
-{ "type": "evolution_complete", "task_id": string, "stop_reason": string,
-  "total_generations": number, "champion_score": number, "generation": number,
-  "best_score": number, "best_fitness": number,
-  "target_score": number, "max_generations": number }
-```
-
+<!-- evolution 通道与 /streams 流式契约段已随后端域退役删除
+     （retire-legacy-subsystems B1/任务 11——2026-11-16）；前端消费面清理归 F 面承接 -->
 ## trading 通道业务事件（S→C，模拟交易域七事件）
 
 > rebuild-paper-trading 切换（2026-10-17）：旧三事件（task_started 旧形 /
