@@ -464,6 +464,25 @@ class DataRangeItem(BaseModel):
         return v
 
 
+class ReplayBacktestRequest(BaseModel):
+    """逐根回放回测（add-replay-backtest-mcp）：现役回测入口——
+    底层 ReplayRunner（纸盘执行核心逐根回放，symbol/timeframe 从
+    策略 DNA 抄录不可覆写）；响应携带 ReplayResult summary 组。
+    经济参数值域同 sandbox（fee/slippage>=0、initial_cash>=1）。"""
+
+    strategy_id: str
+    start: str
+    end: str
+    fee: float = Field(default=0.001, ge=0)
+    slippage: float = Field(default=0.0005, ge=0)
+    initial_cash: float = Field(default=100000.0, ge=1)
+    leverage: int = 1
+    window_bars: Optional[int] = None
+    stop_loss_pct: Optional[float] = None
+    halt_drawdown_pct: Optional[float] = None
+    task_id: Optional[str] = None
+
+
 class SandboxBacktestRequest(BaseModel):
     """沙盒回测（improve-mcp-agent-loop M6）：快速试错、可调成本、
     不判门槛不构成验证证据；每次执行入验证记录统一流（level=

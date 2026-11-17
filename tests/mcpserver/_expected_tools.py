@@ -33,6 +33,7 @@ EXPECTED_RESEARCH_TOOLS: frozenset[str] = frozenset({
     "register_model_plugin",
     "run_analysis",
     "run_backtest",
+    "run_replay_backtest",
     "unmount_paper_task",
     "update_strategy_metadata",
 })

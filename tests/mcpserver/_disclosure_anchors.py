@@ -789,6 +789,7 @@ CAPABILITY_ENTRY_ANCHORED: tuple = (
 
 CAPABILITY_ENTRY_WHITELIST: tuple = (
     "隔离纪律", "时间参数规约", "warmup推导式", "沙盒回测纪律",
+    "回测入口",             # add-replay-backtest-mcp：现役回测主入口条目
     "时点行情快照", "案例抽查", "指标读数", "批量读数", "指标参数修复",
     "比较动作全集", "纯公式进场形制", "区间事件摘要",
     "纸盘挂载", "pattern_mining为实验性",

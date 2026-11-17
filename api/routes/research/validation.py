@@ -11,7 +11,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends
 
 from api.deps import get_data_dir, get_db_path
-from api.schemas import SandboxBacktestRequest
+from api.schemas import ReplayBacktestRequest, SandboxBacktestRequest
 from core.analysis import validation_service as vs
 
 logger = logging.getLogger(__name__)
@@ -51,3 +51,55 @@ def backtest_sandbox(
                   if payload.leverage is not None else None),
         margin_cap=payload.margin_cap,
         halt_drawdown_pct=payload.halt_drawdown_pct)
+
+
+@router.post("/backtest-replay")
+def backtest_replay(
+    payload: ReplayBacktestRequest,
+    db_path: Path = Depends(get_db_path),
+    data_dir: Path = Depends(get_data_dir),
+) -> Dict[str, Any]:
+    """逐根回放回测（add-replay-backtest-mcp）：现役回测入口——
+    底层 ReplayRunner（core/replay，纸盘执行核心逐根回放，与真实
+    交易同一套执行逻辑）；symbol/timeframe 从策略 DNA 抄录不可
+    覆写；费滑杠杆资金为任务覆写面。响应携带 ReplayResult summary
+    组与明细引用（task_id+db 经既有 pt_* 查询通道）。装载失败
+    （策略不存在/数据缺/warmup 不足/series 档等）结构化 4xx。"""
+    from core.replay import ReplayError, ReplayRunner
+
+    require_halt_drawdown_pct(payload.halt_drawdown_pct)
+    try:
+        result = ReplayRunner(data_dir).run(
+            db_path, payload.strategy_id, payload.start, payload.end,
+            fee=payload.fee, slippage=payload.slippage,
+            initial_cash=payload.initial_cash,
+            leverage=payload.leverage,
+            window_bars=payload.window_bars,
+            stop_loss_pct=payload.stop_loss_pct,
+            halt_drawdown_pct=payload.halt_drawdown_pct,
+            task_id=payload.task_id)
+    except ReplayError as exc:
+        # ReplayError -> ResearchError 重抛：未捕获冒泡至全局 handler
+        # 经 research_error_to_http 单源转结构化 4xx（code/message/
+        # detail）；STRATEGY_NOT_FOUND 语义映射 404（沿 REST 惯例），
+        # 其余装载类拒绝 422
+        from core.analysis.errors import ResearchError
+
+        status = 404 if exc.code == "STRATEGY_NOT_FOUND" else 422
+        raise ResearchError(
+            exc.code, str(exc), status=status, detail=exc.detail) from exc
+    return {
+        "task_id": result.task_id,
+        "strategy_id": result.strategy_id,
+        "symbol": result.symbol, "timeframe": result.timeframe,
+        "start": result.start, "end": result.end,
+        "status": result.status, "stop_reason": result.stop_reason,
+        "bars_processed": result.bars_processed,
+        "last_bar_time": result.last_bar_time,
+        "win_count": result.win_count, "loss_count": result.loss_count,
+        "total_trades": result.total_trades,
+        "total_pnl": result.total_pnl,
+        "final_balance": result.final_balance,
+        "final_equity": result.final_equity,
+        "halted_at": result.halted_at, "first_met_at": result.first_met_at,
+    }
