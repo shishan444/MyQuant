@@ -982,9 +982,7 @@ class TestConditionChainFaces:
     def test_face_register_and_translate(self, indicator, tmp_path):
         """面三/四 假设登记＋翻译：条件登记入册并翻译为 SignalGene
         （indicator/params 原样传递——box 先例形制）。"""
-        from core.analysis.hypothesis_service import register_hypothesis
-        from core.analysis.hypothesis_to_strategy import (
-            translate_hypothesis)
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
         from core.persistence.db_ext import init_db_ext
         from core.analysis.executor import ensure_research_tables
 
@@ -999,16 +997,12 @@ class TestConditionChainFaces:
                 "action": action, "target": 0.0}
         then = {"subject": {"indicator": "RSI", "params": {"period": 14}},
                 "action": "gt", "target": 50}
-        hyp = register_hypothesis(
-            db, conditions={"when_conditions": [cond],
-                            "then_conditions": [then]},
-            statement=f"{indicator} 环境开关后动量走强",
-            strategy_params={"stop_loss": 0.05},
-            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1h",
-                          "start": "2026-01-01", "end": "2026-03-01"}])
-        assert hyp["hypothesis_id"]
-        out = translate_hypothesis(db, hypothesis_id=hyp["hypothesis_id"])
-        assert f"{indicator}({field})" in out["genes"]
+        genes, _sources = build_signal_genes(
+            [cond], [then], db, strategy_timeframe="1h")
+        g = genes[0]
+        assert g.indicator == indicator
+        assert g.field_name == field
+        assert g.params == params
 
     @pytest.mark.parametrize("indicator", list(_CHAIN_PARAMS))
     def test_face_evaluate_condition(self, indicator):

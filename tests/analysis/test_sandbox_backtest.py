@@ -15,16 +15,16 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
-from core.analysis.hypothesis_service import (
-    ResearchError, register_hypothesis)
+from core.analysis.errors import ResearchError
 from core.analysis.isolation import judged_ranges_union
 from core.analysis.validation_service import (
-    SANDBOX_MAX_BARS, run_isolated_backtest, run_sandbox_backtest)
+    SANDBOX_MAX_BARS, run_sandbox_backtest)
 from core.persistence.repository.strategy import save_strategy
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
 from core.strategy.dna import (
     ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole, StrategyDNA)
+from tests.helpers.vr_factory import insert_hypothesis
 
 _CONDS = {
     "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
@@ -116,21 +116,23 @@ class TestSandboxBacktest:
             self, data_dir, strategy_id_module):
         """挂假设的沙盒区间计入判定并集——同区间隔离验证被 409。"""
         db, sid = strategy_id_module
-        hid = register_hypothesis(
+        hid = insert_hypothesis(
             db, conditions=_CONDS, statement="s",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                           "start": "2023-01-01T00:00:00Z",
-                          "end": "2023-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+                          "end": "2023-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
         out = run_sandbox_backtest(
             db, data_dir, strategy_id=sid, symbol="BTCUSDT",
             timeframe="4h", start="2023-03-01", end="2023-03-20",
             hypothesis_id=hid)
         assert out["hypothesis_id"] == hid
         # 沙盒区间计入判定并集（retire-legacy 后旧隔离 409 通道退役，
-        # 并集面经研究日志 data_ranges 留痕直读验证——同一事实源）
+        # 并集面经研究日志 data_ranges 留痕直读验证——同一事实源；
+        # 沙盒实写 entry_type=sandbox_backtest，judged_ranges_union
+        # 不过滤类型直读全部条目 data_ranges）
         import json as _json
         entries = [e for e in rr.list_research_log(db, hypothesis_id=hid)
-                   if e["entry_type"] == "validate"]
+                   if e["entry_type"] == "sandbox_backtest"]
         assert entries, "沙盒执行留 validate 日志"
         ranges = _json.loads(entries[-1]["data_ranges"] or "[]")
         assert any(str(r.get("start", "")).startswith("2023-03-01")
@@ -185,14 +187,15 @@ def fresh_env(tmp_path: Path):
 
 
 def _hyp(db: Path) -> str:
-    """注册假设（自报区间 2022-11~12——避开沙盒/隔离执行区间，
-    并集计数用例互不污染）。"""
-    return register_hypothesis(
+    """直插假设（自报区间 2022-11~12——避开沙盒/隔离执行区间，
+    并集计数用例互不污染；register_hypothesis 退役后经 vr_factory
+    SQL 直插，仅构造手段变化）。"""
+    return insert_hypothesis(
         db, conditions=_CONDS, statement="统一流契约",
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2022-11-01T00:00:00Z",
                       "end": "2022-12-01T00:00:00Z"}],
-        strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+        strategy_params={"stop_loss": 0.05})
 
 
 def _sbx_row(db: Path, record_id: str) -> dict:
@@ -375,34 +378,6 @@ class TestSandboxRecordUnification:
         assert set(out) == nine | {"record_id"}
         assert out["note"] == ("沙盒结果不构成验证证据；关联假设的区间"
                                "已计入判定并集")
-
-    def test_idem_query_level_isolation_bidirectional(
-            self, fresh_env, data_dir):
-        """TC-1-9：幂等面双向隔离——沙盒行入库不改变幂等面行为。"""
-        db, sid = fresh_env
-        hid = _hyp(db)
-        iso = run_isolated_backtest(
-            db, data_dir, hypothesis_id=hid, strategy_id=sid,
-            request_range={"symbol": "BTCUSDT", "timeframe": "4h",
-                           "start": "2023-01-05T00:00:00Z",
-                           "end": "2023-01-25T00:00:00Z"})
-        sbx = run_sandbox_backtest(
-            db, data_dir, strategy_id=sid, symbol="BTCUSDT",
-            timeframe="4h", start="2023-03-01", end="2023-03-10",
-            hypothesis_id=hid)
-        rows = {r["record_id"]: r for r in rr.list_validation_records(db)}
-        iso_hash = rows[iso["record_id"]]["range_hash"]
-        sbx_hash = rows[sbx["record_id"]]["range_hash"]
-        # 正向对照：正式 hash 以 isolated level 查命中自身（幂等面未变）
-        hit = rr.find_validation_by_identity(
-            db, hid, sid, iso_hash, level="isolated_backtest")
-        assert hit is not None and hit["record_id"] == iso["record_id"]
-        # 沙盒 hash 以 isolated level 查零命中正式行
-        assert rr.find_validation_by_identity(
-            db, hid, sid, sbx_hash, level="isolated_backtest") is None
-        # 正式 hash 以 sandbox level 查零命中沙盒行
-        assert rr.find_validation_by_identity(
-            db, hid, sid, iso_hash, level="sandbox_backtest") is None
 
     def test_sandbox_log_entry_form_byte_identical(
             self, fresh_env, data_dir):

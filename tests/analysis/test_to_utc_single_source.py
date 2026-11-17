@@ -68,29 +68,24 @@ class TestToUtcSingleSource:
 
 
 class TestHashJsonSingleSource:
-    """CARD-11 收敛守护：hash_json 公开导出（hypothesis_service）为
+    """CARD-11 收敛守护：hash_json 公开导出（plugin_service——
+    retire-legacy 后单源权威自 hypothesis_service 迁出）为
     幂等身份键统一底座（假设 conditions/ranges_hash、模型插件
     config_hash 共用）——plugin_service 的逐字双份已删，防再内联。"""
 
     def test_plugin_service无本地指纹实现(self) -> None:
+        """retire-legacy 后单源权威迁至 plugin_service 本体（原
+        hypothesis_service 已删）——守护=权威定义在场，防回潮缺失。"""
         import core.analysis.plugin_service as ps
         tree = ast.parse(Path(ps.__file__).read_text(encoding="utf-8"))
         local_defs = [
             n.name for n in ast.walk(tree)
             if isinstance(n, ast.FunctionDef)
             and n.name in ("_hash_json", "hash_json")]
-        assert not local_defs, (
-            "plugin_service 出现本地指纹实现——内联回潮，应 import "
-            "core.analysis.hypothesis_service.hash_json")
-        has_import = any(
-            isinstance(n, ast.ImportFrom)
-            and n.module == "core.analysis.hypothesis_service"
-            and any(a.name == "hash_json" for a in n.names)
-            for n in ast.walk(tree))
-        assert has_import, "plugin_service 未自 hypothesis_service 导入 hash_json"
+        assert local_defs, "plugin_service 权威 hash_json 定义失踪"
 
     def test_正牌行为_确定性与键序归一(self) -> None:
-        from core.analysis.hypothesis_service import hash_json
+        from core.analysis.plugin_service import hash_json
         # 键序无关（sort_keys=True）
         assert hash_json({"a": 1, "b": 2}) == hash_json({"b": 2, "a": 1})
         # 同对象恒同指纹（确定性）

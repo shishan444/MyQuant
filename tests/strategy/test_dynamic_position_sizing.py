@@ -13,8 +13,8 @@ from tests.helpers.data_factory import make_enhanced_df, make_dna
 
 
 class TestFivePointSync:
-    """V4j 五点同步对拍：validator 常量/dna 字段/schemas 模型/登记键集/
-    翻译键集。"""
+    """V4j 同步对拍（retire-legacy 后登记键集随 hypothesis_service 退役，
+    五点收缩为四点）：validator 常量/dna 字段/schemas 模型/翻译键集。"""
 
     def test_v4j_five_points(self):
         from core.strategy.validator import (
@@ -33,66 +33,10 @@ class TestFivePointSync:
         assert "risk_fraction" in RiskGenesModel.model_fields
         from core.analysis.hypothesis_to_strategy import _D2_RISK_FIELDS
         assert {"position_mode", "risk_fraction"} <= set(_D2_RISK_FIELDS)
-        from core.analysis.hypothesis_service import _STRATEGY_PARAM_KEYS
-        assert {"position_mode", "risk_fraction"} <= set(
-            _STRATEGY_PARAM_KEYS)
 
 
 class TestDomainAndCombination:
     """V4k 域三例+mode 非法拒+risk_budget 组合校验（登记面）。"""
-
-    def _register(self, tmp_path, db, extra):
-        from core.analysis.hypothesis_service import (
-            ResearchError, register_hypothesis)
-        conds = {"when_conditions": [
-            {"subject": {"indicator": "RSI", "params": {"period": 14}},
-             "action": "lt", "target": 35}],
-            "then_conditions": [
-                {"subject": {"indicator": "RSI", "params": {"period": 30}},
-                 "action": "gt", "target": 70}]}
-        rng = [{"symbol": "BTCUSDT", "timeframe": "4h",
-                "start": "2024-01-01T00:00:00Z",
-                "end": "2024-02-01T00:00:00Z"}]
-        return register_hypothesis(
-            db, conditions=conds, statement="s", data_ranges=rng,
-            strategy_params=extra)
-
-    def test_v4k_risk_fraction_domain(self, tmp_path):
-        from core.persistence.db_ext import init_db_ext
-        from core.analysis.executor import ensure_research_tables
-        from core.analysis.errors import ResearchError
-        db = tmp_path / "q.db"
-        init_db_ext(db); ensure_research_tables(db)
-        # 0 拒 / 0.5 放 / 0.51 拒（0.5 放行组合带齐 stop_loss+mode）
-        for bad, field in (((0,), "risk_fraction"), ((0.51,), "risk_fraction")):
-            with pytest.raises(ResearchError) as ei:
-                self._register(tmp_path, db, {
-                    "position_mode": "risk_budget", "risk_fraction": bad[0],
-                    "stop_loss": 0.05})
-            assert ei.value.detail["field"] == field
-        # 0.5 放（risk_fraction 闭区间上界）
-        out = self._register(tmp_path, db, {
-            "position_mode": "risk_budget", "risk_fraction": 0.5,
-            "stop_loss": 0.05})
-        assert out["duplicated"] is False
-
-    def test_v4k_mode_illegal_and_combination(self, tmp_path):
-        from core.persistence.db_ext import init_db_ext
-        from core.analysis.executor import ensure_research_tables
-        from core.analysis.errors import ResearchError
-        db = tmp_path / "q.db"
-        init_db_ext(db); ensure_research_tables(db)
-        with pytest.raises(ResearchError, match="position_mode"):
-            self._register(tmp_path, db,
-                           {"stop_loss": 0.05, "position_mode": "bogus"})
-        # 组合：risk_budget 缺 risk_fraction 拒
-        with pytest.raises(ResearchError, match="risk_fraction"):
-            self._register(tmp_path, db, {
-                "position_mode": "risk_budget", "stop_loss": 0.05})
-        # 组合：risk_budget 缺 stop_loss 拒（公式分母）
-        with pytest.raises(ResearchError, match="stop_loss"):
-            self._register(tmp_path, db, {
-                "position_mode": "risk_budget", "risk_fraction": 0.1})
 
     def test_validator_face_combination(self):
         """validate_dna 面同语义（直构 DNA 五键防线）。"""

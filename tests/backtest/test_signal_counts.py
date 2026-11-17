@@ -122,10 +122,11 @@ class TestC3SignalCountsDisclosure:
         assert m3["total_trades"] > 0
 
     def test_isolated_channel_carries_key(self, env):
-        """四通道自动携带：隔离端到端 result_json 含 signal_counts。"""
+        """存活通道自动携带：sandbox 端到端 result 含 signal_counts
+        （retire-legacy 后 isolated 编排退役，record 统一流经 sandbox
+        通道等价承载——result 列形制同源）。"""
         from core.analysis.executor import ensure_research_tables
-        from core.analysis.hypothesis_service import register_hypothesis
-        from core.analysis.validation_service import run_isolated_backtest
+        from core.analysis.validation_service import run_sandbox_backtest
         from core.persistence.repository.strategy import save_strategy
 
         db, d = env
@@ -134,22 +135,9 @@ class TestC3SignalCountsDisclosure:
         save_strategy(db, strategy_id="st_c3", dna_json=dna.to_json(),
                       symbol="BTCUSDT", timeframe="30m",
                       gene_signature="sig_c3")
-        hid = register_hypothesis(
-            db,
-            conditions={"when_conditions": [
-                {"subject": {"indicator": "RSI",
-                             "params": {"period": 14}},
-                 "action": "lt", "target": 35}],
-                "then_conditions": [
-                    {"subject": "close", "action": "gt", "target": 0}]},
-            statement="c3",
-            data_ranges=[{"symbol": "BTCUSDT", "timeframe": "30m",
-                          "start": "2024-01-01", "end": "2024-01-10"}], strategy_params={"stop_loss": 0.05}
-        )["hypothesis_id"]
-        res = run_isolated_backtest(
-            db, d, hypothesis_id=hid, strategy_id="st_c3",
-            request_range={"symbol": "BTCUSDT",
-                           "start": "2024-01-20", "end": "2024-01-30"})
+        res = run_sandbox_backtest(
+            db, d, strategy_id="st_c3", symbol="BTCUSDT", timeframe="30m",
+            start="2024-01-20", end="2024-01-30")
         result_json = json.loads(
             __import__("sqlite3").connect(db).execute(
                 "SELECT result FROM validation_records WHERE record_id=?",

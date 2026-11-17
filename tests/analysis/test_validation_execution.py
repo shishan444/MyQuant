@@ -16,7 +16,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.errors import ResearchError
-from core.analysis.hypothesis_service import register_hypothesis
+from tests.helpers.vr_factory import insert_hypothesis
 from core.analysis.templates.condition_stats import condition_stats
 from core.analysis.templates.correlation_scan import correlation_scan
 from core.analysis.templates.event_study import event_study
@@ -86,7 +86,7 @@ def data_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def hypothesis_id(db) -> str:
-    return register_hypothesis(
+    return insert_hypothesis(
         db,
         conditions={
             "when_conditions": [{"subject": {"indicator": "RSI", "params": {"period": 14}}, "action": "lt", "target": 35}],
@@ -96,7 +96,7 @@ def hypothesis_id(db) -> str:
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2023-01-01T00:00:00Z",
                       "end": "2023-02-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05}
-    )["hypothesis_id"]
+    )
 
 
         # 0.2.11 三态：小样本区间判 inconclusive（证据不足非证伪）——
@@ -111,44 +111,6 @@ class TestMtfLoading:
             db, data_dir, strategy_id=strategy_id, hypothesis_id=hypothesis_id,
             symbol="BTCUSDT", timeframe="4h",
             start="2023-03-01T00:00:00Z", end="2023-03-20T00:00:00Z")
-
-    def _rest_backtest(self, db, data_dir, strategy_id):
-        from api.routes.strategies.backtest import backtest_strategy
-        from api.schemas import BacktestRequest
-
-        return backtest_strategy(
-            BacktestRequest(strategy_id=strategy_id, dataset_id="BTCUSDT_4h",
-                            data_start="2023-03-01T00:00:00Z",
-                            data_end="2023-03-20T00:00:00Z"),
-            db_path=db, data_dir=data_dir)
-
-    @pytest.mark.parametrize("layer_tfs, sid", [
-        ([("4h",)], "st_mtf_same"),      # 单层同 tf（核心修复用例）
-        ([("1d",)], "st_mtf_diff"),      # 单层异 tf
-        ([("1d",), ("4h",)], "st_mtf_multi"),  # 多层
-    ])
-    def test_isolated_path(self, db, data_dir, hypothesis_id, layer_tfs, sid):
-        tfs = [tf for tf, in layer_tfs]
-        save_strategy(db, strategy_id=sid, dna_json=_mtf_dna(tfs).to_json(),
-                      symbol="BTCUSDT", timeframe="4h")
-        out = self._isolated(db, data_dir, hypothesis_id, sid)
-        # 修复前：is_mtf 且无 dfs_by_timeframe → executor ValueError（500）
-        # 改经 sandbox 入口承载后判据=跑出结果（record 在案非轴缺失拒）
-        assert out["record_id"] and out["sandbox"] is True
-
-    @pytest.mark.parametrize("tfs, sid", [
-        (["4h"], "st_mtf_same"),
-        (["1d"], "st_mtf_diff"),
-        (["1d", "4h"], "st_mtf_multi"),
-    ])
-    def test_rest_path(self, db, data_dir, tfs, sid):
-        save_strategy(db, strategy_id=sid, dna_json=_mtf_dna(tfs).to_json(),
-                      symbol="BTCUSDT", timeframe="4h")
-        resp = self._rest_backtest(db, data_dir, sid)
-        # 修复前：len(needed_tfs)>1 守卫跳过装载 → executor ValueError（500）
-        assert resp.result_id
-        assert resp.total_trades >= 0
-
 
 class TestColumnRejection:
     """3.3：列不可用结构化拒绝（附可用列清单）——错误即文档。"""
@@ -215,9 +177,6 @@ class TestGeneTfFourValidationEntries:
         save_strategy(db, strategy_id="st_gene_tf", dna_json=dna.to_json(),
                       symbol="BTCUSDT", timeframe="4h")
         return "st_gene_tf"
-
-
-
 
 
     def test_t4b_sandbox_runs_and_t5c_same_window_prefix(
@@ -317,7 +276,7 @@ class TestR3WarmupAxisConsistency:
         save_strategy(db, strategy_id=sid,
                       dna_json=dna.to_json(), symbol="BTCUSDT",
                       timeframe="30m", gene_signature="sig_t5_warmup")
-        hid = register_hypothesis(
+        hid = insert_hypothesis(
             db,
             conditions={"when_conditions": [
                 {"subject": {"indicator": "EMA", "params": {"period": 10}},
@@ -327,7 +286,7 @@ class TestR3WarmupAxisConsistency:
             statement="T5 warmup 轴",
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "30m",
                           "start": "2023-12-01", "end": "2023-12-10"}], strategy_params={"stop_loss": 0.05}
-        )["hypothesis_id"]
+        )
         return db, d, sid, hid
 
     def test_t5_main_axis_consistent_and_magnitude(self, env_30m):

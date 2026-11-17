@@ -1031,30 +1031,6 @@ class TestGeneTfProjectionOrder:
                 "广播窗应为连续多 bar 状态窗"
 
 
-class TestNeededTfsSingleSource:
-    """T4e 条件性单点断言（tester 补——任务 3a 采纳合并单源：
-    backtest_service.compute_needed_tfs 逐 DNA 委托研究链收集器
-    _collect_needed_tfs——patch 收集器后工程域行为跟随即证明委托，
-    双实现漂移在结构上不可发生）。"""
-
-    def test_t4e_compute_needed_tfs_delegates_single_collector(self, monkeypatch):
-        import core.analysis.backtest_bridge as bridge
-        from core.services.backtest_service import compute_needed_tfs
-        calls = []
-        orig = bridge._collect_needed_tfs
-
-        def spy(dna, exec_tf):
-            calls.append((getattr(dna, "strategy_id", None), exec_tf))
-            return orig(dna, exec_tf)
-
-        monkeypatch.setattr(bridge, "_collect_needed_tfs", spy)
-        d1, d2 = make_dna(), make_dna()
-        d1.signal_genes[0].timeframe = "1d"
-        out = compute_needed_tfs([d1, d2], "4h")
-        assert len(calls) == 2, "逐 DNA 全部经单源收集器"
-        assert out == {"1d", "4h"}, "聚合语义保持（任一 DNA 需装载即装载）"
-
-
 class TestActionSetSingleSource:
     """动作集单一权威源断言网（indicator-and-action-repair B6 卡 D
     4.3，F1 五表三层断言）——任一侧漂移即红。

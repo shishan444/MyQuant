@@ -341,9 +341,11 @@ class TestAlembicBaseline:
         conn0 = _sq.connect(str(db))
         conn0.execute(
             "INSERT INTO evolution_task (task_id, status, score_template,"
-            " symbol, timeframe, target_score, created_at, updated_at)"
+            " symbol, timeframe, target_score, initial_dna, created_at,"
+            " updated_at)"
             " VALUES ('mix-001', 'pending', 'profit_first', 'BTCUSDT',"
-            " '4h', 80.0, '2026-11-01T00:00:00', '2026-11-01T00:00:00')")
+            " '4h', 80.0, '{}', '2026-11-01T00:00:00',"
+            " '2026-11-01T00:00:00')")
         conn0.commit()
         conn0.close()
 

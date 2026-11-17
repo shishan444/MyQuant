@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from core.analysis import validation_service as vs_mod
 from core.analysis.executor import ensure_research_tables
-from core.analysis.hypothesis_service import register_hypothesis
+from tests.helpers.vr_factory import insert_hypothesis
 from core.analysis.validation_service import run_sandbox_backtest
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
@@ -43,7 +43,7 @@ def env(tmp_path: Path):
     db = tmp_path / "q.db"
     init_db_ext(db)
     ensure_research_tables(db)
-    hid = register_hypothesis(
+    hid = insert_hypothesis(
         db,
         conditions={
             "when_conditions": [{"subject": {"indicator": "RSI",
@@ -55,7 +55,7 @@ def env(tmp_path: Path):
         data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                       "start": "2024-01-01T00:00:00Z",
                       "end": "2024-01-15T00:00:00Z"}],
-        strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+        strategy_params={"stop_loss": 0.05})
     s = build_sample("pct_long")
     save_strategy(db, strategy_id="st_retire",
                   dna_json=s["dna"].to_json(), symbol="BTCUSDT",

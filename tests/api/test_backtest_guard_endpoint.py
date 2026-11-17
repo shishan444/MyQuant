@@ -28,7 +28,7 @@ def _dna(exec_tf: str = "4h") -> dict:
     }
 
 
-def _seed_market(api_client) -> None:
+def _seed_market(api_client):
     import numpy as np
     import pandas as pd
 
@@ -43,18 +43,25 @@ def _seed_market(api_client) -> None:
                       "low": close - spread, "close": close,
                       "volume": rng.uniform(100, 800, n)},
                      index=idx).to_parquet(data_dir / f"BTCUSDT_{tf}.parquet")
+    return api_client.app.state.db_path
 
 
 class TestBacktestEndpointTimeframeGuard:
     def test_explicit_mismatch_422_same_face_as_bridge(self, api_client):
         """显式异轴：端点 422 RESEARCH_TIMEFRAME_MISMATCH detail 四键
         （与桥入口同码同面——守卫单源双挂）。"""
-        _seed_market(api_client)
-        resp = api_client.post("/api/strategies/backtest", json={
-            "dna": _dna("4h"),
+        db = _seed_market(api_client)
+        # retire-legacy 后 REST backtest 端点退役——内联 DNA 面先落库
+        # 再经 sandbox 通道触发（桥内 ensure_timeframe_consistent 单点）
+        import json as _json
+        from core.persistence.repository.strategy import save_strategy
+        save_strategy(db, strategy_id="st_guard_ep",
+                      dna_json=_json.dumps(_dna("4h")),
+                      symbol="BTCUSDT", timeframe="4h")
+        resp = api_client.post("/api/research/backtest-sandbox", json={
+            "strategy_id": "st_guard_ep",
             "symbol": "BTCUSDT", "timeframe": "1d",
-            "dataset_id": "BTCUSDT_1d",
-            "init_cash": 100000, "fee": 0.001, "slippage": 0.0005,
+            "start": "2024-02-05", "end": "2024-02-20",
         })
         assert resp.status_code == 422, resp.text
         body = resp.json()
@@ -62,16 +69,19 @@ class TestBacktestEndpointTimeframeGuard:
         d = body["detail"]["detail"]
         assert d["request_timeframe"] == "1d"
         assert d["dna_execution_timeframe"] == "4h"
-        assert d["strategy_id"] == "inline"
         assert "基准周期" in d["need_hint"]
 
     def test_same_timeframe_not_blocked(self, api_client):
         """同轴对照：timeframe=dna 执行周期 → 正常回测不拦（200）。"""
-        _seed_market(api_client)
-        resp = api_client.post("/api/strategies/backtest", json={
-            "dna": _dna("4h"),
+        db = _seed_market(api_client)
+        import json as _json
+        from core.persistence.repository.strategy import save_strategy
+        save_strategy(db, strategy_id="st_guard_ep2",
+                      dna_json=_json.dumps(_dna("4h")),
+                      symbol="BTCUSDT", timeframe="4h")
+        resp = api_client.post("/api/research/backtest-sandbox", json={
+            "strategy_id": "st_guard_ep2",
             "symbol": "BTCUSDT", "timeframe": "4h",
-            "dataset_id": "BTCUSDT_4h",
-            "init_cash": 100000, "fee": 0.001, "slippage": 0.0005,
+            "start": "2024-02-05", "end": "2024-02-20",
         })
         assert resp.status_code == 200, resp.text

@@ -34,46 +34,50 @@ class TestEndToEndBothDirections:
 
     @pytest.mark.parametrize("direction", ["long", "short"])
     def test_u9a_full_chain_to_isolated(self, tmp_path, direction):
+        """（retire-legacy 后登记/翻译链退役——假设经 vr_factory 直插、
+        DNA 经 build_signal_genes 基因手构落库，回测链 sandbox 不变）。"""
         db, d = _env(tmp_path)
-        from core.analysis.hypothesis_service import register_hypothesis
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
         from core.analysis.validation_service import run_sandbox_backtest
-        from core.persistence.repository.strategy import get_strategy
+        from core.persistence.repository.strategy import save_strategy
+        from core.strategy.dna import (
+            ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA)
+        from tests.helpers.vr_factory import insert_hypothesis
 
-        hid = register_hypothesis(
+        when = [
+            {"subject": {"indicator": "SessionRange",
+                         "params": {"start_minute": 0, "end_minute": 420},
+                         "field": "session_high"},
+             "action": "gt", "target": 60000}]
+        then = [
+            {"subject": {"indicator": "RSI", "params": {"period": 30}},
+             "action": "gt", "target": 70}]
+        hid = insert_hypothesis(
             db,
-            conditions={
-                "when_conditions": [
-                    {"subject": {"indicator": "SessionRange",
-                                 "params": {"start_minute": 0,
-                                            "end_minute": 420},
-                                 "field": "session_high"},
-                     "action": "gt", "target": 60000}],
-                "then_conditions": [
-                    {"subject": {"indicator": "RSI",
-                                 "params": {"period": 30}},
-                     "action": "gt", "target": 70}],
-                "direction": direction},
+            conditions={"when_conditions": when, "then_conditions": then},
             statement="时段突破假设",
-            # data_ranges=考察期（6-7 月，进判定并集）——验证窗用
-            # 其后未消耗时段（考察/验证分离体制）
             data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1h",
                           "start": "2023-06-01T00:00:00Z",
                           "end": "2023-08-01T00:00:00Z"}],
-            strategy_params={"stop_loss": 0.05, "time_exit_utc": 600},
-        )["hypothesis_id"]
-        out = translate_hypothesis(db, hypothesis_id=hid, data_dir=d,
-                                   strategy_timeframe="1h")
-        assert out["status"] == "draft"
-        assert out["direction"] == direction
-        assert out["time_exit_utc"] == 600, "回执三键携带 time_exit"
-        genes_raw = get_strategy(db, out["strategy_id"])
+            strategy_params={"stop_loss": 0.05, "time_exit_utc": 600})
+        genes, _sources = build_signal_genes(
+            when, then, db, strategy_timeframe="1h")
+        sid = f"st_u9a_{direction}"
+        dna = StrategyDNA(
+            signal_genes=list(genes), logic_genes=LogicGenes(),
+            execution_genes=ExecutionGenes(timeframe="1h"),
+            risk_genes=RiskGenes(
+                direction=direction, stop_loss=0.05, time_exit_utc=600),
+            signal_sources=[{"type": "rule"}])
+        save_strategy(db, strategy_id=sid, dna_json=dna.to_json(),
+                      symbol="BTCUSDT", timeframe="1h", parent_ids=hid,
+                      status="draft")
         # 结构化 subject 以指标名+params 进 DNA（列名 session_high_0_420
         # 在求值时经 naming 解析——DNA 层锚定指标名）
-        assert '"SessionRange"' in genes_raw["dna_json"]
+        assert '"SessionRange"' in dna.to_json()
 
         result = run_sandbox_backtest(
-            db, d, strategy_id=out["strategy_id"], hypothesis_id=hid,
+            db, d, strategy_id=sid, hypothesis_id=hid,
             symbol="BTCUSDT", timeframe="1h",
             start="2023-08-01" if direction == "long" else "2023-09-01",
             end="2023-09-01" if direction == "long" else "2023-10-01")
@@ -142,8 +146,10 @@ class TestIllegalFamily:
     """X5=U9c：非法族四项全拒。"""
 
     def test_u9c_four_rejections(self, tmp_path):
-        from core.analysis.hypothesis_service import (
-            ResearchError, register_hypothesis)
+        """（retire-legacy 后登记面退役——②声明块值域/④域拒两项守护
+        对象消失；①③跨参数钩子拒绝经存活翻译入口同路径承载）。"""
+        from core.analysis.errors import ResearchError
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
         db, d = _env(tmp_path)
         rng = [{"symbol": "BTCUSDT", "timeframe": "1h",
                 "start": "2023-08-01T00:00:00Z",
@@ -170,27 +176,9 @@ class TestIllegalFamily:
                              "field": "pivot_high"},
                  "action": "gt", "target": 0}], "then": then},
         ]
-        # ①③ 登记拒
+        # ①③ 跨参数钩子拒绝（resolve_column_ref 单点——翻译链同路径）
         for c in (cases[0], cases[2]):
             with pytest.raises(ResearchError):
-                register_hypothesis(db, conditions={
-                    "when_conditions": c["when_conditions"] if "when_conditions" in c else c["when"],
-                    "then_conditions": then},
-                    statement="s", data_ranges=rng)
-        # ② 声明块拒
-        with pytest.raises(ResearchError):
-            register_hypothesis(db, conditions={
-                "when_conditions": cases[1]["when"],
-                "then_conditions": then},
-                statement="s2", data_ranges=rng,
-                strategy_params=cases[1]["params"])
-        # ④ 日线引用 hour_utc（域拒）
-        with pytest.raises(ResearchError):
-            register_hypothesis(db, conditions={
-                "when_conditions": [
-                    {"subject": "hour_utc", "action": "gt", "target": 12}],
-                "then_conditions": then},
-                statement="s3",
-                data_ranges=[{"symbol": "BTCUSDT", "timeframe": "1d",
-                              "start": "2023-08-01T00:00:00Z",
-                              "end": "2023-09-01T00:00:00Z"}])
+                build_signal_genes(
+                    c["when_conditions"] if "when_conditions" in c
+                    else c["when"], then, db, strategy_timeframe="1h")

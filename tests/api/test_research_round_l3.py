@@ -114,17 +114,17 @@ class TestResearchRoundDoD:
         assert p4["verdict"] in ("plateau", "indeterminate", "spike",
                                  "unsupported")
 
-        # ⑤ R4 闭环（retire-legacy 后收缩）：登记假设（union-balance
-        # 端点与隔离验证已退役——函数级守护归任务 15 冻结锚，此处
-        # 留登记链可达性）
-        from core.analysis.hypothesis_service import register_hypothesis
-        hyp = register_hypothesis(
+        # ⑤ R4 闭环（retire-legacy 后收缩）：假设经 SQL 直插落位
+        # （union-balance 端点与隔离验证已退役——函数级守护归任务 15
+        # 冻结锚；登记链可达性断言改为行在场）
+        from tests.helpers.vr_factory import insert_hypothesis
+        hyp = insert_hypothesis(
             db, conditions={"when_conditions": conds,
                             "then_conditions": [dict(conds[0])]},
             statement="L3 研究轮假设",
             data_ranges=[{"symbol": SYMBOL, "timeframe": "4h",
                           "start": "2023-02-01T00:00:00Z",
-                          "end": "2023-03-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+                          "end": "2023-03-01T00:00:00Z"}], strategy_params={"stop_loss": 0.05})
         assert hyp
 
         # ⑥ 留痕全貌：四模板留痕三型（analysis×2 + analysis×1 + exit_sweep

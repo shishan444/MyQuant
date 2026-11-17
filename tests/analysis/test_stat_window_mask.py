@@ -179,7 +179,7 @@ class TestCoreInvariants:
 
     def test_hash_json_注入区分与规模无关(self) -> None:
         """属性：不同输入不同指纹（区分性）；嵌套深度不影响稳定性。"""
-        from core.analysis.hypothesis_service import hash_json
+        from core.analysis.plugin_service import hash_json
         base = hash_json({"a": 1})
         assert hash_json({"a": 2}) != base
         assert hash_json({"b": 1}) != base

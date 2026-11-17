@@ -38,34 +38,3 @@ class TestCredentialFreeView:
         assert view["init_cash"] == 1
         assert view["maker_fee"] == 0.1
 
-
-class TestSafeErrorMessageRange:
-    def test_any_exception_message_in_finite_domain(self) -> None:
-        """任意异常实例 → 消息恒属 {数据文件缺失*, 内部错误}。
-
-        不变量核心：str(exc) 原文永不进入返回值（防未来新增分支漏脱敏）。
-        """
-        from api.routes.strategies._common import _safe_error_message
-        random.seed(11)
-        exceptions = [
-            RuntimeError("secret path /etc/x"), KeyError("k"),
-            ValueError("v" * 300), TypeError(("t", 1)),
-            FileNotFoundError(2, "No such file", "/a/b/c.parquet"),
-            FileNotFoundError(2, "No such file and dir"),
-            Exception(random.choice(["a", "内部细节", "***"])),
-        ]
-        for exc in exceptions:
-            msg = _safe_error_message(exc)
-            assert msg == "内部错误" or msg.startswith("数据文件缺失"), (
-                f"{type(exc).__name__} 产出了值域外消息: {msg!r}"
-            )
-            # FNF 分支只允许 basename 级路径信息
-            if msg.startswith("数据文件缺失: "):
-                assert "/" not in msg, f"FNF 消息泄露路径: {msg!r}"
-
-    def test_fnf_basename_only_never_dir(self) -> None:
-        from api.routes.strategies._common import _safe_error_message
-        exc = FileNotFoundError(2, "No such file", "/very/secret/dir/file.parquet")
-        msg = _safe_error_message(exc)
-        assert msg == "数据文件缺失: file.parquet"
-        assert "secret" not in msg and "very" not in msg

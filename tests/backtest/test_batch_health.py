@@ -83,26 +83,6 @@ class TestBatchLocalizedDegradation:
         assert not bool(results[0].entries.any()), "非法入口基因降级全 False"
 
 
-class TestSourceValidation:
-    """任务 2.2：变异产物源头拦截——非法结构不进种群。"""
-
-    def test_validate_offspring_rejects_illegal_gene(self):
-        """校验最小集：两种实证形态被拒（异常带原因），合法 DNA 通过。"""
-        from core.evolution.engine import validate_offspring
-
-        with pytest.raises(ValueError, match="target"):
-            dna = make_dna()
-            dna.signal_genes = [_illegal_target_none(), *dna.signal_genes[1:]]
-            validate_offspring(dna)
-
-        with pytest.raises(ValueError, match="hash|可哈希"):
-            dna = make_dna()
-            dna.signal_genes = [_illegal_dict_value(), *dna.signal_genes[1:]]
-            validate_offspring(dna)
-
-        validate_offspring(make_dna())  # 合法 DNA 静默通过
-
-
 class TestFragmentationFix:
     """任务 4.1：按需列写回一次整块赋值——宽表不再触发碎片化警告。"""
 

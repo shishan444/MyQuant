@@ -30,7 +30,7 @@ pytestmark = [pytest.mark.unit]
 
 from core.analysis.errors import ResearchError
 from core.analysis.validation_service import (
-    _load_strategy_dna, random_window_test, run_sandbox_backtest,
+    _load_strategy_dna, run_sandbox_backtest,
 )
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository.strategy import save_strategy
@@ -174,18 +174,5 @@ class TestEntriesNotBypassed:
                 db, data_dir, strategy_id="st-gate-sb",
                 symbol="BTCUSDT", timeframe="4h",
                 start="2024-02-05", end="2024-03-01")
-
-        assert ei.value.code == "RESEARCH_DNA_INVALID"
-
-    def test_random_window_entry_rejects_before_sampling(self, env):
-        """random_window_test：畸形行 → 同码拒绝（窗口抽样前拦截）。"""
-        db, data_dir = env
-        _seed_bad_row(db, "st-gate-rw", [{"type": "rule"}, "x"])
-
-        with pytest.raises(ResearchError) as ei:
-            random_window_test(
-                db, data_dir, strategy_id="st-gate-rw",
-                symbol="BTCUSDT", timeframe="4h",
-                data_start="2024-01-01", data_end="2024-06-01")
 
         assert ei.value.code == "RESEARCH_DNA_INVALID"

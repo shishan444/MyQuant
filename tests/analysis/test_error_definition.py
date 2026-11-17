@@ -1,8 +1,8 @@
 """ResearchError 单一定义与轻量 import 链（CARD-02 回归锚）。
 
 错误类型唯一权威定义在 core/analysis/errors.py（零第三方依赖零域内
-反向依赖），hypothesis_service 模块头 import re-export 同一对象——
-全域 38+ 文件 ``from ...hypothesis_service import ResearchError`` 面
+反向依赖），plugin_service 模块头 import re-export 同一对象——
+全域 ``from ...plugin_service import ResearchError`` 面
 零适配的前提是身份同一（is 同一类对象，except/isinstance 跨路径
 成立）；轻消费方（event_policy / signal_assembly）import 不拖
 sqlalchemy / core.persistence 重链。
@@ -40,8 +40,8 @@ class TestSingleDefinition:
 
     def test_re_export_身份同一(self) -> None:
         from core.analysis import errors
-        from core.analysis import hypothesis_service as hs
-        assert hs.ResearchError is errors.ResearchError
+        from core.analysis import plugin_service as ps
+        assert ps.ResearchError is errors.ResearchError
 
     def test_四属性语义(self) -> None:
         from core.analysis.errors import ResearchError
@@ -53,9 +53,9 @@ class TestSingleDefinition:
     def test_跨路径捕获同身份(self) -> None:
         """event_policy（errors 直取方）抛 → hypothesis_service 路径的
         except 同身份捕获（全域 38+ import 面零适配的行为证据）。"""
-        from core.analysis import hypothesis_service as hs
+        from core.analysis import plugin_service as ps
         from core.analysis.event_policy import validate_policy
-        with pytest.raises(hs.ResearchError) as ei:
+        with pytest.raises(ps.ResearchError) as ei:
             validate_policy({"mode": "bogus"})
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
         assert ei.value.status == 422

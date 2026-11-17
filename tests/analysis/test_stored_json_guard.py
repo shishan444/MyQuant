@@ -24,7 +24,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.analysis.errors import ResearchError
-from core.analysis.hypothesis_service import register_hypothesis
+from tests.helpers.vr_factory import insert_hypothesis
 from core.analysis.signal_assembly import assemble_signal_set
 from core.persistence.db_ext import init_db_ext
 from core.persistence.repository import research as rr
@@ -61,7 +61,7 @@ def data_dir(tmp_path: Path) -> Path:
 
 
 def _register_hyp(db) -> str:
-    return register_hypothesis(
+    return insert_hypothesis(
         db, conditions={
             "when_conditions": [
                 {"subject": {"indicator": "RSI", "params": {"period": 14}},
@@ -72,7 +72,7 @@ def _register_hyp(db) -> str:
         statement="s", data_ranges=[{"symbol": "BTCUSDT", "timeframe": "4h",
                                      "start": "2024-05-01T00:00:00Z",
                                      "end": "2024-06-01T00:00:00Z"}]
-    , strategy_params={"stop_loss": 0.05})["hypothesis_id"]
+    , strategy_params={"stop_loss": 0.05})
 
 
 def _save_strategy(db, sid) -> None:
@@ -88,39 +88,6 @@ def _save_strategy(db, sid) -> None:
         risk_genes=RiskGenes())
     save_strategy(db, strategy_id=sid, dna_json=dna.to_json(),
                   symbol="BTCUSDT", timeframe="4h")
-
-
-class TestHypothesisJsonCorrupt:
-    """假设 conditions / data_ranges 损坏 → 翻译结构化拒绝。"""
-
-    def _translate(self, db, hid):
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        return translate_hypothesis(db, hypothesis_id=hid)
-
-    @pytest.mark.parametrize("column", ["conditions", "data_ranges"])
-    def test_corrupt_column_rejected(self, db, column):
-        """逐列畸形：RESEARCH_STORED_DATA_INVALID，message 点名
-        research_hypotheses.<列>，detail 带 hypothesis_id 与 parse_error
-        （修复前：裸 JSONDecodeError 炸 500）。"""
-        hid = _register_hyp(db)
-        with sqlite3.connect(str(db)) as conn:
-            conn.execute(
-                f"UPDATE research_hypotheses SET {column} = ? "
-                "WHERE hypothesis_id = ?", (BROKEN_JSON, hid))
-            conn.commit()
-        with pytest.raises(ResearchError) as ei:
-            self._translate(db, hid)
-        assert ei.value.code == "RESEARCH_STORED_DATA_INVALID"
-        assert ei.value.status == 422
-        assert f"research_hypotheses.{column}" in ei.value.message
-        assert ei.value.detail["hypothesis_id"] == hid
-        assert "parse_error" in ei.value.detail
-
-    def test_intact_hypothesis_still_translates(self, db):
-        """完好假设翻译不受影响（守卫不误伤正常链路）。"""
-        hid = _register_hyp(db)
-        out = self._translate(db, hid)
-        assert out["status"] == "draft"
 
 
 class TestModelPluginConfigCorrupt:

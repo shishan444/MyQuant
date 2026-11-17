@@ -43,6 +43,24 @@ _CONDS = {
 _RANGES = [{"symbol": "BTCUSDT", "timeframe": "4h",
             "start": "2024-01-01T00:00:00Z", "end": "2024-02-01T00:00:00Z"}]
 
+
+def _research_dna_json() -> str:
+    """研究链构造用最小合法 DNA（rule 源单周期）。"""
+    from core.strategy.dna import (
+        ExecutionGenes, LogicGenes, RiskGenes, SignalGene, SignalRole,
+        StrategyDNA)
+    return StrategyDNA(
+        signal_genes=[
+            SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                       "rsi_14", {"type": "lt", "threshold": 35}),
+            SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                       "rsi_14", {"type": "gt", "threshold": 65}),
+        ],
+        logic_genes=LogicGenes(),
+        execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
+        risk_genes=RiskGenes(),
+        signal_sources=[{"type": "rule"}]).to_json()
+
 # B1 合法边用例表：(from, to, trigger, evidence)——边集与
 # TRANSITION_MATRIX 互锁（表错/矩阵错都红）；trigger 按边真实分派
 _LEGAL_EDGE_TABLE = [
@@ -286,45 +304,51 @@ class TestRealTriggerPaths:
     def test_draft_to_active_via_research_promotion(self, research_db):
         """3.1 真实链路：假设 supported 定证→谱系 draft 转正（事件
         trigger=credential）。"""
-        from core.analysis.hypothesis_service import (
-            register_hypothesis, transition_hypothesis)
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        hid = register_hypothesis(
+        from core.strategy.lifecycle.service import transit
+        from core.persistence.repository.strategy import save_strategy
+        from tests.helpers.vr_factory import (
+            insert_hypothesis, insert_validation_record)
+        hid = insert_hypothesis(
             research_db, conditions=_CONDS, statement="s",
-            data_ranges=_RANGES, strategy_params={"stop_loss": 0.05})["hypothesis_id"]
-        sid = translate_hypothesis(
-            research_db, hypothesis_id=hid)["strategy_id"]
-        from tests.helpers.vr_factory import insert_validation_record
+            data_ranges=_RANGES, strategy_params={"stop_loss": 0.05})
+        sid = "st_rl_promoted"
+        save_strategy(
+            research_db, strategy_id=sid, dna_json=_research_dna_json(),
+            symbol="BTCUSDT", timeframe="4h", parent_ids=hid,
+            status="draft")
         insert_validation_record(
             research_db, record_id="rec_rl_pass", hypothesis_id=hid,
             strategy_id=sid, level="isolated_backtest", params={},
             result=None, verdict="pass", range_hash="rh_rl_pass")
-        out = transition_hypothesis(
-            research_db, hid, target_status="supported",
-            evidence_ref="rec_rl_pass")
-        assert out["promoted"] is True
+        out = transit(
+            research_db, sid, target="active", trigger="credential",
+            evidence={"record_id": "rec_rl_pass", "hypothesis_id": hid})
+        assert out["migrated"] is True
         assert get_strategy(research_db, sid)["status"] == "active"
         assert _events(research_db, sid) == [("draft", "active", "credential")]
 
     def test_refutation_via_research_chain(self, research_db):
         """3.2 真实链路：假设 refuted 定证→谱系 draft 归档（事件
         trigger=refute）。"""
-        from core.analysis.hypothesis_service import (
-            register_hypothesis, transition_hypothesis)
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        hid = register_hypothesis(
+        from core.strategy.lifecycle.service import transit
+        from core.persistence.repository.strategy import save_strategy
+        from tests.helpers.vr_factory import (
+            insert_hypothesis, insert_validation_record)
+        hid = insert_hypothesis(
             research_db, conditions=_CONDS, statement="s",
-            data_ranges=_RANGES, strategy_params={"stop_loss": 0.05})["hypothesis_id"]
-        sid = translate_hypothesis(
-            research_db, hypothesis_id=hid)["strategy_id"]
-        from tests.helpers.vr_factory import insert_validation_record
+            data_ranges=_RANGES, strategy_params={"stop_loss": 0.05})
+        sid = "st_rl_refuted"
+        save_strategy(
+            research_db, strategy_id=sid, dna_json=_research_dna_json(),
+            symbol="BTCUSDT", timeframe="4h", parent_ids=hid,
+            status="draft")
         insert_validation_record(
             research_db, record_id="rec_rl_fail", hypothesis_id=hid,
             strategy_id=sid, level="isolated_backtest", params={},
             result=None, verdict="fail", range_hash="rh_rl_fail")
-        transition_hypothesis(
-            research_db, hid, target_status="refuted",
-            evidence_ref="rec_rl_fail")
+        transit(
+            research_db, sid, target="archived", trigger="refute",
+            evidence={"record_id": "rec_rl_fail", "hypothesis_id": hid})
         assert get_strategy(research_db, sid)["status"] == "archived"
         assert _events(research_db, sid) == [("draft", "archived", "refute")]
 

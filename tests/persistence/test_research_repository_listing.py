@@ -15,7 +15,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-from sqlalchemy import insert, select
+from sqlalchemy import insert, text, select
 
 from core.persistence.orm.models import AnalysisTask, SignalRegistryEntry, Strategy
 from core.persistence.repository import research as rr
@@ -33,16 +33,23 @@ def db_path(tmp_path: Path) -> Path:
     return db
 
 
-def _hyp_kwargs(hypothesis_id: str = "hyp_1", chash: str = "ch1",
-                rhash: str = "rh1") -> dict:
-    return dict(
-        hypothesis_id=hypothesis_id,
-        conditions='{"when_conditions": []}',
-        conditions_hash=chash,
-        statement="特征网假设",
-        data_ranges='[{"symbol": "BTCUSDT", "timeframe": "1h", "start": "2024-01-01", "end": "2024-06-01"}]',
-        ranges_hash=rhash,
-    )
+def _insert_hyp(db_path: Path, hypothesis_id: str = "hyp_1",
+                status: str = "active") -> None:
+    """假设行 SQL 直插（retire-legacy 后登记/迁移写通道退役——
+    读通道测试的种子构造改 vr_factory；终态行直接指定 status）。"""
+    from tests.helpers.vr_factory import insert_hypothesis
+    insert_hypothesis(db_path, hypothesis_id=hypothesis_id, status=status)
+
+
+def _set_terminal(db_path: Path, hypothesis_id: str,
+                  status: str = "refuted") -> None:
+    """终态直改（读通道过滤面构造——不走已退役的迁移服务）。"""
+    with _engine_for(db_path).begin() as conn:
+        conn.execute(
+            text("UPDATE research_hypotheses SET status = :s,"
+                 " terminal_ref = 'rec_x', updated_at = '2026-10-02T00:00:00'"
+                 " WHERE hypothesis_id = :i"),
+            {"s": status, "i": hypothesis_id})
 
 
 def _insert_strategy(db_path: Path, strategy_id: str, parent_ids: str,
@@ -70,131 +77,14 @@ def _promotion_logs(db_path: Path, hypothesis_id: str) -> list[dict]:
             if e["entry_type"] == "promotion"]
 
 
-class TestTransitionWithPromotion:
-    """promote 组合函数四分支（调用方 hypothesis_service 的证据闸门地基）。"""
-
-    def test_non_active_returns_zero_and_promotes_nothing(self, db_path: Path) -> None:
-        """非 active（rows=0）时 promote 分支整体短路——无 promotion 日志。"""
-        rr.save_hypothesis_with_log(db_path, **_hyp_kwargs())
-        rr.transition_hypothesis_with_promotion(
-            db_path, "hyp_1", target_status="refuted", terminal_ref="rec_1")
-
-        out = rr.transition_hypothesis_with_promotion(
-            db_path, "hyp_1", target_status="supported",
-            terminal_ref="rec_2", promote=True)
-
-        assert out["rows"] == 0 and out["promoted"] is False
-        assert out["promoted_strategy_id"] is None and out["promotion_note"] is None
-        assert _promotion_logs(db_path, "hyp_1") == [], "rows=0 路径不应落 promotion 日志"
-
-    def test_promote_without_draft_logs_skip(self, db_path: Path) -> None:
-        """谱系无 draft：假设照常定证，落 promotion 日志记跳过。"""
-        rr.save_hypothesis_with_log(db_path, **_hyp_kwargs())
-        out = rr.transition_hypothesis_with_promotion(
-            db_path, "hyp_1", target_status="supported",
-            terminal_ref="rec_1", promote=True)
-
-        assert out["rows"] == 1 and out["promoted"] is False
-        assert "谱系无 draft" in out["promotion_note"]
-        logs = _promotion_logs(db_path, "hyp_1")
-        assert len(logs) == 1 and logs[0]["ref_id"] == "rec_1"
-
-    def test_draft_without_own_pass_kept_draft(self, db_path: Path) -> None:
-        """draft 无自身 pass：保持 draft（证据绑定未满足），note 点名。"""
-        rr.save_hypothesis_with_log(db_path, **_hyp_kwargs())
-        _insert_strategy(db_path, "st_draft", parent_ids="hyp_1")
-
-        out = rr.transition_hypothesis_with_promotion(
-            db_path, "hyp_1", target_status="supported",
-            terminal_ref="rec_1", promote=True)
-
-        assert out["rows"] == 1 and out["promoted"] is False
-        assert "st_draft" in out["promotion_note"] and "保持 draft" in out["promotion_note"]
-        assert any("no own pass record" in e["summary"]
-                   for e in _promotion_logs(db_path, "hyp_1"))
-
-    def test_draft_with_own_pass_promoted_active(self, db_path: Path) -> None:
-        """draft 挂自身 pass 记录：同事务转正（draft→active）。"""
-        rr.save_hypothesis_with_log(db_path, **_hyp_kwargs())
-        _insert_strategy(db_path, "st_draft", parent_ids="hyp_1")
-        _save_pass(db_path, "hyp_1", "st_draft", "rec_pass")
-
-        out = rr.transition_hypothesis_with_promotion(
-            db_path, "hyp_1", target_status="supported",
-            terminal_ref="rec_pass", promote=True)
-
-        assert out["rows"] == 1 and out["promoted"] is True
-        assert out["promoted_strategy_id"] == "st_draft"
-        with _engine_for(db_path).connect() as conn:
-            status = conn.execute(
-                select(Strategy.status).where(
-                    Strategy.strategy_id == "st_draft")).scalar_one()
-        assert status == "active", "有自身 pass 的 draft 应转正为 active"
-        assert any("promoted -> active" in e["summary"]
-                   for e in _promotion_logs(db_path, "hyp_1"))
-
-    def test_pass_on_other_strategy_does_not_promote(self, db_path: Path) -> None:
-        """pass 挂在同假设的其他策略上（调包场景）：draft 不转正。"""
-        rr.save_hypothesis_with_log(db_path, **_hyp_kwargs())
-        _insert_strategy(db_path, "st_draft", parent_ids="hyp_1")
-        _insert_strategy(db_path, "st_other", parent_ids="hyp_1", status="active")
-        _save_pass(db_path, "hyp_1", "st_other", "rec_other")
-
-        out = rr.transition_hypothesis_with_promotion(
-            db_path, "hyp_1", target_status="supported",
-            terminal_ref="rec_other", promote=True)
-
-        assert out["promoted"] is False, "他人 pass 不得转正未验证的 draft"
-        with _engine_for(db_path).connect() as conn:
-            statuses = dict(conn.execute(
-                select(Strategy.strategy_id, Strategy.status)).all())
-        assert statuses["st_draft"] == "draft"
-
-    def test_mixed_drafts_promote_only_evidenced(self, db_path: Path) -> None:
-        """多 draft 混合：仅转正有自身 pass 的，其余保持并记日志。"""
-        rr.save_hypothesis_with_log(db_path, **_hyp_kwargs())
-        _insert_strategy(db_path, "st_a", parent_ids="hyp_1")
-        _insert_strategy(db_path, "st_b", parent_ids="hyp_1")
-        _save_pass(db_path, "hyp_1", "st_a", "rec_a")
-
-        out = rr.transition_hypothesis_with_promotion(
-            db_path, "hyp_1", target_status="supported",
-            terminal_ref="rec_a", promote=True)
-
-        assert out["promoted"] is True and out["promoted_strategy_id"] == "st_a"
-        with _engine_for(db_path).connect() as conn:
-            statuses = dict(conn.execute(
-                select(Strategy.strategy_id, Strategy.status)).all())
-        assert statuses["st_a"] == "active" and statuses["st_b"] == "draft"
-
-
-class TestSaveHypothesisScreenUse:
-    """screen_use 谱系分支：登记引用扫描候选时同事务追加第三条 insert。"""
-
-    def test_screen_use_writes_lineage_log(self, db_path: Path) -> None:
-        rr.save_hypothesis_with_log(
-            db_path, **_hyp_kwargs(),
-            screen_use={"ref_id": "ant_screen_1",
-                        "data_ranges": '[{"symbol": "BTCUSDT", "timeframe": "1h", "start": "2024-01-01", "end": "2024-02-01"}]'})
-
-        logs = rr.list_research_log(db_path, hypothesis_id="hyp_1")
-        types = [e["entry_type"] for e in logs]
-        assert types.count("register") == 1 and types.count("screen_use") == 1
-        screen = next(e for e in logs if e["entry_type"] == "screen_use")
-        assert screen["ref_id"] == "ant_screen_1"
-        assert "2024-02-01" in screen["data_ranges"]
-
-
 class TestListHypotheses:
     """status 过滤 + offset/limit 分页边界。"""
 
     @pytest.fixture(autouse=True)
     def _three_hypotheses(self, db_path: Path) -> None:
         for i in range(3):
-            rr.save_hypothesis_with_log(db_path, **_hyp_kwargs(
-                hypothesis_id=f"hyp_{i}", rhash=f"rh_{i}"))
-        rr.transition_hypothesis_with_promotion(
-            db_path, "hyp_2", target_status="refuted", terminal_ref="rec_x")
+            _insert_hyp(db_path, hypothesis_id=f"hyp_{i}")
+        _set_terminal(db_path, "hyp_2")
 
     def test_status_filter(self, db_path: Path) -> None:
         active = rr.list_hypotheses(db_path, status="active")
@@ -223,9 +113,14 @@ class TestListResearchLog:
 
     @pytest.fixture(autouse=True)
     def _logs(self, db_path: Path) -> None:
-        rr.save_hypothesis_with_log(db_path, **_hyp_kwargs(chash="c", rhash="r1"))
-        rr.save_hypothesis_with_log(
-            db_path, **_hyp_kwargs(hypothesis_id="hyp_2", chash="c", rhash="r2"))
+        _insert_hyp(db_path, "hyp_1")
+        _insert_hyp(db_path, "hyp_2")
+        # 登记日志行（读通道过滤计数需要——append_research_log 存活单点；
+        # 原登记面自动双写改手动两行对齐既有计数锚）
+        rr.append_research_log(db_path, hypothesis_id="hyp_1",
+                               entry_type="register", summary="登记")
+        rr.append_research_log(db_path, hypothesis_id="hyp_2",
+                               entry_type="register", summary="登记")
         rr.append_research_log(db_path, hypothesis_id="hyp_1",
                                entry_type="adhoc", summary="快照留痕")
         rr.append_research_log(db_path, hypothesis_id=None,
@@ -262,9 +157,14 @@ class TestListValidationRecords:
 
     @pytest.fixture(autouse=True)
     def _records(self, db_path: Path) -> None:
-        rr.save_hypothesis_with_log(db_path, **_hyp_kwargs(chash="c", rhash="r1"))
-        rr.save_hypothesis_with_log(
-            db_path, **_hyp_kwargs(hypothesis_id="hyp_2", chash="c", rhash="r2"))
+        _insert_hyp(db_path, "hyp_1")
+        _insert_hyp(db_path, "hyp_2")
+        # 登记日志行（读通道过滤计数需要——append_research_log 存活单点；
+        # 原登记面自动双写改手动两行对齐既有计数锚）
+        rr.append_research_log(db_path, hypothesis_id="hyp_1",
+                               entry_type="register", summary="登记")
+        rr.append_research_log(db_path, hypothesis_id="hyp_2",
+                               entry_type="register", summary="登记")
         from tests.helpers.vr_factory import insert_validation_record
         for i, (hyp, st) in enumerate([("hyp_1", "st_a"), ("hyp_1", "st_b"),
                                        ("hyp_2", "st_a")]):
@@ -293,26 +193,6 @@ class TestListValidationRecords:
         assert len(rr.list_validation_records(db_path, limit=2)) == 2
         assert len(rr.list_validation_records(db_path, offset=2, limit=5)) == 1
         assert rr.list_validation_records(db_path, offset=99) == []
-
-
-class TestFindValidationIdentityNone:
-    """strategy_id=None 的幂等键查询（adhoc 验证通道）。"""
-
-    def test_none_strategy_matches_none_record(self, db_path: Path) -> None:
-        rr.save_hypothesis_with_log(db_path, **_hyp_kwargs())
-        from tests.helpers.vr_factory import insert_validation_record
-        insert_validation_record(
-            db_path, record_id="rec_none", hypothesis_id="hyp_1",
-            strategy_id=None, level="random_window", params={},
-            result=None, verdict="inconclusive", range_hash="rk_none")
-
-        found = rr.find_validation_by_identity(db_path, "hyp_1", None, "rk_none",
-                                            level="random_window")
-        assert found is not None and found["record_id"] == "rec_none"
-        assert found["verdict"] == "inconclusive"
-        # strategy_id 传值不命中 None 记录（幂等键三元组精确匹配）
-        assert rr.find_validation_by_identity(db_path, "hyp_1", "st_a", "rk_none",
-                                            level="random_window") is None
 
 
 class TestSignalRegistryVisibility:
@@ -407,24 +287,3 @@ class TestListPluginsRepository:
         rows = rr.list_plugins(db_path, source="formula", name="same")
         assert [r["version"] for r in rows] == [1, 2]
 
-
-
-class TestParseParentIds:
-    """parse_parent_ids 双形制归一直测（review-042 CARD-06 单点化产物
-    ——此前仅经谱系查询/档案 lineage 两消费方间接锚定）。"""
-
-    def test_json_array_form(self) -> None:
-        assert rr.parse_parent_ids('["hyp_a", "hyp_b"]') == ["hyp_a", "hyp_b"]
-
-    def test_bare_string_form(self) -> None:
-        # 裸串（翻译器落库形制——单 id 串非 JSON 数组）当单 id 处理
-        assert rr.parse_parent_ids("hyp_a") == ["hyp_a"]
-
-    def test_empty_and_none_return_empty_list(self) -> None:
-        assert rr.parse_parent_ids(None) == []
-        assert rr.parse_parent_ids("") == []
-
-    def test_single_value_json_wrapped(self) -> None:
-        # 合法 JSON 非列表（单值形）包装为单元素列表
-        assert rr.parse_parent_ids("123") == ["123"]
-        assert rr.parse_parent_ids('["only"]') == ["only"]

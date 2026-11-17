@@ -136,7 +136,7 @@ _EXPECTED_CONSUMERS = {
     "api/app.py": ("import", "call"),  # 模块级 import + 全局 handler 调用
     "api/routes/research/common.py": ("def",),  # 唯一定义
     "api/routes/research/plugins.py": ("import", "call"),  # 模块级 import + 保留块调用
-    "api/routes/research/hypothesis_cards.py": ("import", "call"),  # 函数内 import + 主动构造转换
+    # hypothesis_cards.py 消费点随 cards 端点族退役移除（retire-legacy）
 }
 
 

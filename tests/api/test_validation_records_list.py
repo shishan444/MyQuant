@@ -43,7 +43,6 @@ def client(tmp_path: Path):
     from core.persistence.db_ext import init_db_ext
     from core.analysis.executor import ensure_research_tables
     from api.app import create_app
-    from core.analysis.hypothesis_service import register_hypothesis
     db = tmp_path / "q.db"
     init_db_ext(db)
     ensure_research_tables(db)
@@ -52,7 +51,8 @@ def client(tmp_path: Path):
     from core.persistence.repository.strategy import save_strategy
     save_strategy(db, strategy_id="st_wb", dna_json="{}", symbol="BTCUSDT",
                   timeframe="4h", gene_signature="sig_wb_test")
-    register_hypothesis(
+    from tests.helpers.vr_factory import insert_hypothesis
+    insert_hypothesis(
         db,
         conditions={"when_conditions": [
             {"subject": {"indicator": "RSI", "params": {"period": 14}},

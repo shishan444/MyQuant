@@ -777,27 +777,24 @@ class TestWarmupSourceParity:
     等价引用集（指标名+插件列），计算已收敛到同段代码。"""
 
     def _register_and_translate(self, db_path, when):
-        from core.analysis.hypothesis_service import register_hypothesis
-        from core.analysis.hypothesis_to_strategy import translate_hypothesis
-        from core.persistence.repository.strategy import get_strategy
-        from core.strategy.dna import StrategyDNA
+        """等价 DNA 构造（retire-legacy 后登记/翻译链退役——条件组经
+        build_signal_genes 产基因后手构 StrategyDNA，warmup 同源判据
+        的消费面不变）。"""
+        from core.analysis.hypothesis_to_strategy import build_signal_genes
+        from core.strategy.dna import (
+            ExecutionGenes, RiskGenes, StrategyDNA)
 
-        out = register_hypothesis(
-            db_path,
-            conditions={"when_conditions": when,
-                        "then_conditions": [
-                            {"subject": {"indicator": "RSI",
-                                         "params": {"period": 14},
-                                         "field": "rsi"},
-                             "action": "gt", "target": 0}]},
-            statement="warmup 同源测试假设",
-            data_ranges=[{"symbol": SYMBOL, "timeframe": "4h",
-                          "start": "2024-01-01T00:00:00+00:00",
-                          "end": "2024-02-01T00:00:00+00:00"}], strategy_params={"stop_loss": 0.05})
-        tr = translate_hypothesis(db_path, hypothesis_id=out["hypothesis_id"],
-                                  data_dir=self._tdir(db_path))
-        row = get_strategy(db_path, tr["strategy_id"])
-        return StrategyDNA.from_json(row["dna_json"])
+        genes, sources = build_signal_genes(
+            when,
+            [{"subject": {"indicator": "RSI", "params": {"period": 14},
+                          "field": "rsi"}, "action": "gt", "target": 0}],
+            db_path, strategy_timeframe="4h")
+        return StrategyDNA(
+            signal_genes=list(genes),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+            risk_genes=RiskGenes(),
+            signal_sources=[{"type": "rule"},
+                            *(dict(t) for t in (sources or []))])
 
     @staticmethod
     def _tdir(db_path) -> Path:
