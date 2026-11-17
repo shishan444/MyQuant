@@ -65,23 +65,55 @@ def _grid(stops, tps):
                        "take_profits": list(tps)}]}
 
 
-def _fake_bridge(states_by_pos):
-    """受控 metrics 注入（判定轨道）——按 (stop, tp) 序偶给出
-    (total_trades, trade_returns) 映射的假回测桥。"""
-    def _fake(db_path, data_dir, dna, symbol, timeframe, start, end,
-              warmup_bars, **kw):
-        key = (round(dna.risk_genes.stop_loss, 6),
-               round(dna.risk_genes.take_profit, 6))
-        trades, rets = states_by_pos[key]
-        metrics = {"total_return": float(sum(rets)), "sharpe_ratio": 1.0,
-                   "max_drawdown": 0.1,
-                   "win_rate": (sum(1 for r in rets if r > 0) / len(rets)
-                                if rets else None),
-                   "total_trades": trades, "liquidated": False,
-                   "alpha": 0.0, "market_annual_return": 0.0,
-                   "benchmark_return": None, "excess_return": None}
-        return metrics, list(rets), 200, 500
-    return _fake
+def _fake_replay(states_by_pos):
+    """受控注入（判定轨道——add-replay-backtest-mcp 后引擎面）：
+    假 ReplayRunner.run_from_dna + 假 replay_group_metrics 两件套，
+    按 (stop, tp) 序偶给出 (total_trades, trade_returns) 映射；组键
+    经 FakeResult 侧信道（stop_loss/take_profit 属性）传递。"""
+
+    class _FakeResult:
+        def __init__(self, key, trades):
+            self.task_id = f"fake_{key}"
+            self.strategy_id = "memory-fake"
+            self.symbol = "BTCUSDT"
+            self.timeframe = "4h"
+            self.start, self.end = "", ""
+            self.status = "completed"
+            self.stop_reason = None
+            self.bars_processed = 0
+            self.last_bar_time = None
+            self.win_count = 0
+            self.loss_count = 0
+            self.total_trades = trades
+            self.total_pnl = 0.0
+            self.final_balance = 0.0
+            self.final_equity = 0.0
+            self.halted_at = None
+            self.first_met_at = None
+            self.stop_loss, self.take_profit = key
+
+    class _FakeRunner:
+        def __init__(self, data_dir):
+            pass
+
+        def run_from_dna(self, db_path, dna, start, end, **kw):
+            key = (round(dna.risk_genes.stop_loss, 6),
+                   round(dna.risk_genes.take_profit, 6))
+            trades, rets = states_by_pos[key]
+            res = _FakeResult(key, trades)
+            res._rets = list(rets)
+            return res
+
+    def _fake_metrics(db_path, result):
+        rets = getattr(result, "_rets", [])
+        metrics = {
+            "win_rate": (sum(1 for r in rets if r > 0) / len(rets)
+                         if rets else 0.0),
+            "max_drawdown": 0.1,
+            "total_trades": result.total_trades}
+        return metrics, list(rets)
+
+    return _FakeRunner, _fake_metrics
 
 
 class TestValidationOrder:
@@ -285,6 +317,11 @@ class TestExecutionAndGates:
         from core.strategy.dna import (ExecutionGenes, LogicGenes,
                                        RiskGenes, StrategyDNA)
         genes, _ = build_signal_genes([_COND], [], db)
+        from core.strategy.dna import SignalGene, SignalRole
+
+        genes = genes + [SignalGene(  # 永假 exit（结构合法化——同模板）
+            "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+            "rsi", {"type": "gt", "threshold": 1e9})]
         dna = StrategyDNA(
             signal_genes=genes, logic_genes=LogicGenes(),
             execution_genes=ExecutionGenes(symbol=SYMBOL, timeframe="4h"),
@@ -292,23 +329,33 @@ class TestExecutionAndGates:
                                  take_profit=r0["take_profit"],
                                  direction="long"),
             signal_sources=[{"type": "rule"}])
-        metrics, rets, _, _ = bb.run_backtest_on_range(
-            db, d, dna, SYMBOL, "4h", RNG_DEF["start"], RNG_DEF["end"],
-            out["payload"]["warmup_bars"])
+        # 对照独立执行同引擎（add-replay-backtest-mcp 任务 2.2：一致
+        # 性锚的本意=模板逐组与独立回放一致——旧 VBT 对照已废止，
+        # 引擎差=修复条款向纸盘语义对齐〔锚⑤〕不再是缺陷证据）
+        from core.replay import ReplayRunner
+        from core.replay.sweep_adapter import replay_group_metrics
+
+        res = ReplayRunner(d).run_from_dna(
+            db, dna, RNG_DEF["start"], RNG_DEF["end"])
+        metrics, rets = replay_group_metrics(db, res)
         assert r0["total_trades"] == metrics["total_trades"]
         assert r0["net_expectation"] == pytest.approx(float(np.mean(rets)))
 
     def test_single_group_failure_does_not_block(self, tmp_path, monkeypatch):
         """执行期单组容错：构造一组回测失败 → 该组标注、其余正常。"""
         d, db = _make_env(tmp_path)
-        orig = bb.run_backtest_on_range
+        import core.replay as replay_pkg
 
-        def flaky(db_path, data_dir, dna, *a, **kw):
-            if abs(dna.risk_genes.stop_loss - 0.02) < 1e-9:
-                raise ResearchError("RESEARCH_DATA_INSUFFICIENT", "构造失败")
-            return orig(db_path, data_dir, dna, *a, **kw)
+        real_runner = replay_pkg.ReplayRunner
 
-        monkeypatch.setattr(bb, "run_backtest_on_range", flaky)
+        class FlakyRunner(real_runner):
+            def run_from_dna(self, db_path, dna, start, end, **kw):
+                if abs(dna.risk_genes.stop_loss - 0.02) < 1e-9:
+                    raise ResearchError(
+                        "RESEARCH_DATA_INSUFFICIENT", "构造失败")
+                return super().run_from_dna(db_path, dna, start, end, **kw)
+
+        monkeypatch.setattr(replay_pkg, "ReplayRunner", FlakyRunner)
         out = exit_sweep(db, d, dict(RNG_DEF), condition=_COND,
                          direction="long",
                          grid=_grid([0.01, 0.02, 0.03], [0.04]))
@@ -360,15 +407,13 @@ class TestExecutionAndGates:
 
 
 class TestSeriesExecution:
-    """series 档执行面（dynamic-stop-loss-series CARD-01/R-1 方向 A：
-    spec「grid 类值域消费方对 series 档 entry 允许空 sl_values 形式」
-    的可达性落地——真实引擎轨道）。
-
-    数据前提：_make_env 数据起点 2023-01-01，RNG_DEF 起点 04-01 →
-    warmup 前缀 540 bar；SMA 源预算=注册表上限 200×3=600>540——
-    默认区间下 series 组诚实拒绝（WARMUP_INSUFFICIENT），充足前缀
-    区间（05-01 起 780 bar>600）产出结果行。全部期望值经探针人工
-    对拍（n=1400/seed=11 确定性数据）。"""
+    """series 档执行面（add-replay-backtest-mcp 任务 2.2 起收窄）：
+    回放引擎沿纸盘链能力集（pct/atr/trail），series 档组装载拒绝
+    （TRADING_INCOMPATIBLE——D7 终局口径：62 条 hypothesis 存量
+    失去现役回测入口只读保留）；旧 VBT 桥时代的 series 可跑断言废止，
+    现锚定=series 组诚实 failed+结构化码、非 series 组不受连坐。
+    （数据前提沿革：_make_env 数据起点 2023-01-01；SMA 源预算=注册表
+    上限 200×3=600——旧 warmup 分叉行为见 warmup_lift 披露用例。）"""
 
     _SMA_SRC = {"indicator": "SMA", "params": {"period": 20}}
     _RNG_MAY = {"symbol": SYMBOL, "timeframe": "4h",
@@ -391,15 +436,14 @@ class TestSeriesExecution:
                          grid=self._series_grid(self._SMA_SRC,
                                                 [0.02, 0.04, 0.06, 0.08]))
         rows = out["payload"]["results"]
-        assert out["sample_size"] == 4
-        assert [r["status"] for r in rows] == ["ok"] * 4
+        # series 组收窄（任务 2.2）：装载显式拒绝（TRADING_INCOMPATIBLE
+        # ——纸盘链能力集 pct/atr/trail）；TP 行结构保留（网格行完整披露）
+        assert out["sample_size"] == 0, "series 组全部诚实拒绝"
+        assert [r["status"] for r in rows] == ["failed"] * 4
+        assert all(r["failure_code"] == "TRADING_INCOMPATIBLE"
+                   for r in rows)
         assert all(r["stop_loss"] is None for r in rows), \
             "占位组 stop_loss=null（RiskGenes 残留 0.05 不赋值）"
-        assert [r["take_profit"] for r in rows] == [0.02, 0.04, 0.06, 0.08]
-        trades = [r["total_trades"] for r in rows]
-        assert trades[0] == 88 and trades[1] == 85, \
-            f"TP=0.02 更紧出场更频繁（探针对拍 88/85），实际 {trades}"
-        assert out["payload"]["verdict"] is not None, "TP 轴判定可达"
 
     def test_series_fx_end_to_end_rows(self, tmp_path):
         """fx 源端到端：rolling_mean(close,5) 插件列（db 注册）→ 空
@@ -414,7 +458,10 @@ class TestSeriesExecution:
                          grid=self._series_grid({"column": col},
                                                 [0.04, 0.08]))
         rows = out["payload"]["results"]
-        assert [r["status"] for r in rows] == ["ok", "ok"]
+        # series 组收窄（任务 2.2）：fx 源 series 档同样装载拒绝
+        assert [r["status"] for r in rows] == ["failed", "failed"]
+        assert all(r["failure_code"] == "TRADING_INCOMPATIBLE"
+                   for r in rows)
         assert all(r["stop_loss"] is None for r in rows)
 
     def test_series_warmup_lift_disclosed(self, tmp_path):
@@ -454,8 +501,9 @@ class TestSeriesExecution:
         rows = p["results"]
         assert rows[0]["mode"] == "pct" and rows[0]["status"] == "ok"
         assert all(r["status"] == "failed" and
-                   r["failure_code"] == "RESEARCH_WARMUP_INSUFFICIENT"
-                   for r in rows[1:]), "series 组单组诚实拒绝"
+                   r["failure_code"] == "TRADING_INCOMPATIBLE"
+                   for r in rows[1:]), "series 组单组诚实拒绝（任务"\
+                   " 2.2 装载序：能力拒绝先于 warmup 判定）"
         assert len(p["failed_groups"]) == 2
         assert out["sample_size"] == 1, "sample_size=成功组数"
 
@@ -545,7 +593,14 @@ class TestThreeGates:
         tps = tps or [0.03, 0.06]
         table = {(s, t): states.get((s, t), (0, []))
                  for s in stops for t in tps}
-        self._mp.setattr(bb, "run_backtest_on_range", _fake_bridge(table))
+        fake_runner, fake_metrics = _fake_replay(table)
+        import core.replay as replay_pkg
+        import core.replay.sweep_adapter as sa_mod
+
+        # patch 包级绑定（exit_sweep 内 from core.replay import
+        # ReplayRunner 运行时解析包属性）
+        self._mp.setattr(replay_pkg, "ReplayRunner", fake_runner)
+        self._mp.setattr(sa_mod, "replay_group_metrics", fake_metrics)
         return exit_sweep(self.db, self.d, dict(RNG_DEF), condition=_COND,
                           direction="long", grid=_grid(stops, tps))
 
@@ -612,7 +667,12 @@ class TestThreeGates:
         判定仍按内建）。"""
         eff = (8, [0.01])
         table = {(s, t): eff for s in (0.01, 0.02) for t in (0.03, 0.06)}
-        self._mp.setattr(bb, "run_backtest_on_range", _fake_bridge(table))
+        fake_runner, fake_metrics = _fake_replay(table)
+        import core.replay as replay_pkg
+        import core.replay.sweep_adapter as sa_mod
+
+        self._mp.setattr(replay_pkg, "ReplayRunner", fake_runner)
+        self._mp.setattr(sa_mod, "replay_group_metrics", fake_metrics)
         out = exit_sweep(self.db, self.d, dict(RNG_DEF), condition=_COND,
                          direction="long",
                          grid=_grid([0.01, 0.02], [0.03, 0.06]) | {
@@ -690,10 +750,17 @@ class TestWorstAggregationOrder:
         failed 如实呈现、failed_groups 完整、sample_size=0。"""
         d, db = _make_env(tmp_path)
 
-        def _always_fail(*a, **kw):
-            raise ResearchError("RESEARCH_DATA_INSUFFICIENT", "构造全组失败")
+        import core.replay as replay_pkg
 
-        monkeypatch.setattr(bb, "run_backtest_on_range", _always_fail)
+        class _AlwaysFailRunner:
+            def __init__(self, data_dir):
+                pass
+
+            def run_from_dna(self, db_path, dna, start, end, **kw):
+                raise ResearchError(
+                    "RESEARCH_DATA_INSUFFICIENT", "构造全组失败")
+
+        monkeypatch.setattr(replay_pkg, "ReplayRunner", _AlwaysFailRunner)
         out = exit_sweep(db, d, dict(RNG_DEF), condition=_COND,
                          direction="long",
                          grid=_grid([0.01, 0.02], [0.03, 0.06]))
@@ -984,16 +1051,32 @@ class TestPluginSourceRoleMark:
             self.db, name="mom", expression="zscore(close, 20)")["column"]
         captured = []
 
-        def _capture_bridge(db_path, data_dir, dna, *args, **kw):
-            captured.append(dna)
-            return ({"total_return": 0.01, "sharpe_ratio": 1.0,
-                     "max_drawdown": 0.1, "win_rate": 1.0,
-                     "total_trades": 1, "liquidated": False,
-                     "alpha": 0.0, "market_annual_return": 0.0,
-                     "benchmark_return": None, "excess_return": None},
-                    [0.01], 200, 500)
+        # 任务 2.2：捕获面换到回放引擎入口（送桥 DNA→送引擎 DNA
+        # ——构造单点证明语义不变）
+        import core.replay as replay_pkg
 
-        self._mp.setattr(bb, "run_backtest_on_range", _capture_bridge)
+        class _CaptureRunner:
+            def __init__(self, data_dir):
+                pass
+
+            def run_from_dna(self, db_path, dna, start, end, **kw):
+                captured.append(dna)
+                return _FakeCaptureResult()
+
+        class _FakeCaptureResult:
+            task_id = "cap"
+            total_trades = 1
+            win_count = 1
+            loss_count = 0
+
+        def _capture_metrics(db_path, result):
+            return ({"win_rate": 1.0, "max_drawdown": 0.1,
+                     "total_trades": 1}, [0.01])
+
+        import core.replay.sweep_adapter as sa_mod
+        self._mp.setattr(replay_pkg, "ReplayRunner", _CaptureRunner)
+        self._mp.setattr(sa_mod, "replay_group_metrics",
+                         _capture_metrics)
         exit_sweep(self.db, self.d, dict(RNG_DEF), conditions=[
             _COND, {"subject": col, "action": "gt", "target": 0.5}],
             direction="long", grid=_grid([0.01], [0.02]))

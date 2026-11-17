@@ -20,6 +20,11 @@ unsupported > spike > indeterminate > plateau）。判定标尺内建不可传�
 两期分野：校验期任何失败=整批 422 无部分结果；执行期单组回测失败=
 该组标注不阻塞（失败组列示）。
 
+执行引擎（add-replay-backtest-mcp 任务 2.2 起）：逐组底层=逐根回放
+引擎（core.replay.ReplayRunner.run_from_dna——纸盘执行核心同一套
+执行逻辑，修复条款内嵌）；组口径适配经 core.replay.sweep_adapter
+（metrics 三键+逐笔收益序列从回放落库明细派生）。
+
 条件能力域边界（unblock-research-validation 后）：when 侧条件
 timeframe 键放行——等于基准周期时键归一、与缺省语义完全相同
 （显式写基准周期不构成高周期过滤）；严格高于基准周期时高周期轴
@@ -262,12 +267,18 @@ def exit_sweep(
     Returns:
         分析结果 dict（三要素经 build_result；sample_size=成功组数）。
     """
-    from core.analysis.backtest_bridge import run_backtest_on_range
     from core.analysis.condition_kernel import (
         collect_condition_refs, validate_conditions_array)
     from core.analysis.hypothesis_to_strategy import build_signal_genes
     from core.analysis.registry_meta import derive_warmup_full
-    from core.strategy.dna import ExecutionGenes, LogicGenes, RiskGenes, StrategyDNA
+    from core.strategy.dna import (
+        ExecutionGenes,
+        LogicGenes,
+        RiskGenes,
+        SignalGene,
+        SignalRole,
+        StrategyDNA,
+    )
 
     # 谓词参数面校验（必填键组在路由层；此处枚举与二选一）
     if direction not in _DIRECTIONS:
@@ -311,6 +322,13 @@ def exit_sweep(
 
     symbol = request_range["symbol"]
     timeframe = request_range["timeframe"]
+    # 永假 exit 基因（任务 2.2）：回放装载链（validate_dna）要求
+    # 至少一个 exit_trigger——VBT 桥不校验故历史「THEN 空=无 exit」
+    # 可跑；永假条件（RSI>1e9）行为等同无 signal exit，退出实验
+    # 对象=risk_genes 退出参数不变。
+    genes = genes + [SignalGene(
+        "RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+        "rsi", {"type": "gt", "threshold": 1e9})]
     base_dna = StrategyDNA(
         signal_genes=genes,
         logic_genes=LogicGenes(),  # entry_logic="AND"（合取清单缺省）
@@ -377,10 +395,20 @@ def exit_sweep(
                         # 装载链只读——entry 浅拷贝嵌套引用无需再拷贝
                         dna.risk_genes.sl_series_source = \
                             entry["sl_series_source"]
-                    metrics, trade_returns, _, _ = run_backtest_on_range(
-                        db_path, data_dir, dna, symbol, timeframe,
-                        request_range["start"], request_range["end"],
-                        group_warmup)
+                    # add-replay-backtest-mcp 任务 2.2：底层切换
+                    # VBT→逐根回放引擎（run_from_dna 内存 DNA 直跑；
+                    # series 组装载拒绝→except 段 failed 组带
+                    # TRADING_INCOMPATIBLE 码——capability 模式集
+                    # {pct,atr,trail} 的引擎现实收窄，引用式自动跟随）
+                    from core.replay import ReplayRunner
+                    from core.replay.sweep_adapter import \
+                        replay_group_metrics
+
+                    _res = ReplayRunner(data_dir).run_from_dna(
+                        db_path, dna,
+                        request_range["start"], request_range["end"])
+                    metrics, trade_returns = replay_group_metrics(
+                        db_path, _res)
                     # trade_returns 可能为 ndarray——is not None 判空
                     #（`or []` 对 ndarray 求真值抛 ValueError）
                     rets = list(trade_returns) if trade_returns is not None \
