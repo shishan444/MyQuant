@@ -1,0 +1,41 @@
+# BTC/ETH 量化交易助手 · 全局配置
+
+# API 密钥（通过环境变量引用）
+binance:
+  api_key: ${BINANCE_API_KEY}
+  api_secret: ${BINANCE_API_SECRET}
+
+claude:
+  api_key: ${ANTHROPIC_API_KEY}
+  model: claude-sonnet-4-20250514
+
+# 默认数据配置
+data:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+  timeframes:
+    - 1h
+    - 4h
+    - 1d
+  history_years: 2
+  data_dir: data/market
+
+# 默认回测参数
+backtest:
+  init_cash: 100000
+  fee: 0.001          # 0.1% 手续费
+  slippage: 0.0005    # 0.05% 滑点
+
+# 默认进化参数
+evolution:
+  # 受限并发上界（research-tooling-data-quality 卡 B）：缺省 2 上限 4
+  max_concurrent_tasks: 2
+  population_size: 15
+  max_generations: 200
+  n_workers: 6
+  early_stop:
+    patience: 15
+    min_improvement: 0.5
+    decline_limit: 10
+
