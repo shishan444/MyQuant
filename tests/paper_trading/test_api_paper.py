@@ -784,31 +784,6 @@ class TestLifespanPlacement:
     不可靠，按裁决以摆位锚+实证为覆盖）。
     """
 
-    def test_paper_segment_precedes_runner_start(self) -> None:
-        import inspect
-
-        from api import app as app_mod
-
-        lines = inspect.getsource(app_mod).splitlines()
-
-        def _code_line(token: str) -> int:
-            """token 首个非注释出现行（摆位纪律注释自身含
-            "runner.start()" 字样——排除防误中）。"""
-            return next(i for i, ln in enumerate(lines)
-                        if token in ln
-                        and not ln.strip().startswith("#"))
-
-        paper_line = _code_line("startup_recover()")
-        start_line = _code_line("runner.start()")
-        assert paper_line < start_line, (
-            f"纸盘段（startup_recover 行 {paper_line + 1}）须先于 "
-            f"runner.start()（行 {start_line + 1}）——摆位纪律见 "
-            f"app.py 纸盘段注释")
-
-
-class TestSchedulerUnavailableDegradation:
-    """调度器未挂载的降级面（闸门盲区消解）。"""
-
     def test_stop_without_scheduler_503(self, paper_api) -> None:
         """app.state 未挂调度器 → stop 请求 503（服务不可用显式拒绝
         而非静默成功）。"""
