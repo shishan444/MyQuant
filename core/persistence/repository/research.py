@@ -655,17 +655,27 @@ def save_sandbox_validation_record(
     params: str,
     result: Optional[str],
     range_hash: str,
+    detail: Optional[List[Dict[str, Any]]] = None,
+    trace: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
-    """沙盒回测留痕单写（add-sandbox-records-unified-flow C1）：validation_records
-    独立成行（level=sandbox_backtest），与先行的 append_research_log 是两个
-    独立事务——并集读日志、记录页读本表，两个事实源各管各的账。
+    """沙盒回测留痕写入（add-sandbox-records-unified-flow C1；K1 扩展
+    retire-legacy D-3.7 ⑤）：validation_records 独立成行（level=
+    sandbox_backtest），与先行的 append_research_log 是两个独立事务
+    ——并集读日志、记录页读本表，两个事实源各管各的账。
 
     level/segmentation/verdict 三值写死不设形参（防误用）：沙盒身份由
     level 定义；verdict 空串=不动 schema 的最小语义漂移（三值域保持
-    纯净，不参与三态判定与三键统计）。五列（pollution_cause/components/
-    signal_trace/trade_semantics/stop_price）不写落 NULL——明细与留痕
-    是正式验证专属。不复用 save_validation_with_log：那会多写一条
-    entry_type="validate" 日志（语义分叉）且事务域绑定明细表。
+    纯净，不参与三态判定与三键统计）。
+
+    detail/trace（K1，2026-11-16 用户终裁「新记录必须保留明细」）：
+    缺省 None 行为逐位不变（向后兼容）；携带时同一 engine.begin()
+    事务内原子多写 VrEquityCurve+VrTradeDetail+VrSignalTrace（行组装
+    与 INSERT 逻辑自 save_validation_with_log :633-647 迁移承载、行为
+    等价），三布尔（signal_trace/trade_semantics/stop_price）在 trace
+    携带时对齐旧链打 1（口径=管线执行成功非事件有无）——主表与三明细
+    同事务，「记录在而明细残缺」不可达。不复用 save_validation_with_log：
+    那会多写一条 entry_type="validate" 日志（语义分叉）且签名绑定正式
+    验证专属形参。
 
     唯一约束冲突理论不可达（调用方 range_hash 掺 record_id——每次执行
     恒新，D5）；SQLite 异常裸穿（fail-loud：禁止「记录写失败但指标照常
@@ -683,8 +693,26 @@ def save_sandbox_validation_record(
             result=result,
             verdict="",
             range_hash=range_hash,
+            **(
+                {"signal_trace": 1, "trade_semantics": 1, "stop_price": 1}
+                if trace is not None else {}),
             created_at=_now(),
         ))
+        # K1 明细三写（行为等价迁移自 save_validation_with_log）：
+        # detail 每份 equity 行+trades 批量行；trace 留痕行批量——
+        # record_id 由本层补
+        if detail:
+            for exec_payload in detail:
+                equity_row = dict(exec_payload["equity"])
+                equity_row["record_id"] = record_id
+                conn.execute(insert(VrEquityCurve).values(**equity_row))
+                trade_rows = exec_payload["trades"]
+                if trade_rows:
+                    rows = [dict(t, record_id=record_id) for t in trade_rows]
+                    conn.execute(insert(VrTradeDetail), rows)
+        if trace:
+            conn.execute(insert(VrSignalTrace), [
+                dict(t, record_id=record_id) for t in trace])
 
 
 def find_validation_by_identity(

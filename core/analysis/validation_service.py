@@ -15,6 +15,12 @@ warmup 前扩（与隔离回测同语义）。
 _slice_signal_set 两私有助手）逐字保真提升至 core/analysis/
 backtest_bridge.run_backtest_on_range——本模块四处调用点改 import，
 行为零变化。
+
+K1（retire-legacy-subsystems D-3.7，2026-11-16 用户终裁「新记录必须
+保留明细」）：run_sandbox_backtest 经桥 with_detail 取明细载荷，两组装
+函数（_build_detail_payload/_resolve_trace_rows）翻转保留零 diff 复用，
+save_sandbox_validation_record 扩展 detail/trace 形参同事务原子落三
+明细表——sandbox 新记录 detail_available=true 可复核（审视回溯分析）。
 """
 from __future__ import annotations
 
@@ -1077,13 +1083,18 @@ def run_sandbox_backtest(
     timeframe = timeframe or strat_row.get("timeframe", "4h")
     warmup_bars, _ = _derive_dna_warmup(db_path, dna, timeframe)  # R3：消费轴
 
-    # trade_returns 不进沙盒响应（不判门槛不披露 CI——_ 占位解包）
-    metrics, _trade_returns, actual_warmup, bars_used = run_backtest_on_range(
-        db_path, data_dir, dna, symbol, timeframe, start, end, warmup_bars,
-        init_cash=init_cash, fee=fee, slippage=slippage,
-        strategy_id=strategy_id,
-        task_leverage=leverage, task_margin_cap=margin_cap,
-        task_halt_drawdown_pct=halt_drawdown_pct)
+    # K1 明细接线（retire-legacy D-3.7 ①②）：with_detail=True 取桥明细
+    # 载荷（equity/trades_df/init_cash/fee/slippage/swallowed/trace_buf/
+    # mtf_gated_bars/value_curve——桥与引擎零改动）；trade_returns 不进
+    # 沙盒响应（不判门槛不披露 CI——_ 占位解包）
+    metrics, _trade_returns, actual_warmup, bars_used, detail = (
+        run_backtest_on_range(
+            db_path, data_dir, dna, symbol, timeframe, start, end,
+            warmup_bars,
+            init_cash=init_cash, fee=fee, slippage=slippage,
+            strategy_id=strategy_id, with_detail=True,
+            task_leverage=leverage, task_margin_cap=margin_cap,
+            task_halt_drawdown_pct=halt_drawdown_pct))
 
     # 强制落研究日志（挂假设 → 区间进判定并集；机制：judged_ranges_union
     # 取该假设全部日志条目 data_ranges，现成无需改动）
@@ -1105,16 +1116,17 @@ def run_sandbox_backtest(
     # 形制校验天然拒绝）；result 携带完整 metrics（ND2）；range_hash
     # 掺参数全集+record_id（D5——每次执行恒新，五元唯一约束永不冲突）
     record_id = f"rec_{uuid.uuid4().hex[:12]}"
+    # K1 ③（D-3.7）：params 三键值源切桥 detail 回显（本调用点两值源
+    # 恒等——显式传参与桥生效值同源；执行参数以桥实际生效值为单源，
+    # 防双源漂移；七恒键形制不变）。任务级两参经 _params_exec_keys 五键
+    # 化值源（传了才写——与下方 halt 键独立）
     record_params: Dict[str, Any] = {
         "symbol": symbol, "timeframe": timeframe, "start": start,
-        "end": end, "fee": fee, "slippage": slippage,
-        "init_cash": init_cash}
-    if leverage is not None:
-        record_params["leverage"] = leverage
-    if margin_cap is not None:
-        record_params["margin_cap"] = margin_cap
+        "end": end, **_params_exec_keys(detail)}
     if halt_drawdown_pct is not None:
         record_params["halt_drawdown_pct"] = halt_drawdown_pct
+    # K1 ④：result_json 纯增 mtf_gated_bars 顶层键（null=无门控面与
+    # 0=门控全过严格区分——单份直取，不经旧三份聚合函数）
     rr.save_sandbox_validation_record(
         db_path,
         record_id=record_id,
@@ -1123,9 +1135,14 @@ def run_sandbox_backtest(
         params=json.dumps(record_params, ensure_ascii=False),
         result=json.dumps({
             "metrics": metrics, "symbol": symbol, "timeframe": timeframe,
-            "bars_used": bars_used, "warmup_bars": actual_warmup},
+            "bars_used": bars_used, "warmup_bars": actual_warmup,
+            "mtf_gated_bars": detail.get("mtf_gated_bars")},
             ensure_ascii=False),
-        range_hash=_range_hash({**record_params, "record_id": record_id}))
+        range_hash=_range_hash({**record_params, "record_id": record_id}),
+        detail=[_build_detail_payload(
+            detail, exec_ref="main", exec_index=0,
+            range_start=start, range_end=end, timeframe=timeframe)],
+        trace=_resolve_trace_rows(detail, dna, "main"))
 
     # 任务级参数回显（A1：实际生效值——请求实参逐键传了才写；
     # 有效杠杆=min(DNA 声明, 任务级) 从 metrics.position_sizing.task_cap

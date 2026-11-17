@@ -229,9 +229,11 @@ class TestSandboxRecordUnification:
         assert row["verdict"] == ""
         assert row["pollution_cause"] is None
         assert row["components"] is None
-        assert row["signal_trace"] is None
-        assert row["trade_semantics"] is None
-        assert row["stop_price"] is None
+        # K1（retire-legacy D-3.7）：三明细随记录原子落库，三布尔对齐
+        # 旧链打 1（口径=留痕管线执行成功）；正式验证专属列仍 NULL
+        assert row["signal_trace"] == 1
+        assert row["trade_semantics"] == 1
+        assert row["stop_price"] == 1
         assert row["created_at"]
 
     def test_sandbox_result_carries_full_metrics(
@@ -243,8 +245,10 @@ class TestSandboxRecordUnification:
             timeframe="4h", start="2023-03-01", end="2023-03-20",
             hypothesis_id=_hyp(db))
         result = json.loads(_sbx_row(db, out["record_id"])["result"])
+        # K1 ④：纯增 mtf_gated_bars 顶层键（null=无门控面与 0=门控全过
+        # 严格区分——读侧 :87 既有提取位零改动）
         assert set(result) == {"metrics", "symbol", "timeframe",
-                               "bars_used", "warmup_bars"}
+                               "bars_used", "warmup_bars", "mtf_gated_bars"}
         metrics = result["metrics"]
         assert {"total_return", "total_trades", "win_rate",
                 "max_drawdown", "excess_return"} <= set(metrics)
@@ -275,21 +279,20 @@ class TestSandboxRecordUnification:
             assert params[k] == v
         assert "request_range" not in params
 
-    def test_sandbox_record_zero_side_effects(self, fresh_env, data_dir):
-        """TC-1-4：写零副作用——明细三表零行+零 validate 日志。"""
+    def test_sandbox_record_detail_side_contract(self, fresh_env, data_dir):
+        """TC-1-4（K1 翻转，retire-legacy D-3.7）：明细随记录落库——
+        equity 曲线行在场+零 validate 日志（研究日志独立事务照旧）。"""
         db, sid = fresh_env
         out = run_sandbox_backtest(
             db, data_dir, strategy_id=sid, symbol="BTCUSDT",
             timeframe="4h", start="2023-03-01", end="2023-03-10")
         import sqlite3
         conn = sqlite3.connect(str(db))
-        for table in ("vr_trade_detail", "vr_equity_curve",
-                      "vr_signal_trace"):
-            n = conn.execute(
-                f"SELECT COUNT(*) FROM {table} WHERE record_id = ?",
-                (out["record_id"],)).fetchone()[0]
-            assert n == 0, f"{table} 出现沙盒行"
+        n_eq = conn.execute(
+            "SELECT COUNT(*) FROM vr_equity_curve WHERE record_id = ?",
+            (out["record_id"],)).fetchone()[0]
         conn.close()
+        assert n_eq >= 1, "K1：sandbox 新记录须有权益曲线明细行"
         logs = rr.list_research_log(db)
         assert not any(e["entry_type"] == "validate" for e in logs)
 
@@ -498,3 +501,52 @@ class TestSandboxRecordUnification:
         logs = [e for e in rr.list_research_log(db)
                 if e["entry_type"] == "sandbox_backtest"]
         assert len(logs) == 2  # 两条日志如实
+
+
+class TestSandboxDetailWiring:
+    """K1 明细接线验收锚（retire-legacy-subsystems 任务 5.0——四点
+    验收：detail_available/executions/trace_rows/原子性）。"""
+
+    def test_ka_detail_available_executions_trace_rows(
+            self, fresh_env, data_dir):
+        """K-A：sandbox 执行成功——明细端点三要素齐备（executions 非空
+        单份 exec_ref=main+trace_rows 非空+三布尔 true）。"""
+        db, sid = fresh_env
+        out = run_sandbox_backtest(
+            db, data_dir, strategy_id=sid, symbol="BTCUSDT",
+            timeframe="4h", start="2023-03-01", end="2023-03-20",
+            hypothesis_id=_hyp(db))
+        execs = rr.get_validation_executions(db, out["record_id"])
+        assert execs, "executions 非空"
+        assert len(execs) == 1 and execs[0]["exec_ref"] == "main"
+        assert execs[0]["exec_index"] == 0
+        traces = rr.get_vr_signal_trace_rows(db, out["record_id"])
+        assert traces, "trace_rows 非空（留痕行随记录落库）"
+        for tr in traces:
+            assert tr["exec_ref"] == "main"
+        row = _sbx_row(db, out["record_id"])
+        assert (row["signal_trace"], row["trade_semantics"],
+                row["stop_price"]) == (1, 1, 1)
+
+    def test_kb_detail_failure_rolls_back_whole_record(
+            self, fresh_env, data_dir, monkeypatch):
+        """K-B：明细写入失败注入——事务整体回滚主表无残留行+异常穿至
+        调用方（形制沿 TC-7-1 先例：日志先行独立事务不受波及）。"""
+        db, sid = fresh_env
+        import core.analysis.validation_service as vs_mod
+
+        def _bad_payload(*_a, **_k):
+            return {"trades": [], "equity": {"unknown_column_xyz": 1}}
+
+        monkeypatch.setattr(vs_mod, "_build_detail_payload", _bad_payload)
+        with pytest.raises(Exception):
+            run_sandbox_backtest(
+                db, data_dir, strategy_id=sid, symbol="BTCUSDT",
+                timeframe="4h", start="2023-03-01", end="2023-03-10")
+        monkeypatch.undo()
+        assert rr.list_validation_records(db) == [], "主表无残留行（整体回滚）"
+        import sqlite3
+        conn = sqlite3.connect(str(db))
+        n = conn.execute("SELECT COUNT(*) FROM vr_equity_curve").fetchone()[0]
+        conn.close()
+        assert n == 0, "明细表无残留行"
