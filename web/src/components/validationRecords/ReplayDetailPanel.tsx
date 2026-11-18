@@ -155,7 +155,13 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
     replay?: { task_id?: string; status?: string;
                total_trades?: number; total_pnl?: number };
   };
-  const tid = replay.replay?.task_id;
+  // task_id 形制闸（security F-P3-2）：拒路径语义字符（防 ../ 与 /
+  // 经 URL 规范化跳段）——非白名单 12hex（服务端可注入任意串，
+  // 12hex 会误拒注入形制——P3 审查对 security 建议的修正）；不匹
+  // 配走下方「引用不可用」降级分支
+  const TID_RE = /^[0-9a-zA-Z_-]{1,64}$/;
+  const tidRaw = replay.replay?.task_id;
+  const tid = tidRaw != null && TID_RE.test(tidRaw) ? tidRaw : undefined;
   const [selected, setSelected] = useState<string | null>(null);
   // 行 DOM ref（互达「标记→行」：scrollIntoView 定位面——key=行键）
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
@@ -251,7 +257,7 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
       { behavior: "smooth", block: "center" });
   };
   if (!tid) {
-    return <p className="text-xs text-text-muted">回放结果缺 task_id 引用（旧形制记录）——不可复核</p>;
+    return <p className="text-xs text-text-muted">回放结果缺 task_id 引用或形制不可用（旧形制/非法形制记录）——不可复核</p>;
   }
   return (
     <div className="space-y-3" data-testid="replay-detail-panel">

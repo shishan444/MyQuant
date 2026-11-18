@@ -1034,15 +1034,17 @@ export function RecordDetail({ record }: { record?: ValidationRecordRow }) {
       </p>
     );
   }
-  if (q.isError) return <p className="text-xs text-loss">详情源暂不可达（稍后自动重试）</p>;
-  if (q.isLoading) return <p className="text-xs text-text-muted">装载中…</p>;
-  const d: ValidationDetailResponse = q.data!;
   // level=replay 专属面板（fe-replay-presentation）：明细经纸盘端点
-  // 自取（pt_* 四明细 task_id 引用——vr 细节三表不适用），先于
-  // detail_available 空骨架分支
+  // 自取（pt_* 四明细 task_id 引用——vr 细节三表不适用）。判定上提
+  // 至 vr 明细端点 q 判定之前（P3-CARD-06：数据源独立，不该被 vr
+  // 端点异常/装载态拦截为「详情源暂不可达」）——判定只需 record
+  // 自身；先于 detail_available 空骨架分支
   if (record.level === "replay") {
     return <ReplayDetailPanel record={record} />;
   }
+  if (q.isError) return <p className="text-xs text-loss">详情源暂不可达（稍后自动重试）</p>;
+  if (q.isLoading) return <p className="text-xs text-text-muted">装载中…</p>;
+  const d: ValidationDetailResponse = q.data!;
   if (!d.detail_available) {
     return (
       <p className="text-xs text-text-muted">

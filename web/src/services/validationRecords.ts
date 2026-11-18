@@ -133,7 +133,10 @@ export interface ValidationDetailResponse {
 export async function getValidationRecordDetail(
   recordId: string,
 ): Promise<ValidationDetailResponse> {
-  return api.get(`/api/research/validation-records/${recordId}/detail`);
+  // 路径段编码（security F-P3-1——与 ReplayDetailPanel 全编码形制
+  // 对齐：recordId 拼段不得改变 pathname 结构）
+  return api.get(
+    `/api/research/validation-records/${encodeURIComponent(recordId)}/detail`);
 }
 
 /** 判定并集余量查询（三参必填；adhoc 记录 hypothesis_id="adhoc" 查询
