@@ -11,7 +11,7 @@
  * 不做业务判定）；主题色单源于 chartThemes 与 theme/tokens，指标开关
  * 状态经 stores/chart-settings，标记与观测序列原语经 charts/primitives。
  */
-import { POLARITY } from "@/theme/tokens";
+import { CHART_VC, POLARITY } from "@/theme/tokens";
 import { useLayoutEffect, useEffect, useRef, useMemo, useImperativeHandle, forwardRef, useState, useCallback } from "react";
 import {
   createChart,
@@ -113,6 +113,13 @@ interface KlineChartProps {
   /** 隐藏内嵌图例（07 页 HUD 浮层承载信息面时传 true——图例分组折叠
    *  能力本身保留，仅该消费方不呈现；fe-asset-data-domain 2.1） */
   hideLegend?: boolean;
+  /** 标记选中高亮（TD-P3-01/fe-replay-presentation P3-CARD-03 互达）：
+   *  epoch 秒——signalMarkers 中该 time 的条目颜色覆盖为高亮色
+   *  （CHART_VC.teal 单源）；缺省 null/undefined 零行为变化 */
+  selectedMarkerTime?: number | null;
+  /** 标记点击回调（同上扩展面）：点击处 time 命中 signalMarkers 任一
+   *  条目才触发，回传该 marker 的 epoch 秒；缺省不订阅 */
+  onMarkerClick?: (time: number) => void;
 }
 
 export interface KlineChartHandle {
@@ -170,6 +177,8 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   kdjData,
   equityData,
   hideLegend,
+  selectedMarkerTime,
+  onMarkerClick,
 }, ref) {
   const mainRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -197,6 +206,8 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   onChartReadyRef.current = onChartReady;
   const onCrosshairMoveRef = useRef(onCrosshairMove);
   onCrosshairMoveRef.current = onCrosshairMove;
+  const onMarkerClickRef = useRef(onMarkerClick);
+  onMarkerClickRef.current = onMarkerClick;
 
   // 图例状态
   const [legendGroups, setLegendGroups] = useState<LegendGroup[]>([]);
@@ -217,10 +228,17 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   const memoizedTriggers = useMemo(() => triggers ?? [], [triggers]);
   const memoizedSignalMarkers = useMemo(
     () =>
-      signalMarkers?.map((m) => ({ ...m, time: toTime(m.time) }))
+      signalMarkers?.map((m) => {
+        const t = toTime(m.time);
+        // 选中高亮（P3-CARD-03 互达）：selectedMarkerTime 命中的条目
+        // 颜色覆盖 CHART_VC.teal（单源高亮色）；未命中/未传逐位原样
+        const selected =
+          selectedMarkerTime != null && t === selectedMarkerTime;
+        return { ...m, time: t, color: selected ? CHART_VC.teal : m.color };
+      })
         .filter((m) => typeof m.time === "number" && !isNaN(m.time as number))
         .sort((a, b) => (a.time as number) - (b.time as number)) ?? null,
-    [signalMarkers],
+    [signalMarkers, selectedMarkerTime],
   );
   const memoizedBollData = useMemo(() => bollData, [bollData]);
   const memoizedVolumeData = useMemo(() => volumeData, [volumeData]);
@@ -479,6 +497,23 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   useEffect(() => {
     mainChartRef.current?.applyOptions({ height });
   }, [height]);
+
+  // 标记点击订阅（P3-CARD-03 互达）：点击处 time 命中 signalMarkers
+  // 任一条目才回调（epoch 域——消费方经 epochOf 对齐行键）；prop 缺省
+  // 零订阅（onCrosshairMove ref 先例形制——重跑不重绑用户回调）
+  useEffect(() => {
+    const chart = mainChartRef.current;
+    if (!chart || !onMarkerClick) return;
+    const handler = (param: MouseEventParams) => {
+      if (param.time == null || !memoizedSignalMarkers) return;
+      if (memoizedSignalMarkers.some((m) => m.time === param.time)) {
+        onMarkerClickRef.current?.(param.time as number);
+      }
+    };
+    chart.subscribeClick(handler);
+    return () => chart.unsubscribeClick(handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memoizedSignalMarkers, onMarkerClick]);
 
   // -------------------------------------------------------------------------
   // 数据更新
