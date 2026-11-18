@@ -6,9 +6,11 @@
  * 纸盘 REST 通道直取）；呈现=六态标记 K 线+仓位操作流水+明细↔图
  * 互达+基因触发描述（gene_hits）。
  */
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { KlineChart } from "@/components/charts/KlineChart";
+import { epochOf } from "./fullRangeData";
+import { getOhlcvBySymbol } from "@/services/datasets";
 import { formatTimestamp } from "@/lib/utils";
 
 /** 纸盘成交行（/tasks/{id}/fills——PtFill 列面子集） */
@@ -39,6 +41,10 @@ interface ValidationRecordLike {
   record_id: string;
   level: string;
   result?: Record<string, unknown> | null;
+  /** P2 记录 params（列表通道已解析对象）：symbol/timeframe/start/end
+   *  顶层四键是 K 线复核取数面（traceSemantics recordSymbolTimeframe
+   *  同源识别形制） */
+  params?: Record<string, unknown> | null;
 }
 
 const API = {
@@ -46,9 +52,6 @@ const API = {
     `/api/paper-trading/tasks/${encodeURIComponent(tid)}/fills?limit=10000`,
   signals: (tid: string) =>
     `/api/paper-trading/tasks/${encodeURIComponent(tid)}/signals?limit=10000`,
-  ohlcv: (symbol: string, tf: string, start: string, end: string) =>
-    `/api/data/datasets/${encodeURIComponent(`${symbol}_${tf}`)}/ohlcv` +
-    `?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&limit=50000`,
 };
 
 /** 六态标记映射（词表沿 fe-vr-marker-fidelity 六字义+价位锚定契约） */
@@ -134,6 +137,18 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
   };
   const tid = replay.replay?.task_id;
   const [selected, setSelected] = useState<string | null>(null);
+  // 行 DOM ref（互达「标记→行」：scrollIntoView 定位面——key=行键）
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+
+  // K 线复核取数面（P3-CARD-01）：params 顶层 symbol/timeframe/start/
+  // end 四键（P2 记录形制；缺任一不发请求——回放区间即呈现区间）
+  const st = useMemo(() => {
+    const p = (record.params ?? {}) as Record<string, unknown>;
+    const s = (k: string): string | null =>
+      typeof p[k] === "string" ? (p[k] as string) : null;
+    return { symbol: s("symbol"), timeframe: s("timeframe"),
+            start: s("start"), end: s("end") };
+  }, [record.params]);
 
   const fillsQ = useQuery({
     queryKey: ["replay-fills", tid],
@@ -157,6 +172,22 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
     },
     enabled: !!tid,
   });
+  // K 线主体（P3-CARD-01）：服务层单源（路径段编码+ApiError 错误
+  // 通道），回放区间=呈现区间；isError 走降级文案（图不渲染不报错）
+  const ohlcvQ = useQuery({
+    queryKey: ["replay-ohlcv", st.symbol, st.timeframe, st.start, st.end],
+    queryFn: async () => {
+      const j = await getOhlcvBySymbol(
+        st.symbol!, st.timeframe!,
+        { start: st.start ?? undefined, end: st.end ?? undefined,
+          limit: 50000 });
+      return (j.data ?? []) as Array<{
+        timestamp: string; open: number; high: number; low: number;
+        close: number }>;
+    },
+    enabled: !!tid && st.symbol != null && st.timeframe != null
+      && st.start != null && st.end != null,
+  });
 
   const fills = fillsQ.data ?? [];
   const signals = signalsQ.data ?? [];
@@ -169,6 +200,21 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
     })),
     [fills],
   );
+  // 互达（P3-CARD-03）：行→图经 selectedMarkerTime（epoch 域——
+  // epochOf 与 KlineChart toTime 同源对齐）；图→行经 onMarkerClick
+  // 定位该 bar 首笔成交行（同 bar 多笔取首行）滚动+高亮
+  const selectedEpoch = useMemo(() => {
+    if (!selected) return null;
+    return epochOf(selected.split("#")[0]);
+  }, [selected]);
+  const locateRow = (epoch: number) => {
+    const f = fills.find((x) => epochOf(x.bar_time) === epoch);
+    if (!f) return;
+    const key = `${f.bar_time}#${f.seq}`;
+    setSelected(key);
+    rowRefs.current[key]?.scrollIntoView(
+      { behavior: "smooth", block: "center" });
+  };
   if (!tid) {
     return <p className="text-xs text-text-muted">回放结果缺 task_id 引用（旧形制记录）——不可复核</p>;
   }
@@ -183,18 +229,41 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
           {replay.replay?.total_trades ?? 0} 笔
         </span>
       </div>
-      {/* 六态标记 K 线（点位锚定沿 fe-vr-marker-fidelity 契约） */}
+      {/* 六态标记 K 线（P3-CARD-01 补主体+P3-CARD-03 互达；点位锚定
+          沿 fe-vr-marker-fidelity 契约——K 线=回放区间、六态标记挂
+          真实 bar 时间轴；ohlcv 不可达降级文案如实不报错） */}
       {fillsQ.isLoading ? (
         <p className="text-xs text-text-muted">成交明细装载中…</p>
-      ) : fills.length === 0 ? (
-        <p className="text-xs text-text-muted">无成交（策略区间内零信号触发——空态如实）</p>
       ) : (
-        <KlineChart
-          data={[]}
-          signalMarkers={markers}
-          height={320}
-          subChartType="volume"
-        />
+        <>
+          {fills.length === 0 && (
+            <p className="text-xs text-text-muted">
+              无成交（策略区间内零信号触发——空态如实）
+            </p>
+          )}
+          {/* K 线主体链（P3-CARD-01）：与成交空态独立——零成交时
+              主体仍在（区间数据在、标记空）；三降级态如实文案不报错 */}
+          {ohlcvQ.isLoading ? (
+            <p className="text-xs text-text-muted">K 线装载中…</p>
+          ) : ohlcvQ.isError ? (
+            <p className="text-xs text-text-muted">
+              K 线数据源暂不可达（成交明细与标记通道不受影响）
+            </p>
+          ) : (ohlcvQ.data ?? []).length === 0 ? (
+            <p className="text-xs text-text-muted">
+              K 线主体不可得（记录缺 symbol/timeframe/start/end 或区间无数据）
+            </p>
+          ) : (
+            <KlineChart
+              data={ohlcvQ.data ?? []}
+              signalMarkers={markers}
+              height={320}
+              subChartType="volume"
+              selectedMarkerTime={selectedEpoch}
+              onMarkerClick={locateRow}
+            />
+          )}
+        </>
       )}
       {/* 仓位操作流水（任务 3.1——每笔一行：前/量/后/触发原因+基因描述） */}
       <div className="text-xs">
@@ -217,6 +286,7 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
                 return (
                   <tr
                     key={key}
+                    ref={(el) => { rowRefs.current[key] = el; }}
                     onClick={() => setSelected(selected === key ? null : key)}
                     className={`cursor-pointer border-t border-border ${
                       selected === key ? "bg-surface-active" : ""}`}
