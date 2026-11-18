@@ -146,6 +146,31 @@ class TestBacktestReplayEndpoint:
         assert resp.status_code == 422, resp.text
         assert resp.json()["detail"]["code"] == "RESEARCH_PARAM_INVALID"
 
+    @pytest.mark.parametrize("leverage", [5, 0, -1], ids=["超上限", "零", "负"])
+    def test_leverage_out_of_range_rejected(self, replay_env, leverage):
+        """任务级杠杆越域（spec「参数域封顶拒绝」）：[1,3] 外三态
+        422 附 legal_range（单源援引 sandbox 的 require_task_cap_params
+        ——P2-CARD-02 补面）。"""
+        idx = replay_env["df"].index
+        resp = replay_env["client"].post("/api/research/backtest-replay", json={
+            "strategy_id": replay_env["strategy_id"],
+            "start": idx[-50].isoformat(), "end": idx[-1].isoformat(),
+            "leverage": leverage})
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["code"] == "RESEARCH_PARAM_INVALID"
+        assert detail["detail"]["legal_range"] == "[1,3]"
+
+    def test_leverage_boundary_three_passes(self, replay_env):
+        """合法域边界值 3（上界含）直通（下界 1=缺省由既有用例
+        全量承载）。"""
+        idx = replay_env["df"].index
+        resp = replay_env["client"].post("/api/research/backtest-replay", json={
+            "strategy_id": replay_env["strategy_id"],
+            "start": idx[-50].isoformat(), "end": idx[-1].isoformat(),
+            "leverage": 3})
+        assert resp.status_code == 200, resp.text
+
     def test_strategy_not_found_structured_4xx(self, replay_env):
         idx = replay_env["df"].index
         resp = replay_env["client"].post("/api/research/backtest-replay", json={
