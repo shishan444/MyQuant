@@ -983,6 +983,29 @@ class TestReduceTerminatePhysical:
         assert ledger.position is None, "仓位归零"
         assert ledger.closed_trades == 1
 
+    @pytest.mark.parametrize(
+        ("direction", "entry_intent_dir"),
+        [("long", "long"), ("short", "short")],
+        ids=["多头升格", "空头升格"])
+    def test_upgrade_close_intent_carries_direction(
+            self, direction, entry_intent_dir):
+        """P3-CARD-04：升格 close Intent 携带仓位方向（此前出场
+        全平类恒空串——前端六态标记的平多/平空字义数据源）。多头
+        升格 direction=long、空头=short 两态。"""
+        params = make_params(position_size=0.08, leverage=10,
+                             exit_fraction=0.001,
+                             direction=direction)
+        ledger = Ledger(10_000.0, params)
+        assert _open(ledger, 100.0, side=entry_intent_dir) is not None
+        outcome = ledger.execute(
+            Intent(kind="reduce", direction=direction),
+            _bar(100.0, seq=1), _ZERO_COST, min_notional=50.0)
+        assert outcome.fill is not None
+        assert outcome.fill.intent.kind == "close"
+        assert outcome.fill.intent.reason == "reduce_terminated"
+        assert outcome.fill.intent.direction == direction, (
+            f"升格 close 方向携带（{direction}）")
+
     def test_physical_equal_not_triggered(self):
         """②物理等值不触发：减量名义恰==MIN（qty=100、f=0.005、
         价 100→减量 0.5×100=50==50）→正常按比例减仓（严格小于）。"""
