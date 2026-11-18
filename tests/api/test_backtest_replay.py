@@ -212,6 +212,73 @@ class TestBacktestReplayEndpoint:
         assert body["status"] == "completed", "halt 不终止回放"
         assert body["halted_at"] == info["halted_at"], "平铺兼容键同源"
 
+    def test_research_log_row_written(self, replay_env):
+        """研究日志先行落库（P2-CARD-04）：单路一行 entry_type=
+        replay_backtest 五件齐——hypothesis_id None（adhoc 不入判定
+        并集）、ref_id=strategy_id、data_ranges 四键、summary 含
+        task_id+status。"""
+        idx = replay_env["df"].index
+        resp = replay_env["client"].post("/api/research/backtest-replay", json={
+            "strategy_id": replay_env["strategy_id"],
+            "start": idx[-50].isoformat(), "end": idx[-1].isoformat(),
+            "task_id": "log-01"})
+        assert resp.status_code == 200, resp.text
+        from core.persistence.repository import research as rr
+
+        rows = rr.list_research_log(
+            replay_env["db"], entry_type="replay_backtest", limit=10)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["hypothesis_id"] is None
+        assert row["ref_id"] == replay_env["strategy_id"]
+        import json as _json
+
+        ranges = _json.loads(row["data_ranges"])
+        assert ranges == [{"symbol": "BTCUSDT", "timeframe": "4h",
+                           "start": resp.json()["start"],
+                           "end": resp.json()["end"]}]
+        assert "log-01" in row["summary"] and "status=" in row["summary"]
+
+    def test_research_log_one_row_per_batch_leg(self, replay_env):
+        """并发组每路一行日志（3 路 3 行 ref_id 各策略）。"""
+        from tests.helpers.data_factory import make_dna as _make
+
+        sids = [replay_env["strategy_id"]]
+        for i in (2, 3):
+            save_strategy(replay_env["db"], strategy_id=f"st_logb_{i}",
+                          dna_json=_make().to_json(), symbol="BTCUSDT",
+                          timeframe="4h", status="draft")
+            sids.append(f"st_logb_{i}")
+        idx = replay_env["df"].index
+        resp = replay_env["client"].post("/api/research/backtest-replay", json={
+            "strategy_ids": sids,
+            "start": idx[-50].isoformat(), "end": idx[-1].isoformat()})
+        assert resp.status_code == 200, resp.text
+        from core.persistence.repository import research as rr
+
+        rows = rr.list_research_log(
+            replay_env["db"], entry_type="replay_backtest", limit=10)
+        assert {r["ref_id"] for r in rows} == set(sids), "每路一行"
+
+    def test_research_log_precedes_record_failure(
+            self, replay_env, monkeypatch):
+        """最坏态语义：记录写失败时日志已在（日志先行步骤 4、记录
+        随后 fail-loud 裸穿——注入 record 写失败验证顺序）。"""
+        from core.persistence.repository import research as rr
+
+        def _boom(*a, **k):
+            raise RuntimeError("record write failed")
+
+        monkeypatch.setattr(rr, "save_sandbox_validation_record", _boom)
+        idx = replay_env["df"].index
+        resp = replay_env["client"].post("/api/research/backtest-replay", json={
+            "strategy_id": replay_env["strategy_id"],
+            "start": idx[-50].isoformat(), "end": idx[-1].isoformat()})
+        assert resp.status_code >= 500, "记录写失败整体报错（fail-loud）"
+        rows = rr.list_research_log(
+            replay_env["db"], entry_type="replay_backtest", limit=10)
+        assert len(rows) == 1, "日志已在（先行写入不被记录失败吞）"
+
     def test_strategy_not_found_structured_4xx(self, replay_env):
         idx = replay_env["df"].index
         resp = replay_env["client"].post("/api/research/backtest-replay", json={
