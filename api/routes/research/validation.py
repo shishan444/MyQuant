@@ -128,6 +128,10 @@ def backtest_replay(
     上限缺省 5 可配。"""
     from core.replay import ReplayError, ReplayRunner, run_replay_batch
 
+    # leverage 值域单源（P2-CARD-02：整数 [1,3] 封顶——援引 sandbox
+    # 先例 require_task_cap_params，margin_cap 位不传不生效——回放
+    # 无该语义（lead 预裁②））；越界结构化 422 附 legal_range
+    require_task_cap_params(payload.leverage)
     require_halt_drawdown_pct(payload.halt_drawdown_pct)
     # 并发组矛盾拒绝：task_id 是单路固定注入面，每路独立 task_id
     # 语义下不可共享（防静默丢参——传了即拒非忽略）
