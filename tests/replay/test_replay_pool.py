@@ -81,15 +81,19 @@ class TestReplayBatch:
 
     def test_batch_duration_near_slowest(self, tmp_path):
         """总时长≈最慢单任务（tasks 4.1 验收锚③形制：宽上限
-        <2×——CI 波动裕量；偶红按工程惯例单进程复跑分诊）。"""
+        <2×——CI 波动裕量；偶红按工程惯例单进程复跑分诊）。区间
+        300 根压低 spawn 冷启动占比；单路基准跑两次取 max 防偶然快
+        压低分母。"""
         import time
 
         env = _make_envs_with_strategies(tmp_path, n=5)
-        start, end = env.range(head_bars=200)
-        t0 = time.monotonic()
-        run_replay_batch(env.db, env.strategy_ids[:1], start, end,
-                         data_dir=env.data_dir)
-        t_single = time.monotonic() - t0
+        start, end = env.range(head_bars=300)
+        t_single = 0.0
+        for _ in range(2):  # 单路两跑取 max（最慢单任务语义）
+            t0 = time.monotonic()
+            run_replay_batch(env.db, env.strategy_ids[:1], start, end,
+                             data_dir=env.data_dir)
+            t_single = max(t_single, time.monotonic() - t0)
         t0 = time.monotonic()
         results = run_replay_batch(
             env.db, env.strategy_ids, start, end,

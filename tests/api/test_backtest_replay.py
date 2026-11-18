@@ -68,6 +68,27 @@ class TestBacktestReplayEndpoint:
         result_json = _json.loads(rec["result"])
         assert result_json["replay"]["task_id"] == "api-replay-01"
 
+    def test_repeat_runs_independent_records(self, replay_env):
+        """同策略同区间同参数连续两次：两行独立 record（时间流即
+        晋级史，互不覆盖互不幂等合并——spec 场景「重复执行独立成行」
+        的 replay 入口承载）。"""
+        idx = replay_env["df"].index
+        payload = {
+            "strategy_id": replay_env["strategy_id"],
+            "start": idx[-100].isoformat(), "end": idx[-1].isoformat()}
+        ids = []
+        for _ in range(2):
+            resp = replay_env["client"].post(
+                "/api/research/backtest-replay", json=payload)
+            assert resp.status_code == 200, resp.text
+            ids.append(resp.json()["record_id"])
+        assert ids[0] != ids[1], "重复执行独立成行（record_id 恒新）"
+        from core.persistence.repository import research as rr
+
+        for rid in ids:
+            rec = rr.get_validation_record_by_id(replay_env["db"], rid)
+            assert rec["level"] == "replay"
+
     def test_strategy_not_found_structured_4xx(self, replay_env):
         idx = replay_env["df"].index
         resp = replay_env["client"].post("/api/research/backtest-replay", json={
