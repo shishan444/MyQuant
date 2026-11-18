@@ -42,7 +42,11 @@ const FILLS = [
     realized_pnl: -3.4, reason: "reduce_terminated" },
 ];
 const SIGNALS = [
-  { bar_time: "2026-01-01T00:00:00Z", kind: "open", outcome: "filled",
+  // P3-CARD-02 键形制：bar_time=决策锚（前一根）、exec_bar_time=
+  // 执行 bar（与 fill.bar_time 同轴——geneDescription join 键）
+  { bar_time: "2025-12-31T20:00:00Z",
+    exec_bar_time: "2026-01-01T00:00:00Z",
+    kind: "open", outcome: "filled",
     fill_seq: 1, reject_reason: null,
     gene_hits: [{ indicator: "RSI", field: "value",
                   condition: "lt", target: 30 }] },
@@ -151,7 +155,7 @@ describe("ReplayDetailPanel 组件渲染与互达（P3 建网+CARD-01/03 验收�
     const click = lastChartProps().onMarkerClick;
     expect(click).toBeTypeOf("function");
     // 模拟图上点击第一根成交 bar（epoch 域）
-    click!(epochOf(FILLS[0].bar_time));
+    click!(epochOf(FILLS[0].bar_time)!);
     await waitFor(() => {
       const row = screen.getByTestId("replay-flow-row-0");
       expect(row.className).toContain("bg-surface-active");
@@ -168,7 +172,7 @@ describe("ReplayDetailPanel 组件渲染与互达（P3 建网+CARD-01/03 验收�
     await waitFor(() => {
       expect(mockChart.mock.calls.length).toBeGreaterThan(0);
     });
-    expect((lastChartProps().data ?? []).length).toBe(2, "主体在");
+    expect((lastChartProps().data ?? []).length).toBe(2);
     expect(lastChartProps().signalMarkers).toEqual([]);
   });
 

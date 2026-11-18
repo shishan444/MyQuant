@@ -61,7 +61,11 @@ describe("仓位流水派生（derivePositionFlow）", () => {
 describe("基因触发描述（geneDescription）", () => {
   it("join 命中：indicator+field+condition+target 简述式", () => {
     const sigs = [{
-      bar_time: "2026-01-01T00:00:00Z", kind: "open", outcome: "filled",
+      // P3-CARD-02 键形制：signal.bar_time=决策锚（前一根）、
+      // exec_bar_time=执行 bar（与 fill.bar_time 同轴——join 键）
+      bar_time: "2025-12-31T20:00:00Z",
+      exec_bar_time: "2026-01-01T00:00:00Z",
+      kind: "open", outcome: "filled",
       fill_seq: 3, reject_reason: null,
       gene_hits: [{ indicator: "RSI", field: "rsi",
                     condition: "lt", target: 45 }],
@@ -69,9 +73,40 @@ describe("基因触发描述（geneDescription）", () => {
     expect(geneDescription(sigs, "2026-01-01T00:00:00Z", 3))
       .toBe("RSI.rsi lt 45");
   });
+  it("差一根 pending 族命中（CARD-02 验收）：join 键=exec_bar_time"
+      + " 非 bar_time（决策锚前一根）——旧键形制下恒 miss 根治", () => {
+    const sigs = [{
+      bar_time: "2025-12-31T20:00:00Z",
+      exec_bar_time: "2026-01-01T00:00:00Z",
+      kind: "open", outcome: "filled",
+      fill_seq: 1, reject_reason: null,
+      gene_hits: [{ indicator: "EMA", condition: "crossover",
+                    target: "ema_20" }],
+    }];
+    // join 目标=执行 bar（与 fill 同轴）→命中
+    expect(geneDescription(sigs, "2026-01-01T00:00:00Z", 1))
+      .toBe("EMA crossover ema_20");
+    // 旧键倒退锚：若实现回退用 bar_time join，以 bar_time 调用
+    // 才会命中——exec 键实现下此处必 miss
+    expect(geneDescription(sigs, "2025-12-31T20:00:00Z", 1)).toBe("");
+  });
+  it("同根即时族回归（CARD-02 验收）：exit_sl 决策=执行同根"
+      + "（exec_bar_time==bar_time）join 命中", () => {
+    const sigs = [{
+      bar_time: "2026-01-02T00:00:00Z",
+      exec_bar_time: "2026-01-02T00:00:00Z",
+      kind: "exit_sl", outcome: "filled",
+      fill_seq: 5, reject_reason: null,
+      gene_hits: [{ indicator: "ATR", condition: "gt", target: 2 }],
+    }];
+    expect(geneDescription(sigs, "2026-01-02T00:00:00Z", 5))
+      .toBe("ATR gt 2");
+  });
   it("未命中（无 gene_hits）→ 空串（如实话术由呈现层承载）", () => {
     const sigs = [{
-      bar_time: "2026-01-01T00:00:00Z", kind: "open", outcome: "rejected",
+      bar_time: "2025-12-31T20:00:00Z",
+      exec_bar_time: "2026-01-01T00:00:00Z",
+      kind: "open", outcome: "rejected",
       fill_seq: null, reject_reason: "below_min_notional",
       gene_hits: null,
     }];
