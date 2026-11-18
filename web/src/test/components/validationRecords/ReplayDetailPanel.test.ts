@@ -1,5 +1,6 @@
 /** 回放详情面板纯函数测试（fe-replay-presentation 任务 2.1/3.1/4.1）。 */
 import { describe, expect, it } from "vitest";
+import { eventSemantics, TRACE_FAMILY_COLOR } from "@/components/validationRecords/traceSemantics";
 import {
   derivePositionFlow,
   geneDescription,
@@ -14,22 +15,41 @@ const fill = (over: Partial<Parameters<typeof replayMarker>[0]> = {}) => ({
 
 describe("六态标记映射（replayMarker）", () => {
   it("open long/short → 开多/开空（箭头方向随向）", () => {
-    expect(replayMarker(fill({ kind: "open", side: "long" })).text).toBe("开多");
-    expect(replayMarker(fill({ kind: "open", side: "short" })).text).toBe("开空");
+    expect(replayMarker(fill({ kind: "open", side: "long" }))!.text).toBe("开多");
+    expect(replayMarker(fill({ kind: "open", side: "short" }))!.text).toBe("开空");
   });
   it("add → 加仓带方向；reduce → 减仓带方向", () => {
-    expect(replayMarker(fill({ kind: "add", side: "long" })).text).toBe("加仓");
-    expect(replayMarker(fill({ kind: "reduce", side: "long" })).text).toBe("减仓");
+    expect(replayMarker(fill({ kind: "add", side: "long" }))!.text).toBe("加仓");
+    expect(replayMarker(fill({ kind: "reduce", side: "long" }))!.text).toBe("减仓");
   });
   it("close → 平多/平空；reduce_terminated 归平仓态（归类正确）", () => {
     const m = replayMarker(fill({
-      kind: "close", side: "long", reason: "reduce_terminated" }));
+      kind: "close", side: "long", reason: "reduce_terminated" }))!;
     expect(m.text).toBe("平多");
     expect(m.action).toBe("exit");
   });
   it("exit_sl → 出场族平仓态", () => {
     expect(replayMarker(fill({
-      kind: "exit_sl", side: "long" })).text).toBe("平多");
+      kind: "exit_sl", side: "long" }))!.text).toBe("平多");
+  });
+
+  it("值域外 kind → null 防线（沿 vr 无词条滤除——marker 滤除"
+      + " 流水显原文）", () => {
+    expect(replayMarker(fill({ kind: "unknown_kind" }))).toBeNull();
+    expect(replayMarker(fill({ kind: "" }))).toBeNull();
+  });
+  it("回放与 vr 同 kind 同字义同色（P3-CARD-05 单源一致性）："
+      + "replayMarker 输出与 eventSemantics 同码词条逐键一致", () => {
+    for (const [kind, code] of [
+      ["open", 10], ["add", 11], ["reduce", 12], ["close", 13],
+      ["exit_sl", 20],
+    ] as const) {
+      const m = replayMarker(fill({ kind }))!;
+      const sem = eventSemantics(code)!;
+      expect(m.text).toBe(sem.morph.long);
+      expect(m.color).toBe(TRACE_FAMILY_COLOR[sem.family]);
+      expect(m.action).toBe(sem.action);
+    }
   });
 });
 
