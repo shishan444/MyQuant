@@ -69,10 +69,12 @@ class TestSingleTfEquivalence:
 
 
 class TestMtfEquivalence:
-    """L2-A2 MTF：主 4h 辅 1d——分段驱动可完成出数（辅帧可见集
-    一致性由时序纪律用例逐段锚定）。"""
+    """L2-A2 MTF：主 4h 辅 1d——分段驱动区间全覆盖+分段与逐帧
+    逐笔一致（CARD-01 回归锚：丢 bar 缺陷的两条验收判据）。"""
 
     def test_mtf_segmented_run_completes(self, tmp_path):
+        """分段驱动区间全覆盖：bars_processed==区间根数（弱断言
+        >0 升级——丢 bar 缺陷下此断言红：实测 50/300）。"""
         from tests.replay._env import make_mtf_dna_main4h
 
         env = ReplayEnv(tmp_path, dna=make_mtf_dna_main4h(), n_bars=1800)
@@ -82,4 +84,68 @@ class TestMtfEquivalence:
         res = rr.run(env.db, env.strategy_id, start, end,
                      task_id="segm1", fee=0.001, slippage=0.0005)
         assert res.status in ("completed", "stopped")
-        assert res.bars_processed > 0
+        assert res.bars_processed == 300, (
+            f"区间主 bar 全驱动（实测 {res.bars_processed}/300）")
+
+    def test_mtf_segmented_vs_frame_by_frame_identical(self, tmp_path):
+        """分段 vs 逐帧逐笔一致（R4.1 验收场景）：恒触发 mtf dna
+        （两层 entry 恒真——两轴都有成交，对账有实质面）；对照轴
+        逐 bar 喂帧，辅帧可见集按契约手写推进（辅收盘时刻 ≤ 主收盘
+        含等号——独立于 feeder 段实现）。"""
+        from core.paper_trading.runtime.executor import PaperTaskExecutor
+        from core.paper_trading.runtime.feed import FeedRegistry
+        from core.replay.feeder import ReplayFeeder
+        from tests.replay._env import make_mtf_loop_dna_main4h
+
+        env = ReplayEnv(tmp_path, dna=make_mtf_loop_dna_main4h(),
+                        n_bars=1800)
+        env.add_mtf_aux(freq="1d", n=520)
+        start, end = env.range(head_bars=300)
+        r_seg = ReplayRunner(env.data_dir).run(
+            env.db, env.strategy_id, start, end,
+            task_id="segm2", fee=0.001, slippage=0.0005)
+
+        # 逐帧对照轴：契约可见性推进+executor 直构逐 bar 喂
+        feeder = ReplayFeeder(
+            env.data_dir, env.db, env.dna, "BTCUSDT", "4h", start, end)
+        feeder.load()
+        main, aux = feeder.main, feeder._aux["1d"]
+        paper.create_task(
+            env.db, strategy_id=env.strategy_id,
+            dna_snapshot_json=env.dna.to_json(),
+            symbol="BTCUSDT", timeframe="4h",
+            research_status_snapshot="unverified",
+            fee=0.001, slippage=0.0005, task_id="ffm2")
+        registry = FeedRegistry(
+            env.data_dir,
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
+            funding_refresher=lambda **k: pd.DataFrame())
+        ex = PaperTaskExecutor(
+            env.db, paper.get_task(env.db, "ffm2"), registry=registry,
+            start_after=feeder.main_start.isoformat())
+        assert ex.prepare()
+        paper.update_task(env.db, "ffm2", status="running")
+        main_close = main.index + pd.Timedelta(minutes=240)
+        aux_close = aux.index + pd.Timedelta(minutes=1440)
+        j0 = int(main.index.searchsorted(pd.Timestamp(feeder.main_start)))
+        for i in range(j0, len(main)):
+            visible = int((aux_close <= main_close[i]).sum())
+            ex._aux_frames["1d"] = aux.iloc[:visible]
+            ex.process_frames(main.iloc[: i + 1], i)
+            if ex._concluded_status is not None:
+                break
+        if ex._concluded_status is None:
+            ex._finalize("completed")
+
+        f_seg = paper.list_fills(env.db, "segm2", limit=2000)
+        f_ff = paper.list_fills(env.db, "ffm2", limit=2000)
+        assert len(f_seg) > 0, "恒触发构造下分段轴有成交（对账实质面）"
+        assert len(f_seg) == len(f_ff), (
+            f"成交笔数一致（分段 {len(f_seg)} vs 逐帧 {len(f_ff)}）")
+        for a, b in zip(f_seg, f_ff):
+            assert a["kind"] == b["kind"]
+            assert a["quantity"] == pytest.approx(b["quantity"])
+            assert a["price"] == pytest.approx(b["price"])
+        t_ff = paper.get_task(env.db, "ffm2")
+        assert r_seg.total_trades == t_ff["total_trades"]
+        assert r_seg.total_pnl == pytest.approx(t_ff["total_pnl"])

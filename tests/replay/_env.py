@@ -88,3 +88,32 @@ def make_mtf_dna_main4h() -> StrategyDNA:
     from tests.helpers.data_factory import make_mtf_dna
 
     return make_mtf_dna(timeframes=("1d", "4h"))
+
+
+def make_mtf_loop_dna_main4h() -> StrategyDNA:
+    """恒触发 MTF dna（主 4h 辅 1d 两层 entry RSI>0 恒真+exit 永假）
+    ——保证两轴都有成交，等价性对账有实质面（CARD-01 回归构造：
+    阈值型两层 AND 在合成数据下难同时触发，成交 0 的对账是弱证据）。"""
+    from core.strategy.dna import ExecutionGenes, TimeframeLayer
+    from tests.helpers.data_factory import make_signal_gene
+
+    layers = []
+    for tf in ("1d", "4h"):
+        entry = make_signal_gene(
+            indicator="RSI", role=SignalRole.ENTRY_TRIGGER,
+            condition_type="gt", condition_value=0)
+        exit_gene = make_signal_gene(
+            indicator="RSI", role=SignalRole.EXIT_TRIGGER,
+            condition_type="gt", condition_value=200)
+        layers.append(TimeframeLayer(
+            timeframe=tf,
+            signal_genes=[entry, exit_gene],
+            logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND")))
+    return StrategyDNA(
+        signal_genes=[],
+        logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
+        execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
+        risk_genes=RiskGenes(
+            stop_loss=0.05, take_profit=0.2, position_size=0.1,
+            leverage=2, direction="long"),
+        layers=layers)
