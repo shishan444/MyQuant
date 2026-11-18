@@ -110,6 +110,7 @@ class ReplayRunner:
         # _dna_override：内存 DNA 直传入口（run_from_dna 进——exit_sweep
         # 等研究模板构造的内存策略不落库直跑；校验段照走）
         if _dna_override is not None:
+            dna = _dna_override
             strategy_row = {
                 "strategy_id": strategy_id,
                 "dna_json": _dna_override.to_json()}
@@ -124,20 +125,16 @@ class ReplayRunner:
                 raise ReplayError(
                     "RESEARCH_STORED_DATA_INVALID",
                     f"策略 DNA 快照解析失败: {exc}") from exc
-        if _dna_override is not None:
-            dna = _dna_override
-        # validate_dna 仅对库策略跑（入库完整性校验——值域+交叉）；
-        # 研究模板内存 dna（run_from_dna）跳过：模板校验期自成体系
-        # （模式×双量纲值域在 exit_sweep 等模板内单点校验），库校验
-        # 的 tp>sl 交叉不分量纲与实验网格双量纲合法形制冲突
-        # （add-replay-backtest-mcp 任务 2.2 适配）。
-        else:
-            pass  # dna 已在上方解析；此处维持原校验位（见下）
-        result = validate_dna(dna) if _dna_override is None else None
-        if result is not None and not result.is_valid:
-            raise ReplayError(
-                "INVALID_DNA", "DNA 值域校验未过",
-                detail="; ".join(result.errors))
+            # validate_dna 仅对库策略跑（入库完整性校验——值域+交叉）；
+            # 研究模板内存 dna（run_from_dna）跳过：模板校验期自成体系
+            # （模式×双量纲值域在 exit_sweep 等模板内单点校验），库校验
+            # 的 tp>sl 交叉不分量纲与实验网格双量纲合法形制冲突
+            # （add-replay-backtest-mcp 任务 2.2 适配）。
+            result = validate_dna(dna)
+            if result is not None and not result.is_valid:
+                raise ReplayError(
+                    "INVALID_DNA", "DNA 值域校验未过",
+                    detail="; ".join(result.errors))
         # paper 链能力矩阵（回放走纸盘执行链——series 档/插件源等
         # 纸盘不支持形态装载即拒，与 prepare 同判据单源；显式拒绝
         # 不静默降级）
