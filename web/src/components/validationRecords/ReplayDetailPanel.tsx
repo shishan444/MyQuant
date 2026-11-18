@@ -28,6 +28,9 @@ interface PaperFill {
 /** 纸盘信号行（gene_hits 字段族——触发描述数据源） */
 interface PaperSignal {
   bar_time: string;
+  /** 执行 bar（本根）——与 pt_fill.bar_time 同轴（C5 三元组锚
+   *  task_id+exec_bar_time+fill_seq；bar_time=决策锚差一根） */
+  exec_bar_time: string;
   kind: string;
   outcome: string;
   fill_seq: number | null;
@@ -116,12 +119,16 @@ export function derivePositionFlow(
   });
 }
 
-/** 基因触发描述（任务 4.1）：gene_hits join 经 (bar_time, fill_seq) */
+/** 基因触发描述（任务 4.1）：gene_hits join 经 (exec_bar_time,
+ *  fill_seq)——fill.bar_time=执行 bar 与 signal.exec_bar_time 同轴
+ *  （P3-CARD-02：此前 join signal.bar_time 决策锚差一根恒 miss，
+ *  pending 族〔八步序次根执行〕描述恒空串全族零收益；即时族
+ *  同根同值两形皆正确命中） */
 export function geneDescription(
   signals: PaperSignal[], barTime: string, fillSeq: number | null,
 ): string {
   const hit = signals.find(
-    (s) => s.bar_time === barTime && s.fill_seq === fillSeq
+    (s) => s.exec_bar_time === barTime && s.fill_seq === fillSeq
       && s.gene_hits && s.gene_hits.length > 0);
   if (!hit) return "";
   return hit.gene_hits!.map(
