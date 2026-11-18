@@ -66,6 +66,21 @@ def _replay_record_and_response(
 
     from core.persistence.repository import research as rr
 
+    # 研究日志先行（P2-CARD-04：沿 sandbox 编排序——日志步骤 4并集
+    # 唯一事实源、记录随后，两独立事务；replay 恒未挂假设→adhoc
+    # 留痕不入判定并集；写失败裸穿 fail-loud）
+    rr.append_research_log(
+        db_path,
+        hypothesis_id=None,
+        entry_type="replay_backtest",
+        ref_id=result.strategy_id,
+        data_ranges=_json.dumps(
+            [{"symbol": result.symbol, "timeframe": result.timeframe,
+              "start": result.start, "end": result.end}],
+            ensure_ascii=False),
+        summary=f"replay backtest {result.symbol} {result.timeframe} "
+                f"[{result.start},{result.end}) task={result.task_id} "
+                f"status={result.status}")
     record_id = f"rec_{_uuid.uuid4().hex[:12]}"
     record_params: Dict[str, Any] = {
         "symbol": result.symbol, "timeframe": result.timeframe,
