@@ -98,6 +98,20 @@ class TestBranchCoverage:
         assert settled, "归档在案时结算非全挂起"
         assert settled[0]["rate"] == pytest.approx(0.0001)
 
+    def test_funding_archive_missing_all_pending(self, tmp_path):
+        """funding 归档缺值挂起（与 test_funding_archive_indexed 互补
+        的另一态）：不造归档→区间结算点全落 pending 行不扣款、非错误
+        （与实时态 feed 缺值同语义——供数契约 R5 场景）。"""
+        env = ReplayEnv(tmp_path, n_bars=400)
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=200)
+        res = rr.run(env.db, env.strategy_id, start, end, task_id="fund02")
+        assert res.status in ("completed", "stopped"), "缺归档非错误"
+        records = paper.list_funding_records(env.db, "fund02", limit=1000)
+        assert records, "结算点在案（挂起留痕）"
+        assert all(r["status"] == "pending" for r in records), (
+            "归档缺值全挂起不扣款")
+
     def test_bad_dna_rejected(self, tmp_path):
         """坏 dna 快照：RESEARCH_STORED_DATA_INVALID 拒绝（行不建）。"""
         env = ReplayEnv(tmp_path, n_bars=300)
