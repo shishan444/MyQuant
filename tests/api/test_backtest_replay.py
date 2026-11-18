@@ -171,6 +171,47 @@ class TestBacktestReplayEndpoint:
             "leverage": 3})
         assert resp.status_code == 200, resp.text
 
+    def test_halt_info_absent_when_unconfigured(self, replay_env):
+        """halted 三分态1：未配置 halt_drawdown_pct→响应无 halt_info
+        键（不写键非 false——与 sandbox halt_info 形制一致）。"""
+        idx = replay_env["df"].index
+        resp = replay_env["client"].post("/api/research/backtest-replay", json={
+            "strategy_id": replay_env["strategy_id"],
+            "start": idx[-50].isoformat(), "end": idx[-1].isoformat()})
+        assert resp.status_code == 200, resp.text
+        assert "halt_info" not in resp.json()
+
+    def test_halt_info_false_when_configured_not_triggered(self, replay_env):
+        """halted 三分态2：配置（0.5 宽阈）未触发→halt_info={"halted":
+        false}（键在、值为 false）。"""
+        idx = replay_env["df"].index
+        resp = replay_env["client"].post("/api/research/backtest-replay", json={
+            "strategy_id": replay_env["strategy_id"],
+            "start": idx[-50].isoformat(), "end": idx[-1].isoformat(),
+            "halt_drawdown_pct": 0.5})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["halt_info"] == {"halted": False}
+
+    def test_halt_info_true_when_triggered(self, replay_env):
+        """halted 三分态3：微阈值（0.0001——开仓费用即破峰值回撤线）
+        触发→halt_info={"halted": true, halted_at, halt_reason}。语义
+        注意：halt 只停新开仓不终止回放——status 仍 completed（触发
+        后区间跑完，非 stopped）。"""
+        idx = replay_env["df"].index
+        resp = replay_env["client"].post("/api/research/backtest-replay", json={
+            "strategy_id": replay_env["strategy_id"],
+            "start": idx[-50].isoformat(), "end": idx[-1].isoformat(),
+            "halt_drawdown_pct": 0.0001})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        info = body["halt_info"]
+        assert info["halted"] is True
+        assert info["halted_at"], "触发时刻在案"
+        assert info["halt_reason"] == \
+            "equity_drawdown_from_peak_ge_halt_drawdown_pct"
+        assert body["status"] == "completed", "halt 不终止回放"
+        assert body["halted_at"] == info["halted_at"], "平铺兼容键同源"
+
     def test_strategy_not_found_structured_4xx(self, replay_env):
         idx = replay_env["df"].index
         resp = replay_env["client"].post("/api/research/backtest-replay", json={
