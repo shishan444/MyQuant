@@ -145,6 +145,23 @@ class TestFinalEquityHoldingTerminal:
         assert res.final_balance == pytest.approx(100_000.0)
 
 
+class TestBarAccountingInvariant:
+    """逐 bar 落库不变量（属性）：权益快照行数==bars_processed
+    （每驱动 bar 恰一行快照——CARD-01 修复面直接相关，丢 bar 时
+    此不变量与快照行数同步暴露）。"""
+
+    def test_snapshot_rows_equal_bars_processed(self, tmp_path):
+        env = ReplayEnv(tmp_path, n_bars=600)
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=300)
+        res = rr.run(env.db, env.strategy_id, start, end, task_id="ts07")
+        eqs = paper.list_equity_snapshots(env.db, "ts07", limit=10000)
+        assert res.bars_processed > 0
+        assert len(eqs) == res.bars_processed, (
+            f"逐 bar 落库守恒（快照 {len(eqs)} 行 vs "
+            f"bars_processed {res.bars_processed}）")
+
+
 class TestDepletedTerminal:
     """R4.2 枯竭提前终止继承（三连开仓拒绝+空仓 → depleted）。"""
 
