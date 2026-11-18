@@ -180,6 +180,46 @@ class TestLoadRejections:
                    idx[10].isoformat(), idx[-1].isoformat())
         assert "WARMUP" in ei.value.code
 
+    def test_symbol_invalid_rejected_library_path(self, tmp_path):
+        """CARD-03：库策略路径坏 symbol（dna_json 内 execution_
+        genes.symbol——库路径消费面是 dna 内值，非 strategy 行的
+        symbol 列）→ RESEARCH_PARAM_INVALID 即拒+行不建；时序先于
+        feeder 归档读取（未校验符号原直达 parquet 拼接点）。"""
+        import dataclasses
+
+        from core.persistence.repository.strategy import save_strategy
+
+        env = ReplayEnv(tmp_path, n_bars=300)
+        evil_dna = dataclasses.replace(
+            env.dna,
+            execution_genes=dataclasses.replace(
+                env.dna.execution_genes, symbol="../../etc/passwd"))
+        save_strategy(env.db, strategy_id="st_evil",
+                      dna_json=evil_dna.to_json(), symbol="BTCUSDT",
+                      timeframe="4h", status="draft")
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=100)
+        with pytest.raises(ReplayError) as ei:
+            rr.run(env.db, "st_evil", start, end)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert paper.list_tasks(env.db, limit=10) == [], "行不建"
+
+    def test_symbol_invalid_rejected_override_path(self, tmp_path):
+        """CARD-03：内存 DNA override 路径（run_from_dna）坏 symbol
+        同码即拒——两路径汇聚点单次校验覆盖。"""
+        import dataclasses
+
+        env = ReplayEnv(tmp_path, n_bars=300)
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=100)
+        bad_dna = dataclasses.replace(
+            env.dna,
+            execution_genes=dataclasses.replace(
+                env.dna.execution_genes, symbol="BTC/../USDT"))
+        with pytest.raises(ReplayError) as ei:
+            rr.run_from_dna(env.db, bad_dna, start, end, task_id="evil1")
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+
     def test_series_mode_rejected(self, tmp_path):
         """series 档显式拒绝（能力边界表述，不静默降级）。"""
         import dataclasses
