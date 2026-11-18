@@ -45,6 +45,55 @@ class TestReplayBacktestBodyAssembly:
         assert body["task_id"] == "fixed-01"
 
 
+    def test_concurrent_params_only_when_given(self) -> None:
+        """并发组参数面（P2-CARD-01）：strategy_ids/max_workers 给了
+        才落键——缺省面七键锚不受扰（上方 defaults 用例锁定）。"""
+        mcp, api = _register("research")
+        mcp.registered["run_replay_backtest"](
+            "st-1", "s", "e",
+            strategy_ids=["st-1", "st-2", "st-3"], max_workers=3)
+        _, _, body = api.calls[-1]
+        assert body["strategy_ids"] == ["st-1", "st-2", "st-3"]
+        assert body["max_workers"] == 3
+
+    def test_pure_batch_no_strategy_id_key(self) -> None:
+        """纯并发组形态（退回修复锚）：strategy_id 不传时 body 无
+        strategy_id 键（可选化后给了才落——AI 纯批量发起无冗余参）。"""
+        mcp, api = _register("research")
+        mcp.registered["run_replay_backtest"](
+            None, "s", "e", strategy_ids=["st-1", "st-2"])
+        _, _, body = api.calls[-1]
+        assert "strategy_id" not in body
+        assert body["strategy_ids"] == ["st-1", "st-2"]
+
+
+class TestReplayBacktestPayloadChannels:
+    """T4 冒烟：成功 summary 载荷透传+错误载荷 error 通道（samples
+    注入受控 API 返回——工具层不断言业务域）。"""
+
+    def test_success_payload_passthrough(self) -> None:
+        """API 成功返回（record_id+summary 组）→工具响应透传同键。"""
+        mcp, api = _register("research")
+        api.samples["/api/research/backtest-replay"] = {
+            "task_id": "t-1", "record_id": "rec_x", "status": "completed",
+            "total_pnl": 1.5, "final_balance": 100001.5}
+        out = mcp.registered["run_replay_backtest"]("st-1", "s", "e")
+        assert out["record_id"] == "rec_x"
+        assert out["status"] == "completed"
+        assert out["total_pnl"] == 1.5
+
+    def test_error_payload_error_channel(self) -> None:
+        """API 错误载荷（如 STRATEGY_NOT_FOUND）→tool_safe 转
+        {"error": ...} 通道返回（非 raise——沿 MCP 错误通道形制）。"""
+        mcp, api = _register("research")
+        api.samples["/api/research/backtest-replay"] = {
+            "error": {"code": "STRATEGY_NOT_FOUND",
+                      "message": "策略不存在"}}
+        out = mcp.registered["run_replay_backtest"]("st-missing", "s", "e")
+        assert "error" in out
+        assert out["error"]["code"] == "STRATEGY_NOT_FOUND"
+
+
 class TestLegacyBacktestOfflineMarking:
     """入口切换标注双面（spec：工具描述与能力自述标注已下线，
     调用仍可用——run_backtest 保留在册）。"""

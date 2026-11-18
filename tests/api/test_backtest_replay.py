@@ -89,6 +89,63 @@ class TestBacktestReplayEndpoint:
             rec = rr.get_validation_record_by_id(replay_env["db"], rid)
             assert rec["level"] == "replay"
 
+    def test_batch_strategy_ids_results(self, replay_env):
+        """并发组端到端（P2-CARD-01）：strategy_ids 3 路→results
+        列表 3 项、序保持、每路 record_id/task_id 独立、task 行与
+        validation_records 每路一行互不串。"""
+        from tests.helpers.data_factory import make_dna as _make
+
+        sids = [replay_env["strategy_id"]]
+        for i in (2, 3):
+            save_strategy(replay_env["db"], strategy_id=f"st_batch_{i}",
+                          dna_json=_make().to_json(), symbol="BTCUSDT",
+                          timeframe="4h", status="draft")
+            sids.append(f"st_batch_{i}")
+        idx = replay_env["df"].index
+        resp = replay_env["client"].post("/api/research/backtest-replay", json={
+            "strategy_ids": sids,
+            "start": idx[-100].isoformat(), "end": idx[-1].isoformat(),
+            "max_workers": 3})
+        assert resp.status_code == 200, resp.text
+        results = resp.json()["results"]
+        assert [r["strategy_id"] for r in results] == sids, "结果序保持"
+        assert len({r["task_id"] for r in results}) == 3
+        record_ids = [r["record_id"] for r in results]
+        assert len(set(record_ids)) == 3, "每路独立 record"
+        from core.persistence.repository import paper as pp
+        from core.persistence.repository import research as rr
+
+        for r in results:
+            task = pp.get_task(replay_env["db"], r["task_id"])
+            assert task["strategy_id"] == r["strategy_id"], "落库互不串"
+            rec = rr.get_validation_record_by_id(
+                replay_env["db"], r["record_id"])
+            assert rec["level"] == "replay", "每路一行记录"
+
+    def test_single_element_strategy_ids_flat_response(self, replay_env):
+        """单值并发组退化直调：平铺响应（无 results 包裹——与
+        strategy_id 缺省路径同构）。"""
+        idx = replay_env["df"].index
+        resp = replay_env["client"].post("/api/research/backtest-replay", json={
+            "strategy_ids": [replay_env["strategy_id"]],
+            "start": idx[-100].isoformat(), "end": idx[-1].isoformat()})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "results" not in body, "单值不进池（平铺形制）"
+        assert body["strategy_id"] == replay_env["strategy_id"]
+        assert body["bars_processed"] > 0
+
+    def test_batch_with_task_id_rejected(self, replay_env):
+        """矛盾拒绝：并发组+task_id 同传→422 RESEARCH_PARAM_INVALID
+        （防静默丢参——每路独立 task_id 语义不可共享固定值）。"""
+        idx = replay_env["df"].index
+        resp = replay_env["client"].post("/api/research/backtest-replay", json={
+            "strategy_ids": [replay_env["strategy_id"], "st_x"],
+            "start": idx[-100].isoformat(), "end": idx[-1].isoformat(),
+            "task_id": "fixed-01"})
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["detail"]["code"] == "RESEARCH_PARAM_INVALID"
+
     def test_strategy_not_found_structured_4xx(self, replay_env):
         idx = replay_env["df"].index
         resp = replay_env["client"].post("/api/research/backtest-replay", json={
