@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import (AliasChoices, BaseModel, ConfigDict, Field,
-                      field_validator)
+                      field_validator, model_validator)
 
 # 值域单源引用（D4 家族/0.4.2 值域单源化）：sl_mode 取值域与杠杆红线
 # 的权威常量在 core 层，传输层只派生消费——改值单点生效，禁字面重复
@@ -468,9 +468,14 @@ class ReplayBacktestRequest(BaseModel):
     """逐根回放回测（add-replay-backtest-mcp）：现役回测入口——
     底层 ReplayRunner（纸盘执行核心逐根回放，symbol/timeframe 从
     策略 DNA 抄录不可覆写）；响应携带 ReplayResult summary 组。
-    经济参数值域同 sandbox（fee/slippage>=0、initial_cash>=1）。"""
+    经济参数值域同 sandbox（fee/slippage>=0、initial_cash>=1）。
+    并发组（add-replay-backtest-mcp P2 补面）：strategy_ids 多值
+    经进程池并发回放（每路独立实例独立 task_id，缺省单策略走
+    strategy_id 不进池——两形态可独立发起，至少其一在场）；
+    max_workers 并发上限缺省 5。"""
 
-    strategy_id: str
+    strategy_id: Optional[str] = None
+    strategy_ids: Optional[List[str]] = None
     start: str
     end: str
     fee: float = Field(default=0.001, ge=0)
@@ -481,6 +486,17 @@ class ReplayBacktestRequest(BaseModel):
     stop_loss_pct: Optional[float] = None
     halt_drawdown_pct: Optional[float] = None
     task_id: Optional[str] = None
+    max_workers: Optional[int] = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _require_strategy_ref(self) -> "ReplayBacktestRequest":
+        """单/批两形态至少其一（并发组可独立发起——spec MUST；
+        两者全无 422，strategy_ids 空列表视同缺省走 strategy_id）。"""
+        if self.strategy_id is None and not self.strategy_ids:
+            raise ValueError(
+                "strategy_id 与 strategy_ids 至少其一必填"
+                "（单策略形态用 strategy_id，并发组形态用 strategy_ids）")
+        return self
 
 
 class SandboxBacktestRequest(BaseModel):

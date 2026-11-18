@@ -53,45 +53,13 @@ def backtest_sandbox(
         halt_drawdown_pct=payload.halt_drawdown_pct)
 
 
-@router.post("/backtest-replay")
-def backtest_replay(
-    payload: ReplayBacktestRequest,
-    db_path: Path = Depends(get_db_path),
-    data_dir: Path = Depends(get_data_dir),
+def _replay_record_and_response(
+    db_path: Path, payload: ReplayBacktestRequest, result: Any,
 ) -> Dict[str, Any]:
-    """逐根回放回测（add-replay-backtest-mcp）：现役回测入口——
-    底层 ReplayRunner（core/replay，纸盘执行核心逐根回放，与真实
-    交易同一套执行逻辑）；symbol/timeframe 从策略 DNA 抄录不可
-    覆写；费滑杠杆资金为任务覆写面。响应携带 ReplayResult summary
-    组与明细引用（task_id+db 经既有 pt_* 查询通道）。装载失败
-    （策略不存在/数据缺/warmup 不足/series 档等）结构化 4xx。"""
-    from core.replay import ReplayError, ReplayRunner
-
-    require_halt_drawdown_pct(payload.halt_drawdown_pct)
-    try:
-        result = ReplayRunner(data_dir).run(
-            db_path, payload.strategy_id, payload.start, payload.end,
-            fee=payload.fee, slippage=payload.slippage,
-            initial_cash=payload.initial_cash,
-            leverage=payload.leverage,
-            window_bars=payload.window_bars,
-            stop_loss_pct=payload.stop_loss_pct,
-            halt_drawdown_pct=payload.halt_drawdown_pct,
-            task_id=payload.task_id)
-    except ReplayError as exc:
-        # ReplayError -> ResearchError 重抛：未捕获冒泡至全局 handler
-        # 经 research_error_to_http 单源转结构化 4xx（code/message/
-        # detail）；STRATEGY_NOT_FOUND 语义映射 404（沿 REST 惯例），
-        # 其余装载类拒绝 422
-        from core.analysis.errors import ResearchError
-
-        status = 404 if exc.code == "STRATEGY_NOT_FOUND" else 422
-        raise ResearchError(
-            exc.code, str(exc), status=status, detail=exc.detail) from exc
-    # level=replay 记录写入（add-replay-backtest-mcp 任务 3.1）：与
-    # sandbox 同构（hypothesis_id 缺省 adhoc、verdict 恒空串不参与
-    # 三态；range_hash 掺参数全集+record_id——每次执行恒新）；fail-
-    # loud（写失败整体报错，禁止记录缺而指标照常返回）
+    """单路回放结果落记录+构造响应 dict（单路与并发组每路共用——
+    沿单路语义：level=replay 行 hypothesis_id 缺省 adhoc、verdict
+    恒空串；range_hash 掺参数全集+record_id——每次执行恒新；fail-
+    loud（写失败整体报错，禁止记录缺而指标照常返回））。"""
     import hashlib
     import json as _json
     import uuid as _uuid
@@ -140,3 +108,82 @@ def backtest_replay(
         "final_equity": result.final_equity,
         "halted_at": result.halted_at, "first_met_at": result.first_met_at,
     }
+
+
+@router.post("/backtest-replay")
+def backtest_replay(
+    payload: ReplayBacktestRequest,
+    db_path: Path = Depends(get_db_path),
+    data_dir: Path = Depends(get_data_dir),
+) -> Dict[str, Any]:
+    """逐根回放回测（add-replay-backtest-mcp）：现役回测入口——
+    底层 ReplayRunner（core/replay，纸盘执行核心逐根回放，与真实
+    交易同一套执行逻辑）；symbol/timeframe 从策略 DNA 抄录不可
+    覆写；费滑杠杆资金为任务覆写面。响应携带 ReplayResult summary
+    组与明细引用（task_id+db 经既有 pt_* 查询通道）。装载失败
+    （策略不存在/数据缺/warmup 不足/series 档等）结构化 4xx。
+    并发组（P2 补面）：strategy_ids 多值（≥2）经进程池并发回放
+    （每路独立实例独立 task_id、响应 results 列表每路一 record
+    行；单值/缺省走 strategy_id 直调不进池）；max_workers 并发
+    上限缺省 5 可配。"""
+    from core.replay import ReplayError, ReplayRunner, run_replay_batch
+
+    require_halt_drawdown_pct(payload.halt_drawdown_pct)
+    # 并发组矛盾拒绝：task_id 是单路固定注入面，每路独立 task_id
+    # 语义下不可共享（防静默丢参——传了即拒非忽略）
+    if payload.strategy_ids and payload.task_id is not None:
+        from core.analysis.errors import ResearchError
+
+        raise ResearchError(
+            "RESEARCH_PARAM_INVALID",
+            "并发组（strategy_ids）不支持 task_id——每路独立生成",
+            status=422)
+    batch_ids = (
+        payload.strategy_ids
+        if payload.strategy_ids and len(payload.strategy_ids) >= 2
+        else None)
+    single_id = (
+        payload.strategy_ids[0]
+        if payload.strategy_ids and len(payload.strategy_ids) == 1
+        else payload.strategy_id)
+    try:
+        if batch_ids is not None:
+            results = run_replay_batch(
+                db_path, batch_ids, payload.start, payload.end,
+                data_dir=data_dir,
+                fee=payload.fee, slippage=payload.slippage,
+                initial_cash=payload.initial_cash,
+                leverage=payload.leverage,
+                window_bars=payload.window_bars,
+                stop_loss_pct=payload.stop_loss_pct,
+                halt_drawdown_pct=payload.halt_drawdown_pct,
+                max_workers=(
+                    payload.max_workers
+                    if payload.max_workers is not None else 5))
+        else:
+            results = [ReplayRunner(data_dir).run(
+                db_path, single_id, payload.start, payload.end,
+                fee=payload.fee, slippage=payload.slippage,
+                initial_cash=payload.initial_cash,
+                leverage=payload.leverage,
+                window_bars=payload.window_bars,
+                stop_loss_pct=payload.stop_loss_pct,
+                halt_drawdown_pct=payload.halt_drawdown_pct,
+                task_id=payload.task_id)]
+    except ReplayError as exc:
+        # ReplayError -> ResearchError 重抛：未捕获冒泡至全局 handler
+        # 经 research_error_to_http 单源转结构化 4xx（code/message/
+        # detail）；STRATEGY_NOT_FOUND 语义映射 404（沿 REST 惯例），
+        # 其余装载类拒绝 422
+        from core.analysis.errors import ResearchError
+
+        status = 404 if exc.code == "STRATEGY_NOT_FOUND" else 422
+        raise ResearchError(
+            exc.code, str(exc), status=status, detail=exc.detail) from exc
+    # 单路/并发组每路统一经 _replay_record_and_response（level=replay
+    # 记录行+响应 dict 共用——fail-loud 与 adhoc 语义沿单路不变）
+    if batch_ids is not None:
+        return {"results": [
+            _replay_record_and_response(db_path, payload, r)
+            for r in results]}
+    return _replay_record_and_response(db_path, payload, results[0])

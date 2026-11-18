@@ -34,6 +34,9 @@ def run_replay_batch(
     slippage: float = 0.0005,
     initial_cash: float = 100_000.0,
     leverage: int = 1,
+    window_bars: Optional[int] = None,
+    stop_loss_pct: Optional[float] = None,
+    halt_drawdown_pct: Optional[float] = None,
     max_workers: int = DEFAULT_REPLAY_WORKERS,
     executor: Optional[Executor] = None,
 ) -> List[ReplayResult]:
@@ -45,7 +48,10 @@ def run_replay_batch(
     原子语义单元，部分结果不返回；逐路容错归调用方按需包装）。
     """
     common = dict(fee=fee, slippage=slippage,
-                  initial_cash=initial_cash, leverage=leverage)
+                  initial_cash=initial_cash, leverage=leverage,
+                  window_bars=window_bars,
+                  stop_loss_pct=stop_loss_pct,
+                  halt_drawdown_pct=halt_drawdown_pct)
     args_list = [
         (str(data_dir), str(db_path), sid, start, end, dict(common))
         for sid in strategy_ids]
