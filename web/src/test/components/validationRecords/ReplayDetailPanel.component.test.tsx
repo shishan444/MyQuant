@@ -196,4 +196,19 @@ describe("ReplayDetailPanel 组件渲染与互达（P3 建网+CARD-01/03 验收�
     renderPanel(RECORD(undefined));
     expect(screen.getByText(/缺 task_id 引用/)).toBeInTheDocument();
   });
+
+  it("tid 形制闸拒路径注入（CARD-06 F-P3-2）：../ 语义串 → 引用"
+      + "不可用降级且零请求", async () => {
+    renderPanel(RECORD("../etc/passwd"));
+    expect(screen.getByText(/形制不可用/)).toBeInTheDocument();
+    // 闸后零请求（useQuery enabled !!tid——fetch 不触达）
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockOhlcv).not.toHaveBeenCalled();
+  });
+
+  it("tid 形制闸白名单边界：64 位合法形制直通（不误拒）", async () => {
+    stubFetch(FILLS, SIGNALS);
+    renderPanel(RECORD("a".repeat(64)));
+    await screen.findByTestId("replay-position-flow");
+  });
 });
