@@ -405,6 +405,7 @@ class Ledger:
                 close_intent = Intent(
                     kind="close",
                     size_fraction=1.0,
+                    direction=self.position.side,
                     reason="reduce_terminated",
                 )
                 fill = fill_model.fill(

@@ -87,8 +87,9 @@ class Intent:
 
     Attributes:
         kind: 九值动作类型（INTENT_KINDS）。
-        direction: "long"|"short"|""（入场/方向翻转类携带，出场全平类
-            为空串）。
+        direction: "long"|"short"|""（入场/方向翻转与出场族全部
+            携带——含 close 族两出场源〔信号/SL/TP 与减仓终止升格〕、
+            reduce 与清算；仅意图构造时仓位方向不可知的缺省空串）。
         size_fraction: 比例因子（见模块 docstring 语义表）。
         reason: 审计字符串（如 "reverse"/"signal"/"window"），落成交表。
         trigger_price: 即时类触发价；其余 None。
