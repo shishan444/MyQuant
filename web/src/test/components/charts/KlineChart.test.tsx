@@ -11,6 +11,7 @@ vi.mock("lightweight-charts", () => {
   const registry = {
     charts: [] as any[],
     crosshairHandlers: [] as Array<(p: unknown) => void>,
+    clickHandlers: [] as Array<(p: unknown) => void>,
   };
   const mkTimeScale = () => ({
     setVisibleRange: vi.fn(),
@@ -45,6 +46,10 @@ vi.mock("lightweight-charts", () => {
       }),
       panes: vi.fn(() => panes),
       subscribeCrosshairMove: vi.fn((h: (p: unknown) => void) => registry.crosshairHandlers.push(h)),
+      subscribeClick: vi.fn((h: (p: unknown) => void) => registry.clickHandlers.push(h)),
+      unsubscribeClick: vi.fn((h: (p: unknown) => void) => {
+        registry.clickHandlers = registry.clickHandlers.filter((x) => x !== h);
+      }),
     };
     registry.charts.push(chart);
     return chart;
@@ -72,7 +77,7 @@ import { toTime } from "@/components/charts/core/time";
 import { useChartSettings } from "@/stores/chart-settings";
 import * as lightweightCharts from "lightweight-charts";
 
-const registry = (lightweightCharts as unknown as { __registry: { charts: any[]; crosshairHandlers: any[] } }).__registry;
+const registry = (lightweightCharts as unknown as { __registry: { charts: any[]; crosshairHandlers: any[]; clickHandlers: any[] } }).__registry;
 
 const CANDLES = [
   { timestamp: "2026-01-01 00:00:00", open: 100, high: 110, low: 95, close: 105 },
@@ -99,6 +104,7 @@ const TRIGGERS = [
 function setup() {
   registry.charts.length = 0;
   registry.crosshairHandlers.length = 0;
+  registry.clickHandlers.length = 0;
   const utils = render(
     <KlineChart
       data={CANDLES as never}
@@ -623,5 +629,77 @@ describe("KlineChart signalMarkers 双通道（锚定价位透明 series 组）"
       expect(m).not.toHaveProperty("title");
       expect(m).not.toHaveProperty("tooltip");
     });
+  });
+});
+
+describe("P3-CARD-01/03 扩展面（selectedMarkerTime/onMarkerClick）", () => {
+  const ANCHORED = [
+    { time: "2026-01-01 00:00:00", price: 100, text: "开多",
+      position: "belowBar", shape: "arrowUp", color: "#3b82f6",
+      action: "open" },
+    { time: "2026-01-01 04:00:00", price: 112, text: "平多",
+      position: "aboveBar", shape: "arrowDown", color: "#ef4444",
+      action: "exit" },
+  ] as const;
+
+  function findAnchoredSeries() {
+    // 锚定通道（有价行）走独立 series 的 markers——遍历全部 chart
+    // 找带 markers 且条目含 price 的 series
+    for (const c of registry.charts as any[]) {
+      for (const s of c.series as any[]) {
+        if (Array.isArray(s.markers)
+          && (s.markers as any[]).some((m) => "price" in m)) {
+          return s;
+        }
+      }
+    }
+    return null;
+  }
+
+  it("selectedMarkerTime 命中条 color 覆盖 teal、未命中条原色（选中高亮）", async () => {
+    registry.charts.length = 0;  // 隔离前序用例 chart 残留（模块级单例）
+    render(
+      <KlineChart
+        data={CANDLES as never} height={400}
+        signalMarkers={ANCHORED as never}
+        selectedMarkerTime={toTime("2026-01-01 00:00:00") as number}
+      />,
+    );
+    await vi.waitFor(() => {
+      const s = findAnchoredSeries();
+      expect(s).toBeTruthy();
+      const hit = (s!.markers as any[]).find((m) => m.text === "开多");
+      const miss = (s!.markers as any[]).find((m) => m.text === "平多");
+      expect(miss.color).toBe("#ef4444"); // 未命中条原色不变
+      expect(hit.color).not.toBe("#3b82f6"); // 命中条覆盖为高亮色
+    });
+  });
+
+  it("onMarkerClick 命中 markers time 才回调；未传 prop 零订阅", async () => {
+    registry.charts.length = 0;  // 同上隔离
+    const spy = vi.fn();
+    render(
+      <KlineChart
+        data={CANDLES as never} height={400}
+        signalMarkers={ANCHORED as never}
+        onMarkerClick={spy}
+      />,
+    );
+    await vi.waitFor(() => {
+      expect(registry.clickHandlers.length).toBe(1); // 订阅在案
+    });
+    const handler = registry.clickHandlers[0];
+    const hit = toTime("2026-01-01 04:00:00") as number;
+    act(() => { handler({ time: hit }); });
+    expect(spy).toHaveBeenCalledWith(hit);
+    act(() => { handler({ time: 9999999999 }); });
+    expect(spy).toHaveBeenCalledTimes(1); // 未命中不回调
+    act(() => { handler({ time: null }); });
+    expect(spy).toHaveBeenCalledTimes(1); // 无 time 不回调
+    // 未传 prop 的渲染零订阅（基础 setup 已卸——新渲染验证）
+    const before = registry.clickHandlers.length;
+    const u3 = render(<KlineChart data={CANDLES as never} height={400} />);
+    u3.unmount();
+    expect(registry.clickHandlers.length).toBe(before); // 缺省零订阅
   });
 });
