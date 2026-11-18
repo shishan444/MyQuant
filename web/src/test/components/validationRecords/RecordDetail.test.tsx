@@ -212,3 +212,24 @@ describe("RecordDetail 库值污染降级（T10 污染例+P4 对照例）", () =
     });
   });
 });
+
+describe("level=replay 挂载分派（fe-replay-presentation P3 建网）", () => {
+  it("replay 记录分派回放面板（明细装载态/空态由面板承载）", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true, json: async () => ({ fills: [], signals: [] }),
+    }) as Response));
+    try {
+      ui(<RecordDetail record={makeRow({
+        level: "replay",
+        result: { replay: { task_id: "task-disp", status: "completed",
+                            total_trades: 1, total_pnl: 0 } },
+      })} />);
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("replay-detail-panel")).toBeInTheDocument();
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
