@@ -256,7 +256,11 @@ class ReplayRunner:
             total_trades=int(row.get("total_trades") or 0),
             total_pnl=float(row.get("total_pnl") or 0.0),
             final_balance=float(row.get("balance") or 0.0),
+            # 权益单源口径=Ledger.equity：balance+position_margin
+            # +unrealized_pnl（开仓划出的保证金须加回——终态持仓时
+            # 漏 margin 项系统性偏低一个保证金值）
             final_equity=float(row.get("balance") or 0.0)
+            + float(row.get("position_margin") or 0.0)
             + float(row.get("unrealized_pnl") or 0.0),
             halted_at=row.get("halted_at"),
             first_met_at=row.get("first_met_at"),
