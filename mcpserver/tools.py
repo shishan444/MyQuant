@@ -10,7 +10,7 @@ hint}} 而非异常坍缩；成功路径返回形制零改变。
 from __future__ import annotations
 
 import functools
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote
 
 from mcpserver import errors
@@ -704,13 +704,15 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
-    def run_replay_backtest(strategy_id: str, start: str, end: str,
+    def run_replay_backtest(strategy_id: Optional[str], start: str, end: str,
                             fee: float = 0.001, slippage: float = 0.0005,
                             initial_cash: float = 100000.0, leverage: int = 1,
                             window_bars: Optional[int] = None,
                             stop_loss_pct: Optional[float] = None,
                             halt_drawdown_pct: Optional[float] = None,
-                            task_id: Optional[str] = None
+                            task_id: Optional[str] = None,
+                            strategy_ids: Optional[List[str]] = None,
+                            max_workers: Optional[int] = None
                             ) -> Dict[str, Any]:
         """逐根回放回测（现役回测主入口——add-replay-backtest-mcp）：
         底层为纸盘执行核心的逐根回放（与真实交易 100% 同一套执行
@@ -723,11 +725,23 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
         纸盘链能力集 pct/atr/trail，不支持 series 档——62 条
         hypothesis 历史存量失去现役回测入口，只读保留）。
         验证条件三件（可选）：window_bars/stop_loss_pct/
-        halt_drawdown_pct 沿纸盘语义；task_id 可注入固定值。"""
+        halt_drawdown_pct 沿纸盘语义；task_id 可注入固定值。
+        并发组（可选）：strategy_ids 多值（≥2）同区间批量——进程池
+        并发每路独立实例独立 task_id，响应 results 列表每路一 record
+        行；单值/缺省走 strategy_id 直调不进池；max_workers 并发上限
+        缺省 5 可配（并发组不支持 task_id——传了即拒）。strategy_id
+        与 strategy_ids 至少其一（并发组可独立发起——REST 层校验
+        两者全无 422）。"""
         body: Dict[str, Any] = {
-            "strategy_id": strategy_id, "start": start, "end": end,
+            "start": start, "end": end,
             "fee": fee, "slippage": slippage,
             "initial_cash": initial_cash, "leverage": leverage}
+        if strategy_id is not None:
+            body["strategy_id"] = strategy_id
+        if strategy_ids is not None:
+            body["strategy_ids"] = strategy_ids
+        if max_workers is not None:
+            body["max_workers"] = max_workers
         if window_bars is not None:
             body["window_bars"] = window_bars
         if stop_loss_pct is not None:

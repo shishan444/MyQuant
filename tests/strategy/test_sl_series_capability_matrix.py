@@ -162,15 +162,23 @@ class TestPaperDoubleInstrumentation:
         assert ex.prepare() is False
 
 
+
 class TestExitSweepSeriesForm:
-    def test_series_entry_empty_stops_legal(self):
-        """C3 补：series 档 entry 空 stops+sl_series_source 必携合法；
-        非 series 档 entry 空 stops 仍拒+携带来源拒。"""
+    """series 档 entry 校验形制（P2-CARD-06 单源切换后）：series
+    模式名校验期拒（先于来源校验）；非 series 档校验链不变。原
+    4/5 段（series 无来源拒/两形制互斥拒）系 series 专属校验路径
+    ——入口被模式名校验关闭后不可达，随退役注记。"""
+
+    def test_series_entry_rejected_at_mode_check(self):
         from core.analysis.templates.exit_sweep import _validate_grid
-        ok = _validate_grid({"modes": [
-            {"mode": "series", "stops": [], "take_profits": [0.1],
-             "sl_series_source": dict(_BB_SRC)}]})
-        assert ok[0]["mode"] == "series"
+        from core.strategy.validator import PAPER_CHAIN_SL_MODES
+
+        # series 档（携来源的完整形制）模式名先拒
+        with pytest.raises(Exception, match="引擎未支持") as ei:
+            _validate_grid({"modes": [
+                {"mode": "series", "stops": [], "take_profits": [0.1],
+                 "sl_series_source": dict(_BB_SRC)}]})
+        assert ei.value.detail["legal_range"] == list(PAPER_CHAIN_SL_MODES)
         # 非 series 空 stops 仍拒
         with pytest.raises(Exception, match="非空列表"):
             _validate_grid({"modes": [
@@ -180,25 +188,18 @@ class TestExitSweepSeriesForm:
             _validate_grid({"modes": [
                 {"mode": "pct", "stops": [0.05], "take_profits": [0.1],
                  "sl_series_source": dict(_BB_SRC)}]})
-        # series 无来源拒
-        with pytest.raises(Exception, match="sl_series_source"):
-            _validate_grid({"modes": [
-                {"mode": "series", "stops": [], "take_profits": [0.1]}]})
-        # 两形制同在拒
-        with pytest.raises(Exception, match="互斥"):
+
+    def test_modes_legal_set_paper_chain_single_source(self):
+        """modes 合法集单源（P2-CARD-06 反转锚）：校验面引
+        PAPER_CHAIN_SL_MODES（纸盘/回放链放行集）——series 不在集，
+        series 模式名校验期拒（旧「引用式跟随 ENGINE_SUPPORTED_SL_
+        MODES+series 在合法集」语义随单源切换失效）。"""
+        from core.analysis.templates.exit_sweep import _validate_grid
+        from core.strategy.validator import PAPER_CHAIN_SL_MODES
+
+        assert "series" not in PAPER_CHAIN_SL_MODES
+        assert set(PAPER_CHAIN_SL_MODES) == {"pct", "atr", "trail"}
+        with pytest.raises(Exception, match="引擎未支持"):
             _validate_grid({"modes": [
                 {"mode": "series", "stops": [], "take_profits": [0.1],
-                 "sl_series_source": {"indicator": "RSI",
-                                      "column": "fx_x"}}]})
-
-    def test_modes_reference_follow_engine(self):
-        """modes 引用式自动跟随 ENGINE_SUPPORTED_SL_MODES（零改动
-        断言——series 已在合法集）。"""
-        from core.analysis.templates.exit_sweep import _validate_grid
-        from core.backtest.engine import ENGINE_SUPPORTED_SL_MODES
-        assert "series" in ENGINE_SUPPORTED_SL_MODES
-        # mode 合法性校验引用式：series 模式名过 ②（无 422）
-        ok = _validate_grid({"modes": [
-            {"mode": "series", "stops": [], "take_profits": [0.1],
-             "sl_series_source": dict(_BB_SRC)}]})
-        assert len(ok) == 1
+                 "sl_series_source": dict(_BB_SRC)}]})

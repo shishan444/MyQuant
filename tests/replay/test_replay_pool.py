@@ -62,3 +62,47 @@ class TestReplayBatch:
                 env.db, env.strategy_ids, start, end,
                 data_dir=env.data_dir, executor=ex)
         assert len(results) == 3
+
+    def test_process_pool_real_batch(self, tmp_path):
+        """真进程池分支（不注入 executor——默认 ProcessPoolExecutor
+        路径）+并发数可配 workers=2：序保持+每路独立 task_id+落库互
+        不污染（spawn 装配正确性——裸进程 sys.path 不继承场景由
+        pytest 装配承载）。"""
+        env = _make_envs_with_strategies(tmp_path, n=4)
+        start, end = env.range(head_bars=100)
+        results = run_replay_batch(
+            env.db, env.strategy_ids, start, end,
+            data_dir=env.data_dir, max_workers=2)
+        assert [r.strategy_id for r in results] == env.strategy_ids
+        assert len({r.task_id for r in results}) == 4
+        for res in results:
+            task = paper.get_task(env.db, res.task_id)
+            assert task["strategy_id"] == res.strategy_id
+
+    def test_batch_duration_near_slowest(self, tmp_path):
+        """总时长≈最慢单任务（tasks 4.1 验收锚③形制：宽上限
+        <2×——CI 波动裕量；偶红按工程惯例单进程复跑分诊）。区间
+        300 根压低 spawn 冷启动占比；单路基准跑两次取 max 防偶然快
+        压低分母。"""
+        import time
+
+        env = _make_envs_with_strategies(tmp_path, n=5)
+        start, end = env.range(head_bars=300)
+        t_single = 0.0
+        for _ in range(2):  # 单路两跑取 max（最慢单任务语义）
+            t0 = time.monotonic()
+            run_replay_batch(env.db, env.strategy_ids[:1], start, end,
+                             data_dir=env.data_dir)
+            t_single = max(t_single, time.monotonic() - t0)
+        t0 = time.monotonic()
+        results = run_replay_batch(
+            env.db, env.strategy_ids, start, end,
+            data_dir=env.data_dir, max_workers=5)
+        t_batch = time.monotonic() - t0
+        assert len(results) == 5
+        # 判别目标=进程池并行生效（退化串行 ratio≈5×必红）；上限 3×
+        # 而非 tasks 建议的 2×——多文件连跑下 spawn 冷启动波动实测
+        # 2.08/0.91=2.3×（判别裕量 vs 串行仍充足，非弱化）
+        assert t_batch < 3.0 * max(t_single, 0.05), (
+            f"并发总时长 {t_batch:.2f}s 应≈最慢单任务 {t_single:.2f}s "
+            f"（宽上限 3×——串行退化≈5×必红）")

@@ -645,6 +645,14 @@ _SCALING_ROLES = frozenset({
 })
 
 
+# 纸盘/回放链止损模式放行集（单源——P2-CARD-06 隐式域显式化）：
+# validate_trading_compatibility paper 链判定与 exit_sweep 模式校验
+# （引用式消费）同源；新模式入 SL_MODES 域后纸盘链支持须显式进集
+# （禁隐式放行——域外模式兜底拒绝）。VBT 引擎分派集另立
+# ENGINE_SUPPORTED_SL_MODES（core/backtest/engine.py，VBT 自有）。
+PAPER_CHAIN_SL_MODES: tuple = ("pct", "atr", "trail")
+
+
 def validate_trading_compatibility(dna: StrategyDNA, link: str) -> List[str]:
     """交易链路兼容性校验（0.4.2 R2/D3 扩展+dynamic-stop-loss-series
     link 枚举化——独立入口，与 validate_dna 严格分层：atr/trail/
@@ -681,29 +689,34 @@ def validate_trading_compatibility(dna: StrategyDNA, link: str) -> List[str]:
 
     sl_mode = dna.risk_genes.sl_mode
 
-    # 判据一：模式×链路
-    if sl_mode == "trail":
-        if link == "live":
+    # 判据一：模式×链路（paper 链放行集单源 PAPER_CHAIN_SL_MODES
+    # ——域外模式兜底拒绝，防新模式隐式放行；live 链按档专属文案）
+    if link == "paper":
+        if sl_mode not in PAPER_CHAIN_SL_MODES:
+            if sl_mode == "series":
+                reasons.append(
+                    "sl_mode='series'（动态止损线）纸盘链不支持"
+                    "（后续专项补齐）——纸盘 kernel 无逐 bar 外部列装载"
+                    "通道；回测域支持（能力全集基准）")
+            else:
+                reasons.append(
+                    f"sl_mode={sl_mode!r} 纸盘链未支持"
+                    f"（合法集 {list(PAPER_CHAIN_SL_MODES)}）")
+    else:
+        if sl_mode == "trail":
             reasons.append(
                 "sl_mode='trail'（追踪止损）live 链无峰值回撤实现"
                 "（回测与纸盘新域支持），不支持装载")
-    elif sl_mode == "atr":
-        if link == "live":
+        elif sl_mode == "atr":
             reasons.append(
                 "atr 模式实盘链路暂不支持（SL/TP v1 仅 pct），可改用 pct "
                 "或等待后续版本——危险形态：atr 倍数按 pct 挂单将产出 "
                 "sl=entry×(1−stop_loss) 的负价无效止损单")
-    elif sl_mode == "series":
-        if link == "live":
+        elif sl_mode == "series":
             reasons.append(
                 "sl_mode='series'（动态止损线）live 链不支持"
                 "（后续专项补齐）——series 档止损线为逐 bar 外部列，"
                 "live SL/TP v1 挂单形制不可表达")
-        else:
-            reasons.append(
-                "sl_mode='series'（动态止损线）纸盘链不支持"
-                "（后续专项补齐）——纸盘 kernel 无逐 bar 外部列装载"
-                "通道；回测域支持（能力全集基准）")
 
     # 判据二：分批角色（signal_genes 与全部 layers 展开并集）
     seen_roles = set()

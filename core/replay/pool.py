@@ -6,6 +6,7 @@ worker 内独立 ReplayRunner 实例（无共享状态天然隔离——P1 结�
 """
 from __future__ import annotations
 
+import multiprocessing
 from concurrent.futures import Executor, ProcessPoolExecutor
 from pathlib import Path
 from typing import List, Optional
@@ -33,6 +34,9 @@ def run_replay_batch(
     slippage: float = 0.0005,
     initial_cash: float = 100_000.0,
     leverage: int = 1,
+    window_bars: Optional[int] = None,
+    stop_loss_pct: Optional[float] = None,
+    halt_drawdown_pct: Optional[float] = None,
     max_workers: int = DEFAULT_REPLAY_WORKERS,
     executor: Optional[Executor] = None,
 ) -> List[ReplayResult]:
@@ -44,7 +48,10 @@ def run_replay_batch(
     原子语义单元，部分结果不返回；逐路容错归调用方按需包装）。
     """
     common = dict(fee=fee, slippage=slippage,
-                  initial_cash=initial_cash, leverage=leverage)
+                  initial_cash=initial_cash, leverage=leverage,
+                  window_bars=window_bars,
+                  stop_loss_pct=stop_loss_pct,
+                  halt_drawdown_pct=halt_drawdown_pct)
     args_list = [
         (str(data_dir), str(db_path), sid, start, end, dict(common))
         for sid in strategy_ids]
@@ -52,5 +59,11 @@ def run_replay_batch(
         futures = [executor.submit(_run_one, a) for a in args_list]
         return [f.result() for f in futures]
     workers = max(1, min(max_workers, len(strategy_ids)))
-    with ProcessPoolExecutor(max_workers=workers) as pool:
+    # spawn 显式（跨平台正确：Linux 缺省 fork 会使子进程继承
+    # 父进程 SQLAlchemy engine/连接池对象——跨进程复用同一池
+    # 连接是 sqlite 损坏经典路径；与模块 docstring/design D3
+    # 的 spawn 声明对齐）
+    with ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=multiprocessing.get_context("spawn")) as pool:
         return list(pool.map(_run_one, args_list))
