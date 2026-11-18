@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from core.analysis.errors import ResearchError
+from core.data.validation import validate_symbol
 from core.persistence.repository import paper as paper_repo
 from core.persistence.repository.strategy import get_strategy
 from core.replay.feeder import ReplayFeeder
@@ -150,6 +151,17 @@ class ReplayRunner:
                 detail="; ".join(compat))
         symbol = dna.execution_genes.symbol
         timeframe = dna.execution_genes.timeframe
+        # symbol 命名白名单前置（校验式拒绝非规整）：库策略与内存
+        # DNA override 两路径唯一汇聚点——未校验符号原直达 feeder
+        # funding 索引与 executor 衍生品注入两处 parquet 拼接点；时
+        # 序上先于 feeder.load() 归档读取与 prepare 校验（先读后拒
+        # 的时序倒置一并关闭）
+        try:
+            validate_symbol(symbol)
+        except ValueError as exc:
+            raise ReplayError(
+                "RESEARCH_PARAM_INVALID",
+                f"symbol 非法: {exc}") from exc
         feeder = ReplayFeeder(
             self.data_dir, db_path, dna, symbol, timeframe, start, end)
         # 装载链 4：数据可行性（find_parquet 公共入口，不自拼路径）

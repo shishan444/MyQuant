@@ -198,6 +198,7 @@ class ReplayFeeder:
         return {p: self._funding_index.get(p) for p in points}
 
     def parquet_exists(self, tf: str) -> bool:
-        """数据可行性检查（装载链 4——find_parquet 公共入口含
-        safe_symbol 规整与 TF 别名回退，不自拼路径）。"""
+        """数据可行性检查（装载链 4——经 find_parquet 公共入口
+        不自拼路径；其本身不含 symbol 规整，命名校验由 runner 装载
+        链前置 validate_symbol 把关）。"""
         return find_parquet(self.data_dir, self.symbol, tf) is not None
