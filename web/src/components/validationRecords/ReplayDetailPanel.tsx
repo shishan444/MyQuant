@@ -10,6 +10,10 @@ import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { KlineChart } from "@/components/charts/KlineChart";
 import { epochOf } from "./fullRangeData";
+import {
+  eventSemantics, legacySide, markerMorphText, markerShape,
+  markerSide, normalizeDirection, TRACE_FAMILY_COLOR,
+} from "./traceSemantics";
 import { getOhlcvBySymbol } from "@/services/datasets";
 import { formatTimestamp } from "@/lib/utils";
 
@@ -57,39 +61,48 @@ const API = {
     `/api/paper-trading/tasks/${encodeURIComponent(tid)}/signals?limit=10000`,
 };
 
-/** 六态标记映射（词表沿 fe-vr-marker-fidelity 六字义+价位锚定契约） */
+/** 回放 fill kind → vr 事件码适配（P3-CARD-05 薄层）：词表/色/
+ *  形/箭头全吃 traceSemantics EVENT_SEMANTICS 单源——六字义=开多/
+ *  开空/加仓/减仓/平多/平空（加减仓无方向词缀，方向经侧位/价格
+ *  就近承载——fe-vr-marker-fidelity 终态裁决）；close 族 reason
+ *  （signal/reverse/reduce_terminated 升格）统一归 strategy 平仓
+ *  态码 13（升格辨析由流水行「减仓终止」文案承载）；值域外 kind
+ *  无词条——沿 vr「无词条滤除」返回 null（marker 滤除、流水
+ *  dirLabel 显 kind 原文） */
+function replayEventCode(kind: string): number | null {
+  if (kind === "open") return 10;
+  if (kind === "add") return 11;
+  if (kind === "reduce") return 12;
+  if (kind === "exit_sl") return 20;
+  if (kind === "exit_tp") return 21;
+  if (kind === "exit_liquidation") return 22;
+  if (kind === "exit_max_loss") return 23;
+  if (kind === "exit_time") return 24;
+  if (kind === "close") return 13;
+  return null;
+}
+
+/** 六态标记映射（P3-CARD-05：薄适配层接 EVENT_SEMANTICS 单源——
+ *  与 vr 标记同码同字义同色；position=legacySide 族侧位回退值，
+ *  组装层有 bar 时按 markerSide 价格就近覆盖） */
 export function replayMarker(f: PaperFill): {
   text: string;
   position: "aboveBar" | "belowBar";
   shape: "arrowUp" | "arrowDown" | "circle";
   color: string;
   action: "open" | "add" | "reduce" | "exit";
-} {
-  const dirLong = f.side === "long" || f.side === "buy";
-  const terminated = f.reason === "reduce_terminated";
-  if (f.kind === "open") {
-    return { text: dirLong ? "开多" : "开空",
-      position: dirLong ? "belowBar" : "aboveBar",
-      shape: dirLong ? "arrowUp" : "arrowDown", color: "#3b82f6",
-      action: "open" };
-  }
-  if (f.kind === "add") {
-    return { text: dirLong ? "加仓" : "加空",
-      position: "belowBar", shape: "circle", color: "#8b5cf6",
-      action: "add" };
-  }
-  if (f.kind === "reduce") {
-    return { text: dirLong ? "减仓" : "减空",
-      position: "aboveBar", shape: "circle", color: "#f59e0b",
-      action: "reduce" };
-  }
-  // 出场族（close/exit_*——词表 else 分支承载）：平多/平空；
-  // reduce_terminated 归平仓态且描述可辨识（流水行「减仓终止」）
-  void terminated;
-  return { text: dirLong ? "平多" : "平空",
-    position: dirLong ? "aboveBar" : "belowBar",
-    shape: dirLong ? "arrowDown" : "arrowUp", color: "#ef4444",
-    action: "exit" };
+} | null {
+  const code = replayEventCode(f.kind);
+  const sem = code != null ? eventSemantics(code) : null;
+  if (!sem) return null;
+  const dir = normalizeDirection(f.side);
+  return {
+    text: markerMorphText(sem, dir),
+    position: legacySide(sem.action),
+    shape: markerShape(sem, dir),
+    color: TRACE_FAMILY_COLOR[sem.family],
+    action: sem.action,
+  };
 }
 
 /** 仓位流水派生（纯函数——任务 3.1）：逐笔差分操作前/量/后仓位 */
@@ -113,7 +126,7 @@ export function derivePositionFlow(
     return {
       before, qty,
       after: pos,
-      dirLabel: replayMarker(f).text,
+      dirLabel: replayMarker(f)?.text ?? f.kind,
       reason: f.reason ?? "signal",
     };
   });
@@ -199,13 +212,28 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
   const fills = fillsQ.data ?? [];
   const signals = signalsQ.data ?? [];
   const flow = useMemo(() => derivePositionFlow(fills), [fills]);
+  // bar 中点索引（就近侧位判定面——RecordDetail 同构）
+  const barByEpoch = useMemo(() => {
+    const m = new Map<number, { high: number; low: number }>();
+    for (const b of ohlcvQ.data ?? []) {
+      const e = epochOf(b.timestamp);
+      if (e != null) m.set(e, b);
+    }
+    return m;
+  }, [ohlcvQ.data]);
   const markers = useMemo(
-    () => fills.map((f) => ({
-      time: f.bar_time,
-      price: f.price,
-      ...replayMarker(f),
-    })),
-    [fills],
+    () => fills.flatMap((f) => {
+      const mk = replayMarker(f);
+      if (!mk) return [];  // 值域外 kind——沿 vr 无词条滤除
+      const e = epochOf(f.bar_time);
+      const bar = e != null ? barByEpoch.get(e) : undefined;
+      // 侧位（fe-vr-marker-fidelity 契约 4 同构）：有 bar 有价按
+      // 价格就近（markerSide），否则族侧位回退（legacySide）
+      const position = f.price != null && bar
+        ? markerSide(f.price, bar) : mk.position;
+      return [{ time: f.bar_time, price: f.price, ...mk, position }];
+    }),
+    [fills, barByEpoch],
   );
   // 互达（P3-CARD-03）：行→图经 selectedMarkerTime（epoch 域——
   // epochOf 与 KlineChart toTime 同源对齐）；图→行经 onMarkerClick
