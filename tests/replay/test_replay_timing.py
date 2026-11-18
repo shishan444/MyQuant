@@ -27,12 +27,21 @@ class TestAuxVisibility:
 
     def test_segments_count_and_no_future(self, tmp_path):
         """段边界正确性：MTF 多段；每段辅帧切片末根收盘时刻 ≤ 段
-        首主 bar 收盘时刻（切片不含未来根——越一刻不可见向）。"""
+        首主 bar 收盘时刻（切片不含未来根——越一刻不可见向）；段
+        首尾相接连续覆盖主帧全长（丢 bar 回归锚——段间隙=区间内
+        主 bar 无人驱动，CARD-01）。"""
         feeder = _feeder_loaded(tmp_path)
         segs = list(feeder.segments())
         assert len(segs) >= 2, f"MTF 多段（实测 {len(segs)}）"
         tf_delta = pd.Timedelta(minutes=240)
-        for seg_start, aux_frames in segs:
+        # 段覆盖完整性：首段起 0、相邻段首尾相接、尾段收在帧末
+        assert segs[0][0] == 0
+        assert segs[-1][1] == len(feeder.main) - 1, (
+            f"尾段段末 {segs[-1][1]} != 帧末 {len(feeder.main) - 1}")
+        for (s1, e1, _), (s2, _, _) in zip(segs, segs[1:]):
+            assert s2 == e1 + 1, (
+                f"段间隙丢 bar：段 [{s1},{e1}] 后下段起点 {s2}")
+        for seg_start, seg_end, aux_frames in segs:
             aux_df = aux_frames.get("1d")
             if aux_df is None or aux_df.empty:
                 continue
@@ -48,7 +57,7 @@ class TestAuxVisibility:
         feeder = _feeder_loaded(tmp_path)
         segs = list(feeder.segments())
         # 第二段起每段首根=可见集增长点：辅切片长度单调不减
-        lengths = [segs[i][1]["1d"].shape[0] for i in range(len(segs))]
+        lengths = [segs[i][2]["1d"].shape[0] for i in range(len(segs))]
         assert lengths == sorted(lengths), "可见集单调不减（含等号推进）"
         assert lengths[-1] > lengths[0], "可见集确实增长（分段有意义）"
 
@@ -61,8 +70,9 @@ class TestAuxVisibility:
         feeder.load()
         segs = list(feeder.segments())
         assert len(segs) == 1
-        assert segs[0][1] == {}
+        assert segs[0][2] == {}
         assert segs[0][0] == 0
+        assert segs[0][1] == len(feeder.main) - 1, "单段收在帧末"
 
     def test_closed_end_semantics(self, tmp_path):
         """L2-D5 闭端：end 恰等于某主 bar 时刻→该 bar 含入（区间

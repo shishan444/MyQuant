@@ -98,6 +98,105 @@ class TestBranchCoverage:
         assert settled, "归档在案时结算非全挂起"
         assert settled[0]["rate"] == pytest.approx(0.0001)
 
+    def test_invalid_dna_value_range_rejected(self, tmp_path):
+        """结构合法但值域不过的 dna（INVALID_DNA 分支——区别于坏
+        json 快照的 RESEARCH_STORED_DATA_INVALID）：position_size 超
+        0-1 值域，validate_dna 拒。"""
+        import dataclasses
+
+        from core.persistence.repository.strategy import save_strategy
+        from tests.helpers.data_factory import make_dna
+
+        env = ReplayEnv(tmp_path, n_bars=300)
+        bad = dataclasses.replace(
+            make_dna(), risk_genes=dataclasses.replace(
+                make_dna().risk_genes, position_size=5.0))
+        save_strategy(env.db, strategy_id="st_val",
+                      dna_json=bad.to_json(), symbol="BTCUSDT",
+                      timeframe="4h", status="draft")
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=100)
+        with pytest.raises(ReplayError) as ei:
+            rr.run(env.db, "st_val", start, end)
+        assert ei.value.code == "INVALID_DNA"
+
+    def test_plugin_sources_rejected(self, tmp_path):
+        """插件信号源在场即拒（能力边界——回放走纸盘执行链未接入
+        插件组装；含混合形态，防静默失真）。"""
+        import dataclasses
+
+        from core.persistence.repository.strategy import save_strategy
+        from tests.helpers.data_factory import make_dna
+
+        env = ReplayEnv(tmp_path, n_bars=300)
+        plugin_dna = dataclasses.replace(
+            make_dna(),
+            signal_sources=[{
+                "type": "formula", "ref": "exit_distance_box"}])
+        save_strategy(env.db, strategy_id="st_plug",
+                      dna_json=plugin_dna.to_json(), symbol="BTCUSDT",
+                      timeframe="4h", status="draft")
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=100)
+        with pytest.raises(ReplayError) as ei:
+            rr.run(env.db, "st_plug", start, end)
+        assert ei.value.code == "TRADING_INCOMPATIBLE"
+
+    def test_empty_funding_archive_treated_as_missing(self, tmp_path):
+        """空 funding 归档（parquet 在盘但空帧）=空索引全挂起——与
+        归档缺文件同语义（feeder._load_funding_index 空帧分支）。"""
+        import pandas as pd
+
+        env = ReplayEnv(tmp_path, n_bars=400)
+        from core.data.storage import save_parquet
+
+        save_parquet(
+            pd.DataFrame({"funding_rate": pd.Series(dtype=float)}),
+            env.data_dir / "BTCUSDT_funding.parquet")
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=200)
+        res = rr.run(env.db, env.strategy_id, start, end, task_id="fund03")
+        assert res.status in ("completed", "stopped"), "空归档非错误"
+        from core.persistence.repository import paper
+
+        records = paper.list_funding_records(env.db, "fund03", limit=1000)
+        assert all(r["status"] == "pending" for r in records), (
+            "空归档=全挂起（与缺文件同语义）")
+
+    def test_atr_nonstandard_period_computed_on_load(self, tmp_path):
+        """atr 档非标周期（21）现算分支：compute_all_indicators 产
+        标准参数集（atr_14），atr_21 不在主帧列——_ensure_atr 现算
+        补列后回放走通（atr_{period} 供数契约）。"""
+        import dataclasses
+
+        from tests.helpers.data_factory import make_dna
+
+        dna = make_dna()
+        atr_dna = dataclasses.replace(
+            dna, risk_genes=dataclasses.replace(
+                dna.risk_genes, sl_mode="atr", atr_period=21,
+                stop_loss=2.0, take_profit=4.0))
+        env = ReplayEnv(tmp_path, dna=atr_dna, n_bars=400)
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=200)
+        res = rr.run(env.db, env.strategy_id, start, end, task_id="atr21")
+        assert res.status in ("completed", "stopped")
+        assert res.bars_processed > 0, "非标周期现算后回放走通"
+
+    def test_funding_archive_missing_all_pending(self, tmp_path):
+        """funding 归档缺值挂起（与 test_funding_archive_indexed 互补
+        的另一态）：不造归档→区间结算点全落 pending 行不扣款、非错误
+        （与实时态 feed 缺值同语义——供数契约 R5 场景）。"""
+        env = ReplayEnv(tmp_path, n_bars=400)
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=200)
+        res = rr.run(env.db, env.strategy_id, start, end, task_id="fund02")
+        assert res.status in ("completed", "stopped"), "缺归档非错误"
+        records = paper.list_funding_records(env.db, "fund02", limit=1000)
+        assert records, "结算点在案（挂起留痕）"
+        assert all(r["status"] == "pending" for r in records), (
+            "归档缺值全挂起不扣款")
+
     def test_bad_dna_rejected(self, tmp_path):
         """坏 dna 快照：RESEARCH_STORED_DATA_INVALID 拒绝（行不建）。"""
         env = ReplayEnv(tmp_path, n_bars=300)
@@ -165,6 +264,46 @@ class TestLoadRejections:
             rr.run(env.db, env.strategy_id,
                    idx[10].isoformat(), idx[-1].isoformat())
         assert "WARMUP" in ei.value.code
+
+    def test_symbol_invalid_rejected_library_path(self, tmp_path):
+        """CARD-03：库策略路径坏 symbol（dna_json 内 execution_
+        genes.symbol——库路径消费面是 dna 内值，非 strategy 行的
+        symbol 列）→ RESEARCH_PARAM_INVALID 即拒+行不建；时序先于
+        feeder 归档读取（未校验符号原直达 parquet 拼接点）。"""
+        import dataclasses
+
+        from core.persistence.repository.strategy import save_strategy
+
+        env = ReplayEnv(tmp_path, n_bars=300)
+        evil_dna = dataclasses.replace(
+            env.dna,
+            execution_genes=dataclasses.replace(
+                env.dna.execution_genes, symbol="../../etc/passwd"))
+        save_strategy(env.db, strategy_id="st_evil",
+                      dna_json=evil_dna.to_json(), symbol="BTCUSDT",
+                      timeframe="4h", status="draft")
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=100)
+        with pytest.raises(ReplayError) as ei:
+            rr.run(env.db, "st_evil", start, end)
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        assert paper.list_tasks(env.db, limit=10) == [], "行不建"
+
+    def test_symbol_invalid_rejected_override_path(self, tmp_path):
+        """CARD-03：内存 DNA override 路径（run_from_dna）坏 symbol
+        同码即拒——两路径汇聚点单次校验覆盖。"""
+        import dataclasses
+
+        env = ReplayEnv(tmp_path, n_bars=300)
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=100)
+        bad_dna = dataclasses.replace(
+            env.dna,
+            execution_genes=dataclasses.replace(
+                env.dna.execution_genes, symbol="BTC/../USDT"))
+        with pytest.raises(ReplayError) as ei:
+            rr.run_from_dna(env.db, bad_dna, start, end, task_id="evil1")
+        assert ei.value.code == "RESEARCH_PARAM_INVALID"
 
     def test_series_mode_rejected(self, tmp_path):
         """series 档显式拒绝（能力边界表述，不静默降级）。"""

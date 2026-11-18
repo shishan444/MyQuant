@@ -35,28 +35,32 @@ class TestReduceTerminationBugfix:
             f"仓位动作有限（{len(fills)} 笔 < {task['bars_processed']} bar）")
         assert fills[-1]["kind"] == "close", "终态无残余（末笔全平）"
 
-    def test_no_below_min_notional_fills_unexempted(self, tmp_path):
-        """L2-C2：全程扫描 pt_fill——豁免面（close/exit_*）外无
-        名义<50 成交（env FAPI 注入 MIN_NOTIONAL）。"""
-        import os
+    def test_no_below_min_notional_fills_unexempted(
+            self, tmp_path, monkeypatch):
+        """L2-C2：全程扫描 pt_fill——豁免面（close/exit_*）外无名义
+        低于阈值成交。激活形制=monkeypatch 模块级 MIN_NOTIONAL 表
+        （kernel 拦截判定单点读它；env 直注不经 load_min_notional
+        不激活——import 时快照）。阈值 5000 落在该策略成交名义分布
+        内部（min≈4730/max≈10018——阈值若远低于成交规模，断言与
+        拦截缺位无关恒绿）；断言下限 4950 留 0.1% 滑点余量（判定按
+        bar close、fill 名义含 slippage，实测在位 min=4999.71）。"""
+        from core.paper_trading import min_notional as mn
 
-        os.environ["FAPI_MIN_NOTIONAL_BTCUSDT"] = "50"
-        try:
-            env = ReplayEnv(tmp_path, dna=make_reduce_loop_dna(
-                exit_fraction=0.5, position_size=0.1, leverage=10),
-                n_bars=600)
-            rr = ReplayRunner(env.data_dir)
-            start, end = env.range(head_bars=300)
-            rr.run(env.db, env.strategy_id, start, end, task_id="bug02")
-            fills = paper.list_fills(env.db, "bug02", limit=1000)
-            for f in fills:
-                if f["kind"] in ("open", "add", "reduce"):
-                    notional = f["quantity"] * f["price"]
-                    assert notional >= 50.0, (
-                        f"未豁免面出现小额成交: {f['kind']} "
-                        f"{notional:.2f}")
-        finally:
-            os.environ.pop("FAPI_MIN_NOTIONAL_BTCUSDT", None)
+        monkeypatch.setitem(mn.MIN_NOTIONAL, "BTCUSDT", 5000.0)
+        env = ReplayEnv(tmp_path, dna=make_reduce_loop_dna(
+            exit_fraction=0.5, position_size=0.1, leverage=10),
+            n_bars=600)
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=300)
+        rr.run(env.db, env.strategy_id, start, end, task_id="bug02")
+        fills = paper.list_fills(env.db, "bug02", limit=1000)
+        assert len(fills) > 0, "对账实质面（该构造下有成交）"
+        for f in fills:
+            if f["kind"] in ("open", "add", "reduce"):
+                notional = f["quantity"] * f["price"]
+                assert notional >= 4950.0, (
+                    f"未豁免面出现小额成交: {f['kind']} "
+                    f"{notional:.2f}")
 
     def test_tiny_fraction_first_clear(self, tmp_path):
         """L2-C3：病态小 fraction（0.001）——物理条件首轮命中当根

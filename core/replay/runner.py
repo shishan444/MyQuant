@@ -17,7 +17,7 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from core.analysis.errors import ResearchError
-from core.analysis.warmup_loader import TF_MINUTES
+from core.data.validation import validate_symbol
 from core.persistence.repository import paper as paper_repo
 from core.persistence.repository.strategy import get_strategy
 from core.replay.feeder import ReplayFeeder
@@ -151,6 +151,17 @@ class ReplayRunner:
                 detail="; ".join(compat))
         symbol = dna.execution_genes.symbol
         timeframe = dna.execution_genes.timeframe
+        # symbol 命名白名单前置（校验式拒绝非规整）：库策略与内存
+        # DNA override 两路径唯一汇聚点——未校验符号原直达 feeder
+        # funding 索引与 executor 衍生品注入两处 parquet 拼接点；时
+        # 序上先于 feeder.load() 归档读取与 prepare 校验（先读后拒
+        # 的时序倒置一并关闭）
+        try:
+            validate_symbol(symbol)
+        except ValueError as exc:
+            raise ReplayError(
+                "RESEARCH_PARAM_INVALID",
+                f"symbol 非法: {exc}") from exc
         feeder = ReplayFeeder(
             self.data_dir, db_path, dna, symbol, timeframe, start, end)
         # 装载链 4：数据可行性（find_parquet 公共入口，不自拼路径）
@@ -214,10 +225,9 @@ class ReplayRunner:
         # 止于段边界〔range(from_idx, len(前缀))〕；段边界刷新辅帧
         # 引用即重建可见性，与全帧单段特例同构）──
         main = feeder.main
-        for seg_start, aux_frames in feeder.segments():
+        for seg_start, seg_end, aux_frames in feeder.segments():
             executor._aux_frames.update(aux_frames)
-            prefix = main.iloc[: self._segment_end(
-                feeder, seg_start, aux_frames) + 1]
+            prefix = main.iloc[:seg_end + 1]
             executor.process_frames(prefix, seg_start)
             if executor._concluded_status is not None:
                 break
@@ -241,39 +251,6 @@ class ReplayRunner:
             start, end, task_id=task_id,
             _dna_override=dna, **run_kwargs)
 
-    def _segment_end(self, feeder: ReplayFeeder, seg_start: int,
-                     aux_frames: Dict[str, Any]) -> int:
-        """段末主 bar 下标（该段可见集下的最后一根——下一边界-1 或
-        帧尾）。"""
-        # 段末=下一可见集变化点-1；实现上以「本段辅帧切片可见集在
-        # 后续段的更大前缀中首次变化」推导成本高——直接采用保守式：
-        # 段末=主帧中第一个「收盘时刻 > 该段辅帧切片末根收盘时刻」
-        # 的前一根，保证段内每根的可见集恒等于切片集（含等号契约
-        # 下切片末根闭合时刻 ≤ 段内每根收盘时刻）。
-        main = feeder.main
-        tf_delta = pd.Timedelta(
-            minutes=TF_MINUTES.get(feeder.timeframe, 240))
-        if not aux_frames:
-            return len(main) - 1  # 单周期=全区间单段
-        seg_close_bound = None
-        for tf, aux_df in aux_frames.items():
-            if aux_df.empty:
-                continue
-            last_aux_close = aux_df.index[-1] + pd.Timedelta(
-                minutes=TF_MINUTES.get(tf, 240))
-            seg_close_bound = (
-                last_aux_close if seg_close_bound is None
-                else max(seg_close_bound, last_aux_close))
-        if seg_close_bound is None:
-            return len(main) - 1
-        close_times = main.index + tf_delta
-        later = (close_times > seg_close_bound).nonzero()[0]
-        end = int(later[0]) - 1 if len(later) else len(main) - 1
-        # 下限钳段首：辅切片末根收盘早于主帧首根收盘时（warmup 前缀
-        # 首段）推导值为 -1——至少处理段首一根（warmup bar 由
-        # start_after 边界跳过判定，空帧会使下游投影取 index[-1] 炸）
-        return max(seg_start, end)
-
     def _collect(self, db_path, tid, strategy_id, start, end, symbol,
                  timeframe) -> ReplayResult:
         """终态收割（task 行统计组+引用组——A2 落库行为即结果源）。"""
@@ -291,7 +268,11 @@ class ReplayRunner:
             total_trades=int(row.get("total_trades") or 0),
             total_pnl=float(row.get("total_pnl") or 0.0),
             final_balance=float(row.get("balance") or 0.0),
+            # 权益单源口径=Ledger.equity：balance+position_margin
+            # +unrealized_pnl（开仓划出的保证金须加回——终态持仓时
+            # 漏 margin 项系统性偏低一个保证金值）
             final_equity=float(row.get("balance") or 0.0)
+            + float(row.get("position_margin") or 0.0)
             + float(row.get("unrealized_pnl") or 0.0),
             halted_at=row.get("halted_at"),
             first_met_at=row.get("first_met_at"),
