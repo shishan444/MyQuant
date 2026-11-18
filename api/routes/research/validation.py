@@ -92,7 +92,7 @@ def _replay_record_and_response(
             {**record_params, "record_id": record_id},
             sort_keys=True).encode()).hexdigest(),
         level="replay")
-    return {
+    response: Dict[str, Any] = {
         "record_id": record_id,
         "task_id": result.task_id,
         "strategy_id": result.strategy_id,
@@ -108,6 +108,18 @@ def _replay_record_and_response(
         "final_equity": result.final_equity,
         "halted_at": result.halted_at, "first_met_at": result.first_met_at,
     }
+    # 熔断三态回显（P2-CARD-03：沿 sandbox halt_info 形制——未配置
+    # 不写键/配置未触发 {"halted": false}/触发附 halted_at+
+    # halt_reason；平铺 halted_at/first_met_at 保留兼容既有消费者）
+    if payload.halt_drawdown_pct is not None:
+        if result.halted_at is not None:
+            response["halt_info"] = {
+                "halted": True,
+                "halted_at": result.halted_at,
+                "halt_reason": result.halt_reason}
+        else:
+            response["halt_info"] = {"halted": False}
+    return response
 
 
 @router.post("/backtest-replay")

@@ -72,6 +72,7 @@ class ReplayResult:
     final_balance: float
     final_equity: float
     halted_at: Optional[str]
+    halt_reason: Optional[str]
     first_met_at: Optional[str]
 
 
@@ -275,5 +276,6 @@ class ReplayRunner:
             + float(row.get("position_margin") or 0.0)
             + float(row.get("unrealized_pnl") or 0.0),
             halted_at=row.get("halted_at"),
+            halt_reason=row.get("halt_reason"),
             first_met_at=row.get("first_met_at"),
         )
