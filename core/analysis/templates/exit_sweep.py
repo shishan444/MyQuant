@@ -85,7 +85,7 @@ def _validate_grid(grid: Any) -> List[Dict[str, Any]]:
     Returns:
         归一后的模式条目列表（请求序）：[{mode, stops, take_profits}]。
     """
-    from core.backtest.engine import ENGINE_SUPPORTED_SL_MODES
+    from core.strategy.validator import PAPER_CHAIN_SL_MODES
 
     # ① grid 结构（形制/键完整 + mode 唯一性——重复无语义价值且同一
     # 模式平面会被重复判定）
@@ -116,16 +116,19 @@ def _validate_grid(grid: Any) -> List[Dict[str, Any]]:
                 detail={"param": f"grid.modes[{i}].mode", "value": mode,
                         "duplicate_of": f"grid.modes[{seen_modes[mode]}]"})
         seen_modes[mode] = i
-    # ② mode 合法性（引擎真实分派域引用式——未支持 422 披露合法集）
+    # ② mode 合法性（执行引擎真实分派域引用式——P2 切回放链后单源
+    # 改引 PAPER_CHAIN_SL_MODES（纸盘/回放链放行集）；未支持 422
+    # 披露合法集——两期分野：不支持模式归校验期整批拒绝非执行期
+    # 逐组 failed）
     for entry in grid["modes"]:
-        if entry["mode"] not in ENGINE_SUPPORTED_SL_MODES:
+        if entry["mode"] not in PAPER_CHAIN_SL_MODES:
             raise ResearchError(
                 "RESEARCH_PARAM_INVALID",
                 f"引擎未支持止损模式: {entry['mode']!r}"
-                f"（当前合法集 {list(ENGINE_SUPPORTED_SL_MODES)}）",
+                f"（当前合法集 {list(PAPER_CHAIN_SL_MODES)}）",
                 detail={"param": "grid.modes[].mode",
                         "value": entry["mode"],
-                        "legal_range": list(ENGINE_SUPPORTED_SL_MODES)})
+                        "legal_range": list(PAPER_CHAIN_SL_MODES)})
     # ③ 非空 + ④ 值域模式感知 + ⑤ 止盈必填正值
     # （0.4.2 值域配套改造：取域移入模式循环按 entry["mode"] 分档——
     #   循环外单点取 pct 域对全模式统一适用已被值域分叉取代：atr 档
