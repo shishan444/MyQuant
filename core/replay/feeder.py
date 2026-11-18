@@ -153,13 +153,14 @@ class ReplayFeeder:
         """请求起点（归一 UTC；warmup 前缀 < 该值）。"""
         return self._main_start  # type: ignore[return-value]
 
-    def segments(self) -> Iterator[Tuple[int, Dict[str, pd.DataFrame]]]:
-        """分段迭代：(段起点主 bar 下标, 各辅帧切片) 序列。
+    def segments(self) -> Iterator[Tuple[int, int, Dict[str, pd.DataFrame]]]:
+        """分段迭代：(段起点, 段末主 bar 下标, 各辅帧切片) 序列。
 
         分段算法：主轴逐根推进，每根收盘时刻 c_i=index[i]+tf_delta；
         各辅轴可见前缀长度 k_tf=|{辅 bar: 收盘时刻 ≤ c_i}|（含等号
         ——判定可见性契约）；可见向量 (k_tf...) 相同的连续主 bar 归
-        同段，变化处为段边界。段内辅帧引用不变（process_frames 调用
+        同段，变化处为段边界（段末=边界-1，尾段=帧末——迭代时
+        现成边界直给，不重推导）。段内辅帧引用不变（process_frames 调用
         开头组装快照——段边界刷新即重建可见性）。单周期策略产单段
         全区间（辅帧表空 dict）。
         """
@@ -179,12 +180,12 @@ class ReplayFeeder:
             vis = tuple(
                 int((aux_close[tf] <= c_i).sum()) for tf in self._aux)
             if prev_vis is not None and vis != prev_vis:
-                yield seg_start, {
+                yield seg_start, i - 1, {
                     tf: self._aux[tf].iloc[:prev_vis[pos]]
                     for pos, tf in enumerate(self._aux)}
                 seg_start = i
             prev_vis = vis
-        yield seg_start, {
+        yield seg_start, len(main_index) - 1, {
             tf: self._aux[tf].iloc[:prev_vis[pos]]
             if prev_vis is not None else self._aux[tf]
             for pos, tf in enumerate(self._aux)}
