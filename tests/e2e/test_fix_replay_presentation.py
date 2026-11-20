@@ -87,8 +87,10 @@ def _seed(db_path) -> None:
           100.0 + (i % 10), 0.5, 0.01,
           -0.5 if i % 3 == 0 else None, None)
          for i in range(N_FILLS)])
+    # C4 D7：condition dict 形制（后端 dna.py 权威——生产形制对齐）
     gene = json.dumps([{"gene_index": 0, "indicator": "RSI",
-                        "field": "rsi", "condition": "lt", "target": 30,
+                        "field": "rsi",
+                        "condition": {"type": "lt", "threshold": 30},
                         "role": "open", "timeframe": "1h"}])
     cur.executemany(
         "INSERT INTO pt_signal (task_id, strategy_id, bar_time,"
@@ -178,6 +180,16 @@ class TestReplayDetailPipeline:
             # 互达：点击首行（选中高亮+基因描述展开面）
             page.locator('[data-testid="replay-flow-row-0"]').click()
             page.wait_for_timeout(500)
+
+            # C4 D7/Q1 真实链路坏值复现锚（tasks 1.4 L3-5 探针的
+            # spec THEN 面）：dict 形制种子经渲染层翻译呈现中文可读
+            # （无 [object Object] 坏值、阈值在位）
+            body_after = page.locator(
+                '[data-testid="replay-detail-panel"]').inner_text()
+            assert "RSI.rsi < 30" in body_after, (
+                "基因描述翻译缺失（Q1）或 dict 形制坏值渲染（D7 病灶）")
+            assert "[object Object]" not in body_after, (
+                "dict 形制坏值渲染回归（D7 病灶）")
 
             filtered = [
                 e for e in errors

@@ -21,7 +21,7 @@ import { epochOf } from "@/components/validationRecords/fullRangeData";
 import { KlineChart } from "@/components/charts/KlineChart";
 import { getOhlcvBySymbol } from "@/services/datasets";
 import {
-  getTradingFills, getTradingSignals,
+  getTradingEquity, getTradingFills, getTradingSignals,
 } from "@/services/trading";
 import { ApiError } from "@/services/api";
 
@@ -34,11 +34,13 @@ vi.mock("@/services/datasets", () => ({
 vi.mock("@/services/trading", () => ({
   getTradingFills: vi.fn(),
   getTradingSignals: vi.fn(),
+  getTradingEquity: vi.fn(),
 }));
 const mockChart = vi.mocked(KlineChart);
 const mockOhlcv = vi.mocked(getOhlcvBySymbol);
 const mockFills = vi.mocked(getTradingFills);
 const mockSignals = vi.mocked(getTradingSignals);
+const mockEquity = vi.mocked(getTradingEquity);
 
 const FILLS = [
   { bar_time: "2026-01-01T00:00:00Z", seq: 1, kind: "open",
@@ -61,8 +63,9 @@ const SIGNALS = [
     exec_bar_time: "2026-01-01T00:00:00Z",
     kind: "open", outcome: "filled",
     fill_seq: 1, reject_reason: null,
+    // C4 D7：condition dict 形制（后端 dna.py 权威——{"type","threshold"}）
     gene_hits: [{ indicator: "RSI", field: "value",
-                  condition: "lt", target: 30 }] },
+                  condition: { type: "lt", threshold: 30 } }] },
 ];
 const OHLCV = [
   { timestamp: "2026-01-01T00:00:00Z", open: 99, high: 101,
@@ -73,13 +76,18 @@ const OHLCV = [
 
 const RECORD = (taskId?: string, params?: Record<string, unknown>) => ({
   record_id: "rec_test", level: "replay",
+  // statement 可空：replay 恒 adhoc 无假设关联显「—」（D6 空态）；
+  // 放宽 string|null 供真值呈现用例覆盖构造
+  statement: null as string | null,
   params: params === undefined
     ? { symbol: "BTCUSDT", timeframe: "4h",
-        start: "2026-01-01", end: "2026-01-31" }
+        start: "2026-01-01", end: "2026-01-31",
+        fee: 0.001, slippage: 0.0005, init_cash: 100000, leverage: 1 }
     : params,
   result: taskId
     ? { replay: { task_id: taskId, status: "completed",
-                  total_trades: 4, total_pnl: -2.2 } }
+                  total_trades: 4, total_pnl: -2.2,
+                  final_equity: 99880 } }
     : {},
 });
 
@@ -111,6 +119,9 @@ describe("ReplayDetailPanel 组件渲染与互达（P3 建网+CARD-01/03 验收�
     mockChart.mock.calls.length = 0;
     mockOhlcv.mockReset();
     mockOhlcv.mockResolvedValue({ data: OHLCV } as never);
+    mockEquity.mockReset();
+    mockEquity.mockResolvedValue({ snapshots: [],
+                                   has_more: false } as never);
     Element.prototype.scrollIntoView = vi.fn();
   });
 
@@ -150,7 +161,7 @@ describe("ReplayDetailPanel 组件渲染与互达（P3 建网+CARD-01/03 验收�
         epochOf(FILLS[0].bar_time));
     });
     // 基因描述随选中展开（互达行侧伴生）
-    expect(screen.getByText(/基因：RSI\.value lt 30/)).toBeInTheDocument();
+    expect(screen.getByText(/基因：RSI\.value < 30/)).toBeInTheDocument();
   });
 
   it("互达图→行：onMarkerClick 定位该 bar 首笔行滚动高亮（CARD-03 ②b）", async () => {
@@ -169,7 +180,7 @@ describe("ReplayDetailPanel 组件渲染与互达（P3 建网+CARD-01/03 验收�
     });
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
     // 基因描述随行选中展开
-    expect(screen.getByText(/基因：RSI\.value lt 30/)).toBeInTheDocument();
+    expect(screen.getByText(/基因：RSI\.value < 30/)).toBeInTheDocument();
   });
 
   it("行选中 toggle：二次点击同一行取消选中（CARD-01 流水表迁移行"
@@ -243,6 +254,9 @@ describe("明细源失败降级与分页全量（fix-replay-presentation-pipelin
     mockChart.mock.calls.length = 0;
     mockOhlcv.mockReset();
     mockOhlcv.mockResolvedValue({ data: OHLCV } as never);
+    mockEquity.mockReset();
+    mockEquity.mockResolvedValue({ snapshots: [],
+                                   has_more: false } as never);
     Element.prototype.scrollIntoView = vi.fn();
   });
 
@@ -398,9 +412,10 @@ describe("明细源失败降级与分页全量（fix-replay-presentation-pipelin
       kind: "open", outcome: "filled",
       fill_seq: 1, reject_reason: null,
       gene_hits: [
-        // indicator 数值串化；field/condition/target 非法形回退省略
-        { indicator: 123, field: 456, condition: true, target: null },
-        { indicator: "EMA", condition: "gt", target: 2 },
+        // indicator 数值串化；condition 非 dict（bool 坏值）回退省略；
+        // dict 形制真值（C4 D7——生产形制）
+        { indicator: 123, field: 456, condition: true },
+        { indicator: "EMA", condition: { type: "gt", threshold: 2 } },
       ],
     }];
     mockFills.mockResolvedValue(
@@ -413,7 +428,7 @@ describe("明细源失败降级与分页全量（fix-replay-presentation-pipelin
     await waitFor(() => {
       // 「123 」尾空格=geneDescription 两段拼接形制（第一段尾空格在
       // trim 作用域外）——呈现级细节非缺陷，断言按实际形制锚定
-      expect(screen.getByText(/基因：123 ；EMA gt 2/)).toBeInTheDocument();
+      expect(screen.getByText(/基因：123 ；EMA > 2/)).toBeInTheDocument();
     });
   });
 
@@ -424,5 +439,283 @@ describe("明细源失败降级与分页全量（fix-replay-presentation-pipelin
     await screen.findByTestId("replay-flow-row-0");
     expect(mockFills.mock.calls[0][2]).toBeInstanceOf(AbortSignal);
     expect(mockSignals.mock.calls[0][2]).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe("C4 详情完整面（参数回显/权益曲线/多笔高亮）", () => {
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockReset();
+    mockChart.mock.calls.length = 0;
+    mockOhlcv.mockReset();
+    mockOhlcv.mockResolvedValue({ data: OHLCV } as never);
+    mockFills.mockReset();
+    mockFills.mockResolvedValue(
+      { fills: FILLS, has_more: false } as never);
+    mockSignals.mockReset();
+    mockSignals.mockResolvedValue(
+      { signals: SIGNALS, has_more: false } as never);
+    mockEquity.mockReset();
+    mockEquity.mockResolvedValue(
+      { snapshots: [], has_more: false } as never);
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("参数回显全字段（D6）：params 真值+statement 空态「—」", async () => {
+    renderPanel(RECORD("task-p6"));
+    const panel = await screen.findByTestId("replay-params-panel");
+    const text = panel.textContent ?? "";
+    expect(text).toContain("策略陈述：—");
+    expect(text).toContain("区间：2026-01-01 ~ 2026-01-31");
+    expect(text).toContain("BTCUSDT · 4h");
+    expect(text).toContain("费率 0.001");
+    expect(text).toContain("滑点 0.0005");
+    expect(text).toContain("初始资金 100000");
+    expect(text).toContain("杠杆 1x");
+  });
+
+  it("参数回显缺失键降级（D6）：缺费滑资金杠杆显「未知」", async () => {
+    renderPanel(RECORD("task-p6b", {
+      symbol: "BTCUSDT", timeframe: "4h",
+      start: "2026-01-01", end: "2026-01-31",
+    }));
+    const text = (await screen.findByTestId("replay-params-panel"))
+      .textContent ?? "";
+    expect(text).toContain("费率 未知");
+    expect(text).toContain("初始资金 未知");
+    expect(text).toContain("杠杆 未知");
+  });
+
+  it("权益曲线分页装载+摘要对账（D5）：两页聚合+末值对账一致"
+      + "+副图 equity 通道", async () => {
+    const page1 = Array.from({ length: 500 }, (_, i) => ({
+      bar_time: new Date(Date.UTC(2026, 0, 1)
+        + i * 3600_000).toISOString(),
+      equity: 100000 + i,
+    }));
+    const page2 = [
+      { bar_time: "2026-01-22T00:00:00Z", equity: 99880 },
+    ];
+    mockEquity.mockImplementation((_tid: string, params: unknown) => {
+      const offset = (params as { offset: number }).offset;
+      return Promise.resolve(
+        (offset === 0
+          ? { snapshots: page1, has_more: true }
+          : { snapshots: page2, has_more: false }) as never);
+    });
+    renderPanel(RECORD("task-eq"));
+    const summary = await screen.findByTestId("replay-equity-summary");
+    expect(mockEquity).toHaveBeenCalledTimes(2);  // 两页聚合
+    const text = summary.textContent ?? "";
+    expect(text).toContain("100,000");  // 首值
+    expect(text).toContain("99,880");   // 末值（含对账锚同值）
+    expect(text).toContain("-0.12%");   // delta
+    expect(text).toContain("（一致）");  // 末值=final_equity 对账
+    await waitFor(() => {
+      const props = mockChart.mock.calls[
+        mockChart.mock.calls.length - 1][0] as {
+          subChartType?: string; equityData?: unknown[] };
+      expect(props.subChartType).toBe("equity");
+      expect(props.equityData).toHaveLength(501);
+    });
+  });
+
+  it("对账不一致如实标注（D5）：末值≠final_equity", async () => {
+    mockEquity.mockResolvedValue({
+      snapshots: [{ bar_time: "2026-01-01T00:00:00Z", equity: 99000 }],
+      has_more: false } as never);
+    renderPanel(RECORD("task-eq2"));
+    const text = (await screen.findByTestId("replay-equity-summary"))
+      .textContent ?? "";
+    expect(text).toContain("（不一致——如实标注）");
+  });
+
+  it("权益源失败独立降级（D5）：重试入口+四件套不受影响", async () => {
+    mockEquity.mockRejectedValue(
+      new Error("equity down") as never);
+    renderPanel(RECORD("task-eq3"));
+    expect(await screen.findByTestId("replay-equity-error"))
+      .toBeInTheDocument();
+    expect(screen.getByTestId("replay-flow-row-0")).toBeInTheDocument();
+  });
+
+  it("权益快照空行如实（D5 空态）：空任务不呈现副图摘要", async () => {
+    renderPanel(RECORD("task-eq4"));
+    await screen.findByTestId("replay-position-flow");
+    expect(screen.getByText(/权益快照为空/)).toBeInTheDocument();
+  });
+
+  it("同 bar 多笔高亮（Q3）：图→行命中该 bar 全部行并列高亮",
+     async () => {
+    const sameBar = [
+      { ...FILLS[0], seq: 1, kind: "open" },
+      { ...FILLS[0], seq: 2, kind: "add", quantity: 1 },
+    ];
+    mockFills.mockResolvedValue(
+      { fills: sameBar, has_more: false } as never);
+    renderPanel(RECORD("task-q3"));
+    await waitFor(() => {
+      expect(mockChart.mock.calls.length).toBeGreaterThan(0);
+    });
+    lastChartProps().onMarkerClick!(epochOf(sameBar[0].bar_time)!);
+    await waitFor(() => {
+      expect(screen.getByTestId("replay-flow-row-0").className)
+        .toContain("bg-surface-active");
+      expect(screen.getByTestId("replay-flow-row-1").className)
+        .toContain("bg-surface-active");
+    });
+  });
+
+  it("权益快照形制异常全滤（D5 空态四格·形制异常格）：equity 全"
+      + " null 行如实标注不静默", async () => {
+    mockEquity.mockResolvedValue({
+      snapshots: [
+        { bar_time: "2026-01-01T00:00:00Z", equity: null },
+        { bar_time: "2026-01-02T00:00:00Z", equity: null },
+      ],
+      has_more: false } as never);
+    renderPanel(RECORD("task-eq7"));
+    expect(await screen.findByText(
+      /权益快照形制异常（2 行值缺失——如实标注）/))
+      .toBeInTheDocument();
+  });
+
+  it("权益快照形制异常部分滤（D5）：正常行摘要+缺失行计数后缀",
+     async () => {
+    mockEquity.mockResolvedValue({
+      snapshots: [
+        { bar_time: "2026-01-01T00:00:00Z", equity: 100000 },
+        { bar_time: "2026-01-02T00:00:00Z", equity: null },
+        { bar_time: "2026-01-03T00:00:00Z", equity: 99880 },
+      ],
+      has_more: false } as never);
+    renderPanel(RECORD("task-eq8"));
+    const text = (await screen.findByTestId("replay-equity-summary"))
+      .textContent ?? "";
+    expect(text).toContain("（一致）");  // 末值 99880 对账锚
+    expect(text).toContain("｜1 行值缺失（形制异常）");
+  });
+
+  it("零成交平线非空态（D5 空态四格·平线格）：全区间初始资金"
+      + "水平线摘要+equity 副图如实呈现", async () => {
+    mockEquity.mockResolvedValue({
+      snapshots: [
+        { bar_time: "2026-01-01T00:00:00Z", equity: 100000 },
+        { bar_time: "2026-01-02T00:00:00Z", equity: 100000 },
+        { bar_time: "2026-01-03T00:00:00Z", equity: 100000 },
+      ],
+      has_more: false } as never);
+    renderPanel({ ...RECORD("task-eq6"),
+      result: { replay: { task_id: "task-eq6", status: "completed",
+        total_trades: 0, total_pnl: 0, final_equity: 100000 } } });
+    const text = (await screen.findByTestId("replay-equity-summary"))
+      .textContent ?? "";
+    expect(text).toContain("+0.00%");
+    expect(screen.queryByText(/权益快照为空/)).toBeNull();
+    await waitFor(() => {
+      const props = mockChart.mock.calls[
+        mockChart.mock.calls.length - 1][0] as {
+          subChartType?: string; equityData?: unknown[] };
+      expect(props.subChartType).toBe("equity");
+      expect(props.equityData).toHaveLength(3);
+    });
+  });
+
+  it("对账无锚值降级（D5）：final_equity 缺失显「未知（无锚值）」",
+     async () => {
+    mockEquity.mockResolvedValue({
+      snapshots: [
+        { bar_time: "2026-01-01T00:00:00Z", equity: 100000 },
+      ],
+      has_more: false } as never);
+    // 工厂推断 result 带 final_equity——无锚值场景本身就是缺该键的
+    // 变体（联合 {} 分支），字面量直配触发缺属检查，断言收窄
+    // （运行时形制即此变体）
+    const rec = { ...RECORD("task-eq9"),
+      result: { replay: { task_id: "task-eq9", status: "completed",
+        total_trades: 1, total_pnl: 0 } } };
+    renderPanel(rec as ReturnType<typeof RECORD>);
+    const text = (await screen.findByTestId("replay-equity-summary"))
+      .textContent ?? "";
+    expect(text).toContain("未知");
+    expect(text).toContain("（无锚值）");
+  });
+
+  it("参数回显 statement 真值（D6 正向）：非空陈述直读呈现",
+     async () => {
+    renderPanel({ ...RECORD("task-p7"),
+      statement: "BTC 20 日布林突破回测假设" });
+    const text = (await screen.findByTestId("replay-params-panel"))
+      .textContent ?? "";
+    expect(text).toContain("策略陈述：BTC 20 日布林突破回测假设");
+  });
+
+  it("condition 字符串旧形制回退（D7 防御面）：非 dict 塞回 type"
+      + "经词表翻译+无 [object Object] 坏值", async () => {
+    mockSignals.mockResolvedValue({
+      signals: [{
+        bar_time: "2025-12-31T20:00:00Z",
+        exec_bar_time: "2026-01-01T00:00:00Z",
+        kind: "open", outcome: "filled",
+        fill_seq: 1, reject_reason: null,
+        gene_hits: [{ indicator: "OLD", condition: "lt" }],
+      }], has_more: false } as never);
+    renderPanel(RECORD("task-d7s"));
+    fireEvent.click(await screen.findByTestId("replay-flow-row-0"));
+    await waitFor(() => {
+      expect(screen.getByText(/基因：OLD </)).toBeInTheDocument();
+    });
+    // spec THEN 文字显式锚：无 "[object Object]" 坏值（D7 病灶）
+    expect(screen.queryByText(/\[object Object\]/)).toBeNull();
+  });
+
+  it("行点击替换式单选（CARD-02 回归锚）：点 A 再点 B 仅 B 高亮"
+      + "（积累式多选回归防御）", async () => {
+    renderPanel(RECORD("task-c02"));
+    fireEvent.click(await screen.findByTestId("replay-flow-row-0"));
+    await waitFor(() => {
+      expect(screen.getByTestId("replay-flow-row-0").className)
+        .toContain("bg-surface-active");
+    });
+    fireEvent.click(screen.getByTestId("replay-flow-row-1"));
+    await waitFor(() => {
+      expect(screen.getByTestId("replay-flow-row-1").className)
+        .toContain("bg-surface-active");
+      // 替换语义：前一行不再高亮（积累式实现下此处红）
+      expect(screen.getByTestId("replay-flow-row-0").className)
+        .not.toContain("bg-surface-active");
+    });
+  });
+
+  it("参数回显空 params 全降级+非数值门（D6 阶段四盲区消解）："
+      + "区间/币种/周期「未知」，字符串费率直读、字符串杠杆「未知」",
+     async () => {
+    renderPanel(RECORD("task-p8", {
+      fee: "0.001", leverage: "2",
+    }));
+    const text = (await screen.findByTestId("replay-params-panel"))
+      .textContent ?? "";
+    expect(text).toContain("区间：未知 ~ 未知");
+    expect(text).toContain("未知 · 未知");
+    expect(text).toContain("费率 0.001");  // pv 字符串直读
+    expect(text).toContain("杠杆 未知");   // paramNum 非数值门
+  });
+
+  it("权益首值为 0 除零防护（D5 阶段四盲区消解）：delta 显「—」"
+      + "不产 NaN", async () => {
+    mockEquity.mockResolvedValue({
+      snapshots: [
+        { bar_time: "2026-01-01T00:00:00Z", equity: 0 },
+        { bar_time: "2026-01-02T00:00:00Z", equity: 5 },
+      ],
+      has_more: false } as never);
+    renderPanel(RECORD("task-eq10"));
+    const text = (await screen.findByTestId("replay-equity-summary"))
+      .textContent ?? "";
+    expect(text).toContain("（—）");
+    expect(text).not.toContain("NaN");
+    expect(text).not.toContain("Infinity");
   });
 });

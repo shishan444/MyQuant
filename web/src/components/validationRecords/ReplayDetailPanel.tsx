@@ -11,7 +11,8 @@ import { useQuery } from "@tanstack/react-query";
 import { KlineChart } from "@/components/charts/KlineChart";
 import { epochOf } from "./fullRangeData";
 import { DETAIL_PAGE_SIZE, pagedFetch } from "./pagedFetch";
-import { getTradingFills, getTradingSignals } from "@/services/trading";
+import { getTradingEquity, getTradingFills, getTradingSignals } from "@/services/trading";
+import { CONDITION_TYPE_LABELS } from "@/lib/constants";
 import type { PaperSignal as PaperSignalDto } from "@/services/trading";
 import {
   eventSemantics, legacySide, markerMorphText, markerShape,
@@ -45,12 +46,24 @@ interface PaperSignal {
   reject_reason?: string | null;
   gene_hits: Array<{
     indicator: string; field?: string;
-    condition?: string; target?: number | string;
+    /** 条件 dict（后端 dna.py 权威形制——{"type","threshold"}；
+     *  threshold 无阈值类条件可缺省；role/timeframe 键呈现面无消费
+     *  不设——C4 D7 形制适配，旧 string+target 消费路径已删除） */
+    condition?: { type?: string; threshold?: number | null };
   }> | null;
 }
+/** 纸盘权益快照行（equity 通道——C4 D5 消费面） */
+interface PaperEquityRow {
+  bar_time: string;
+  equity: number | null;
+}
+
 interface ValidationRecordLike {
   record_id: string;
   level: string;
+  /** 假设原话引文（列表行 LEFT JOIN——replay 恒 adhoc 无匹配行
+   *  null，回显区如实显「—」；C4 D6 参数回显区消费） */
+  statement?: string | null;
   result?: Record<string, unknown> | null;
   /** P2 记录 params（列表通道已解析对象）：symbol/timeframe/start/end
    *  顶层四键是 K 线复核取数面（traceSemantics recordSymbolTimeframe
@@ -154,8 +167,22 @@ export function geneDescription(
       && s.gene_hits && s.gene_hits.length > 0);
   if (!hit) return "";
   return hit.gene_hits!.map(
-    (g) => `${g.indicator}${g.field ? `.${g.field}` : ""} `
-      + `${g.condition ?? ""} ${g.target ?? ""}`.trim(),
+    (g) => {
+      // 条件段（C4 D7+Q1）：dict 形制取 type/threshold，词表单源翻译
+      // （constants.ts CONDITION_TYPE_LABELS——gt→> 等 15 键）；未命中
+      // type 显原文（防御未来扩值，同未知 kind 模式）；threshold 完整
+      // 显示（无阈值类条件〔金叉/死叉等〕缺省不显）
+      const cond = g.condition;
+      // 查键守卫（CARD-01）：hasOwn 限自有属性——type 恰为原型键名
+      // （constructor/__proto__ 等）时不沿原型链命中原型 truthy 值
+      // 绕过兜底（?? 挡不住 truthy），「未命中显原文」全覆盖
+      const sym = cond?.type != null
+        ? (Object.hasOwn(CONDITION_TYPE_LABELS, cond.type)
+          ? CONDITION_TYPE_LABELS[cond.type] : cond.type) : "";
+      const thr = cond?.threshold != null ? ` ${cond.threshold}` : "";
+      return `${g.indicator}${g.field ? `.${g.field}` : ""} `
+        + `${sym}${thr}`.trim();
+    },
   ).join("；");
 }
 
@@ -169,10 +196,21 @@ function signalToPanel(s: PaperSignalDto): PaperSignal {
       indicator: typeof g.indicator === "string"
         ? g.indicator : String(g.indicator ?? ""),
       field: typeof g.field === "string" ? g.field : undefined,
-      condition: typeof g.condition === "string"
-        ? g.condition : undefined,
-      target: typeof g.target === "number" || typeof g.target === "string"
-        ? g.target : undefined,
+      // condition dict 收窄（C4 D7）：object 取 type/threshold 真值；
+      // 非 object 形态（旧/坏数据）字符串塞回 type——渲染层统一 dict
+      // 形制，词表未命中自然显原文（形制异常如实可见不丢行）
+      condition: (g.condition != null && typeof g.condition === "object"
+          && !Array.isArray(g.condition))
+        ? {
+            type: typeof (g.condition as { type?: unknown }).type
+              === "string" ? (g.condition as { type: string }).type
+              : undefined,
+            threshold: typeof (g.condition as { threshold?: unknown })
+              .threshold === "number"
+              ? (g.condition as { threshold: number }).threshold : null,
+          }
+        : (typeof g.condition === "string" && g.condition
+          ? { type: g.condition } : undefined),
     })),
   };
 }
@@ -180,7 +218,8 @@ function signalToPanel(s: PaperSignalDto): PaperSignal {
 export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) {
   const replay = (record.result ?? {}) as {
     replay?: { task_id?: string; status?: string;
-               total_trades?: number; total_pnl?: number };
+               total_trades?: number; total_pnl?: number;
+               final_equity?: number };
   };
   // task_id 形制闸（security F-P3-2）：拒路径语义字符（防 ../ 与 /
   // 经 URL 规范化跳段）——非白名单 12hex（服务端可注入任意串，
@@ -189,7 +228,13 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
   const TID_RE = /^[0-9a-zA-Z_-]{1,64}$/;
   const tidRaw = replay.replay?.task_id;
   const tid = tidRaw != null && TID_RE.test(tidRaw) ? tidRaw : undefined;
-  const [selected, setSelected] = useState<string | null>(null);
+  // 选中行键集合（C4 Q3 互达多笔）：图→行命中同 bar 全部相关行并列
+  // 高亮；行→图替换式单选（点非选中行=整集替换为该行，同键再点取消）
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const toggleRow = (key: string) => {
+    setSelectedKeys((prev) =>
+      prev.has(key) ? new Set() : new Set([key]));
+  };
   // 行 DOM ref（互达「标记→行」：scrollIntoView 定位面——key=行键）
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
@@ -231,6 +276,32 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
           items: r.signals.map(signalToPanel),
           hasMore: r.has_more,
         };
+      },
+      signal,
+    }),
+    enabled: !!tid,
+  });
+  // 参数回显取值（C4 D6）：params 顶层键直读；缺失键「未知」
+  const paramsRaw = (record.params ?? {}) as Record<string, unknown>;
+  const pv = (k: string): string => {
+    const v = paramsRaw[k];
+    return v != null ? String(v) : "未知";
+  };
+  const paramNum = (k: string): string => {
+    const v = paramsRaw[k];
+    return typeof v === "number" ? `${v}x` : "未知";
+  };
+  // 权益曲线装载（C4 D5——用户 2026-11-20 裁定补齐）：equity 通道
+  // 分页聚合全量（复用 C2 循环器三通道一份；逐 bar 落行 2.9 万级≈
+  // 58 页——串行秒级接受，审计场景非交互高频）；任页失败整体降级
+  // （独立通道：K 线与流水不受影响，同 ohlcv 降级模式）
+  const equityQ = useQuery({
+    queryKey: ["replay-equity", tid],
+    queryFn: ({ signal }) => pagedFetch<PaperEquityRow>({
+      fetchPage: async (offset, pageSignal) => {
+        const r = await getTradingEquity(
+          tid!, { limit: DETAIL_PAGE_SIZE, offset }, pageSignal);
+        return { items: r.snapshots, hasMore: r.has_more };
       },
       signal,
     }),
@@ -278,19 +349,40 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
     }),
     [fills, barByEpoch],
   );
+  // 权益派生（C4 D5）：副图序列+摘要+对账锚。形制守卫——equity
+  // 非数值行滤除并计数（形制异常如实标注不静默）；对账锚=曲线末值
+  // vs result.replay.final_equity（唯一可用锚——result.replay 无其他
+  // metrics 面）；容差 1e-6 相对量（浮点逐 bar 求和累积误差容差）
+  const equitySeries = useMemo(
+    () => (equityQ.data ?? [])
+      .filter((r) => typeof r.equity === "number")
+      .map((r) => ({ time: r.bar_time, value: r.equity as number })),
+    [equityQ.data]);
+  const badEquityRows =
+    (equityQ.data ?? []).length - equitySeries.length;
+  const eqFirst = equitySeries[0]?.value;
+  const eqLast = equitySeries[equitySeries.length - 1]?.value;
+  const eqDeltaPct = eqFirst != null && eqLast != null && eqFirst !== 0
+    ? (eqLast / eqFirst - 1) * 100 : null;
+  const finalEquity = replay.replay?.final_equity;
+  const eqReconciled = eqLast != null && finalEquity != null
+    ? Math.abs(eqLast - finalEquity)
+      <= Math.max(Math.abs(finalEquity) * 1e-6, 1e-9)
+    : null;
   // 互达（P3-CARD-03）：行→图经 selectedMarkerTime（epoch 域——
   // epochOf 与 KlineChart toTime 同源对齐）；图→行经 onMarkerClick
   // 定位该 bar 首笔成交行（同 bar 多笔取首行）滚动+高亮
   const selectedEpoch = useMemo(() => {
-    if (!selected) return null;
-    return epochOf(selected.split("#")[0]);
-  }, [selected]);
+    const first = [...selectedKeys][0];
+    return first ? epochOf(first.split("#")[0]) : null;
+  }, [selectedKeys]);
   const locateRow = (epoch: number) => {
-    const f = fills.find((x) => epochOf(x.bar_time) === epoch);
-    if (!f) return;
-    const key = `${f.bar_time}#${f.seq}`;
-    setSelected(key);
-    rowRefs.current[key]?.scrollIntoView(
+    // C4 Q3：该 bar 全部相关行集合化高亮（滚动锚取首行——视觉不漂）
+    const hits = fills.filter((x) => epochOf(x.bar_time) === epoch);
+    if (hits.length === 0) return;
+    const keys = hits.map((f) => `${f.bar_time}#${f.seq}`);
+    setSelectedKeys(new Set(keys));
+    rowRefs.current[keys[0]]?.scrollIntoView(
       { behavior: "smooth", block: "center" });
   };
   if (!tid) {
@@ -306,6 +398,19 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
         <span className="text-text-muted">
           {replay.replay?.total_trades ?? 0} 笔
         </span>
+      </div>
+      {/* 参数回显（C4 D6——归档 spec 承诺兑现）：params 顶层键直读，
+          缺失键「未知」（vr 域参数回显降级语义一致）；statement 恒
+          adhoc 无假设关联（列表行 LEFT JOIN null——如实显「—」） */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted"
+           data-testid="replay-params-panel">
+        <span>策略陈述：{record.statement ?? "—"}</span>
+        <span>区间：{st.start ?? "未知"} ~ {st.end ?? "未知"}</span>
+        <span>{st.symbol ?? "未知"} · {st.timeframe ?? "未知"}</span>
+        <span>费率 {pv("fee")}</span>
+        <span>滑点 {pv("slippage")}</span>
+        <span>初始资金 {pv("init_cash")}</span>
+        <span>杠杆 {paramNum("leverage")}</span>
       </div>
       {/* 六态标记 K 线（P3-CARD-01 补主体+P3-CARD-03 互达；点位锚定
           沿 fe-vr-marker-fidelity 契约——K 线=回放区间、六态标记挂
@@ -352,10 +457,49 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
               data={ohlcvQ.data ?? []}
               signalMarkers={markers}
               height={320}
-              subChartType="volume"
+              subChartType={equitySeries.length > 0 ? "equity" : "volume"}
+              equityData={equitySeries}
               selectedMarkerTime={selectedEpoch}
               onMarkerClick={locateRow}
             />
+          )}
+          {/* 权益曲线摘要与对账（C4 D5）：独立通道四态——不可达降级
+              /空任务/形制异常/正常摘要（零成交平线属正常——逐 bar
+              落库保证全区间初始资金水平线如实呈现） */}
+          {equityQ.isLoading ? null : equityQ.isError ? (
+            <p className="text-xs text-text-muted"
+               data-testid="replay-equity-error">
+              权益曲线源不可达（独立通道——成交明细与 K 线不受影响）
+              <button
+                type="button"
+                className="ml-2 rounded border border-border px-2 py-0.5"
+                onClick={() => { void equityQ.refetch(); }}
+              >
+                重试
+              </button>
+            </p>
+          ) : equitySeries.length === 0 ? (
+            <p className="text-xs text-text-muted">
+              {(equityQ.data ?? []).length === 0
+                ? "权益快照为空（空任务如实——权益副图不呈现）"
+                : `权益快照形制异常（${badEquityRows} 行值缺失——如实标注）`}
+            </p>
+          ) : (
+            <p className="text-xs text-text-muted"
+               data-testid="replay-equity-summary">
+              权益：{eqFirst?.toLocaleString()} → {eqLast?.toLocaleString()}
+              （{eqDeltaPct != null
+                ? `${eqDeltaPct >= 0 ? "+" : ""}${eqDeltaPct.toFixed(2)}%`
+                : "—"}）
+              ｜对账：末值 {eqLast?.toLocaleString()} vs result.replay.
+              final_equity{" "}
+              {finalEquity != null ? finalEquity.toLocaleString() : "未知"}
+              {eqReconciled === true ? "（一致）"
+                : eqReconciled === false ? "（不一致——如实标注）"
+                : "（无锚值）"}
+              {badEquityRows > 0
+                ? `｜${badEquityRows} 行值缺失（形制异常）` : ""}
+            </p>
           )}
           {/* 仓位操作流水（任务 3.1——每笔一行：前/量/后/触发原因
               +基因描述；失败态整体降级——不呈现半量流水） */}
@@ -380,9 +524,9 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
                       <tr
                         key={key}
                         ref={(el) => { rowRefs.current[key] = el; }}
-                        onClick={() => setSelected(selected === key ? null : key)}
+                        onClick={() => toggleRow(key)}
                         className={`cursor-pointer border-t border-border ${
-                          selected === key ? "bg-surface-active" : ""}`}
+                          selectedKeys.has(key) ? "bg-surface-active" : ""}`}
                         data-testid={`replay-flow-row-${i}`}
                       >
                         <td>{formatTimestamp(f.bar_time, "minute")}</td>
@@ -392,7 +536,7 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
                         <td className="text-right">{flow[i].after.toFixed(4)}</td>
                         <td>
                           {f.reason === "reduce_terminated" ? "减仓终止" : flow[i].reason}
-                          {selected === key && desc && (
+                          {selectedKeys.has(key) && desc && (
                             <span className="ml-2 text-text-muted">
                               基因：{desc}
                             </span>
