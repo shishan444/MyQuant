@@ -688,14 +688,16 @@ def validation_records_aggregates(
     level: Optional[str] = None,
     verdict: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """聚合查询（B1.2）：verdict_counts 四键恒在场+unsortable_count。
+    """聚合查询（B1.2）：verdict_counts 五键恒在场+unsortable_count。
 
     口径与 count 同基数（当前过滤维全集）；unsortable=worst 值缺失
     （NULL 键位或死值域 level）计数——非 total_return_desc 排序时
     端点恒报 0（语义键在场值退化），仓储如实计数两态均可判别。
     sandbox 第四键按 level='sandbox_backtest' 计数（add-sandbox-
     records-unified-flow C4/D2——锚身份字段而非结果字段：沙盒行
-    verdict 恒空串不命中三键，A5 结构性保证三键纯净）。
+    verdict 恒空串不命中三键，A5 结构性保证三键纯净）；replay 第五键
+    按 level='replay' 计数（fix-replay-list-channel——同锚身份字段，
+    行 verdict 恒空串同不命中三态键）。
     """
     from sqlalchemy import literal
 

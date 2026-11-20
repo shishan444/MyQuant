@@ -42,11 +42,11 @@ export type ValidationRecordRow = Omit<S["ValidationRecordRow"], "verdict"> & {
 };
 
 /** 验证记录列表响应 ← 后端 ValidationRecordsResponse；records 行类型
- *  收窄（元素 verdict 判别联合）。verdict_counts=verdict 计数三键恒
- *  在场（与 total 同基数——六维过滤口径；后端 Dict[str,int] 生成物
- *  为索引签名，消费位 `?? 0` 防御沿用）；unsortable_count=
- *  sort=total_return_desc 时无收益值记录计数（落尾披露）；其他 sort
- *  恒 0 */
+ *  收窄（元素 verdict 判别联合）。verdict_counts=verdict 计数五键恒
+ *  在场（pass/fail/inconclusive/sandbox/replay；与 total 同基数——
+ *  六维过滤口径；后端 Dict[str,int] 生成物为索引签名，消费位 `?? 0`
+ *  防御沿用）；unsortable_count=sort=total_return_desc 时无收益值
+ *  记录计数（落尾披露）；其他 sort 恒 0 */
 export type ValidationRecordsResponse = Omit<S["ValidationRecordsResponse"], "records"> & {
   records: ValidationRecordRow[];
 };

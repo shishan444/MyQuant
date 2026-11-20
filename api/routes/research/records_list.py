@@ -52,9 +52,11 @@ class ValidationRecordsResponse(BaseModel):
     offset: int
     limit: int
     has_more: bool
-    # verdict 分布（B1.2——三键恒在场 0=该 verdict 无记录；口径与
-    # total 同基数；sandbox 第四键按 level=sandbox_backtest 计数——
-    # add-sandbox-records-unified-flow C4，四键恒在场）
+    # verdict 分布（B1.2——pass/fail/inconclusive 三态键恒在场 0=该
+    # verdict 无记录；口径与 total 同基数；sandbox 第四键按 level=
+    # sandbox_backtest 计数——add-sandbox-records-unified-flow C4；
+    # replay 第五键按 level=replay 计数——fix-replay-list-channel，
+    # 五键恒在场）
     verdict_counts: Dict[str, int]
     # 无收益值记录数（B1.2——sort=total_return_desc 时 worst 值缺失
     # 计数供落尾披露；其他 sort 值恒 0：语义键在场值退化，前端免判
