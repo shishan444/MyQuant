@@ -173,8 +173,12 @@ export function geneDescription(
       // type 显原文（防御未来扩值，同未知 kind 模式）；threshold 完整
       // 显示（无阈值类条件〔金叉/死叉等〕缺省不显）
       const cond = g.condition;
+      // 查键守卫（CARD-01）：hasOwn 限自有属性——type 恰为原型键名
+      // （constructor/__proto__ 等）时不沿原型链命中原型 truthy 值
+      // 绕过兜底（?? 挡不住 truthy），「未命中显原文」全覆盖
       const sym = cond?.type != null
-        ? (CONDITION_TYPE_LABELS[cond.type] ?? cond.type) : "";
+        ? (Object.hasOwn(CONDITION_TYPE_LABELS, cond.type)
+          ? CONDITION_TYPE_LABELS[cond.type] : cond.type) : "";
       const thr = cond?.threshold != null ? ` ${cond.threshold}` : "";
       return `${g.indicator}${g.field ? `.${g.field}` : ""} `
         + `${sym}${thr}`.trim();
