@@ -19,22 +19,11 @@ export {
   type ValidationRecordsResponse,
 } from "./workbench";
 
-export const VALIDATION_LEVELS = [
-  "isolated_backtest",
-  "random_window",
-  "staged_validation",
-  "composite",
-  "component",
-] as const;
-export const VALIDATION_VERDICTS = ["pass", "fail", "inconclusive"] as const;
-
-/** 列表排序封闭枚举（L4 三键控件映射；time_asc 后端支持前端不暴露） */
-export const VALIDATION_SORTS = [
-  "time_desc",
-  "total_return_desc",
-  "verdict_quality",
-] as const;
-export type ValidationSort = (typeof VALIDATION_SORTS)[number];
+/** 列表排序封闭枚举（L4 三键控件映射；time_asc 后端支持前端不暴露）。
+ *  排序值域字面量联合——原 VALIDATION_LEVELS/VALIDATION_VERDICTS/
+ *  VALIDATION_SORTS 三常量生产面零引用（组件侧本地字面量为事实
+ *  权威）已清退，类型联合保消费面零感知 */
+export type ValidationSort = "time_desc" | "total_return_desc" | "verdict_quality";
 
 /** 类型筛选（中文标签）：对齐写入白名单 _RECORD_LEVELS 两值
  *  （fix-replay-list-channel FE-2）——isolated/random/staged 为已
