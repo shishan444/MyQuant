@@ -306,6 +306,8 @@ const LEVEL_LABELS: Record<string, string> = {
   staged_validation: "分段验证",
   composite: "组合验证",
   component: "分量验证",
+  sandbox_backtest: "沙盒回测",
+  replay: "回放",
 };
 
 function fmtRange(start?: string | null, end?: string | null): string {
@@ -406,6 +408,50 @@ export function buildCardModel(row: ValidationRecordRow): RecordCardModel {
       symbol: rr?.symbol ?? null,
       trades,
       metrics,
+      worstLabel,
+    };
+  }
+
+  if (row.level === "sandbox_backtest" || row.level === "replay") {
+    // 沙盒/回放收编（fix-replay-list-channel FE-2/FE-3）：params 顶层
+    // 平铺形制（两档同一 save_sandbox_validation_record 写路径同构——
+    // symbol/timeframe/start/end 顶层+费滑杠杆）；指标槽按档取值：
+    // sandbox=result.metrics 五项真值、replay=result.replay 真值
+    // （total_return 计算键——历史行缺键时指标组如实缺省，呈现面
+    // 不做 PnL 代理；笔数两档均取 total_trades）
+    let m2: RecordCardModel["metrics"] = null;
+    let trades2: number | null = null;
+    if (row.level === "sandbox_backtest") {
+      const m = result.metrics as
+        Record<string, number | null> | undefined;
+      if (m && typeof m.total_return === "number") {
+        m2 = {
+          total_return: m.total_return,
+          sharpe_ratio: typeof m.sharpe_ratio === "number" ? m.sharpe_ratio : null,
+          max_drawdown: typeof m.max_drawdown === "number" ? m.max_drawdown : null,
+        };
+        trades2 = typeof m.total_trades === "number" ? m.total_trades : null;
+      }
+    } else {
+      const rp = result.replay as
+        Record<string, number | string | null> | undefined;
+      if (rp && typeof rp.total_return === "number") {
+        m2 = {
+          total_return: rp.total_return,
+          sharpe_ratio: null,
+          max_drawdown: null,
+        };
+      }
+      trades2 = rp && typeof rp.total_trades === "number"
+        ? rp.total_trades : null;
+    }
+    return {
+      ...base,
+      rangeLabel: fmtRange(params.start as string | undefined,
+                           params.end as string | undefined),
+      symbol: (params.symbol as string | undefined) ?? null,
+      trades: trades2,
+      metrics: m2,
       worstLabel,
     };
   }

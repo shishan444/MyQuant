@@ -163,9 +163,9 @@ def _insert(db: Path, record_id: str, hid: str, level: str,
             f" '{created_at}')"))
 
 
-class TestVerdictCountsFourKeys:
-    def test_verdict_counts_four_keys_three_pure(self, env):
-        """TC-2-5：四键恒在场+sandbox 按 level 计数+三键纯净+互斥边界
+class TestVerdictCountsFiveKeys:
+    def test_verdict_counts_five_keys_three_pure(self, env):
+        """TC-2-5：五键恒在场+sandbox/replay 按 level 计数+三键纯净+互斥边界
         （G5/G10——verdict 筛选不命中沙盒行/composite 不落键）。"""
         client, hid, out, db, d = env
         # 补直插基线：module env 已有正式 pass×1（rec_formal_1）与真实
@@ -179,7 +179,9 @@ class TestVerdictCountsFourKeys:
                 "2026-01-04T00:00:00Z")
         base = client.get("/api/research/validation-records").json()
         assert base["verdict_counts"] == {
-            "pass": 2, "fail": 1, "inconclusive": 0, "sandbox": 1}
+            "pass": 2, "fail": 1, "inconclusive": 0, "sandbox": 1,
+            "replay": 0}  # 第五键（fix-replay-list-channel）——库内
+        # 无 replay 行时计数 0 恒在场
         # 再真实跑沙盒 2 次 → 沙盒×3；三键纯净（沙盒插入前后不变）
         for _ in range(2):
             run_sandbox_backtest(
@@ -188,13 +190,15 @@ class TestVerdictCountsFourKeys:
                 hypothesis_id=hid)
         full = client.get("/api/research/validation-records").json()
         assert full["verdict_counts"] == {
-            "pass": 2, "fail": 1, "inconclusive": 0, "sandbox": 3}
-        assert full["total"] == 7  # 四键和 6<7——composite 不落键
+            "pass": 2, "fail": 1, "inconclusive": 0, "sandbox": 3,
+            "replay": 0}
+        assert full["total"] == 7  # 五键和 6<7——composite 不落键
         # level 互斥过滤：sandbox=0 恒在场
         iso = client.get("/api/research/validation-records",
                          params={"level": "isolated_backtest"}).json()
         assert iso["verdict_counts"] == {
-            "pass": 2, "fail": 0, "inconclusive": 0, "sandbox": 0}
+            "pass": 2, "fail": 0, "inconclusive": 0, "sandbox": 0,
+            "replay": 0}
         assert iso["total"] == 2
         # verdict=pass 筛选：沙盒行不在 records 不在计数（G5）
         vp = client.get("/api/research/validation-records",
@@ -327,7 +331,7 @@ class TestZeroChangeFaces:
         原仅由既有非沙盒用例+TC-6-1 机制拼合承接）。
 
         放本类（TC-2-5 之后执行）：本用例真实跑 adhoc 沙盒使共享库
-        sandbox 计数 +1，若在 TestVerdictCountsFourKeys 之前执行会
+        sandbox 计数 +1，若在 TestVerdictCountsFiveKeys 之前执行会
         污染其 base 精确快照（sandbox: 1）——顺序隔离入此类尾。
         """
         client, hid, out, db, d = env

@@ -131,8 +131,9 @@ CAPABILITY_DOC = """# MyQuant 研究通道能力自述
   扫退出参数网格（Σ≤50 组；模式合法集=回测引擎真实分派集引用式
   ——现值 {pct, atr, trail}，引擎扩分派后自动跟随；stops 值域
   pct 档 [0.005,0.20]、atr 档 [0.5, 5.0]（ATR 倍数），均与
-  validator 现役域同源），逐组独立回测（含费滑、与沙盒回测
-  （run_backtest）同一执行链——条件经翻译构造内存 DNA 不落库）输出
+  validator 现役域同源），逐组独立回测（含费滑、与逐根回放回测
+  （run_replay_backtest）同一执行链（逐根回放引擎）——条件经翻译构造
+  内存 DNA 不落库）输出
   五指标+三道门平台判定
   （最差聚合全序 unsupported>spike>indeterminate>plateau，标尺内建
   不可传；单轴长度 1 恒不成平台属判定语义）；校验期整批 422/执行

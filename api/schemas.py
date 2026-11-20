@@ -468,7 +468,9 @@ class ReplayBacktestRequest(BaseModel):
     """逐根回放回测（add-replay-backtest-mcp）：现役回测入口——
     底层 ReplayRunner（纸盘执行核心逐根回放，symbol/timeframe 从
     策略 DNA 抄录不可覆写）；响应携带 ReplayResult summary 组。
-    经济参数值域同 sandbox（fee/slippage>=0、initial_cash>=1）。
+    经济参数值域同 sandbox（fee/slippage∈[0,1]、initial_cash
+    ∈[1,1e12]——上界一并拒 inf/nan：非有限值对任何比较为假，
+    防 Infinity 字面量经 params/result 列落库炸列表读取端）。
     并发组（add-replay-backtest-mcp P2 补面）：strategy_ids 多值
     经进程池并发回放（每路独立实例独立 task_id，缺省单策略走
     strategy_id 不进池——两形态可独立发起，至少其一在场）；
@@ -478,9 +480,9 @@ class ReplayBacktestRequest(BaseModel):
     strategy_ids: Optional[List[str]] = None
     start: str
     end: str
-    fee: float = Field(default=0.001, ge=0)
-    slippage: float = Field(default=0.0005, ge=0)
-    initial_cash: float = Field(default=100000.0, ge=1)
+    fee: float = Field(default=0.001, ge=0, le=1)
+    slippage: float = Field(default=0.0005, ge=0, le=1)
+    initial_cash: float = Field(default=100000.0, ge=1, le=1e12)
     leverage: int = 1
     window_bars: Optional[int] = None
     stop_loss_pct: Optional[float] = None
@@ -504,17 +506,19 @@ class SandboxBacktestRequest(BaseModel):
     不判门槛不构成验证证据；每次执行入验证记录统一流（level=
     sandbox_backtest 行，响应回显 record_id）；挂假设时区间计入
     判定并集（防窥探）。
-    经济参数值域前置校验：fee/slippage >= 0、init_cash >= 1
-    （负成本/零本金在下单金额计算中产生无意义或发散结果）。"""
+    经济参数值域前置校验：fee/slippage∈[0,1]、init_cash∈[1,1e12]
+    （负成本/零本金在下单金额计算中产生无意义或发散结果；上界
+    封堵 inf/nan 穿透——非有限值对任何比较为假，防非法 JSON 字面量
+    落库）。"""
 
     strategy_id: str
     symbol: str = "BTCUSDT"
     timeframe: str = "4h"
     start: str
     end: str
-    fee: float = Field(default=0.001, ge=0)
-    slippage: float = Field(default=0.0005, ge=0)
-    init_cash: float = Field(default=100000.0, ge=1)
+    fee: float = Field(default=0.001, ge=0, le=1)
+    slippage: float = Field(default=0.0005, ge=0, le=1)
+    init_cash: float = Field(default=100000.0, ge=1, le=1e12)
     hypothesis_id: Optional[str] = None
     # 任务级封顶两参（sandbox-and-report-supplement D1 ③层）：宽松
     # float 类型，值域（leverage 整数 [1,3]／margin_cap (0,0.60]）在

@@ -21,9 +21,11 @@ router = APIRouter(tags=["research"])
 # staged_validation 为 add-hypothesis-cards B3 修正补入——原漏致 DB 实测
 # 55 条 staged 级记录按此筛选被 422 拒；composite/component 死值域保留；
 # sandbox_backtest 为 add-sandbox-records-unified-flow B3 扩入——沙盒
-# 留痕入统一流，verdict 恒空串不入 _VERDICTS）
+# 留痕入统一流，verdict 恒空串不入 _VERDICTS；replay 为 fix-replay-
+# list-channel 扩入——逐根回放记录（run_replay_backtest 落库档位），
+# verdict 恒空串同 sandbox 语义）
 _LEVELS = ("isolated_backtest", "random_window", "staged_validation",
-           "composite", "component", "sandbox_backtest")
+           "composite", "component", "sandbox_backtest", "replay")
 _VERDICTS = ("pass", "fail", "inconclusive")
 
 
@@ -50,9 +52,11 @@ class ValidationRecordsResponse(BaseModel):
     offset: int
     limit: int
     has_more: bool
-    # verdict 分布（B1.2——三键恒在场 0=该 verdict 无记录；口径与
-    # total 同基数；sandbox 第四键按 level=sandbox_backtest 计数——
-    # add-sandbox-records-unified-flow C4，四键恒在场）
+    # verdict 分布（B1.2——pass/fail/inconclusive 三态键恒在场 0=该
+    # verdict 无记录；口径与 total 同基数；sandbox 第四键按 level=
+    # sandbox_backtest 计数——add-sandbox-records-unified-flow C4；
+    # replay 第五键按 level=replay 计数——fix-replay-list-channel，
+    # 五键恒在场）
     verdict_counts: Dict[str, int]
     # 无收益值记录数（B1.2——sort=total_return_desc 时 worst 值缺失
     # 计数供落尾披露；其他 sort 值恒 0：语义键在场值退化，前端免判
@@ -157,6 +161,6 @@ def list_validation_records_endpoint(
         has_more=has_more,
         verdict_counts={"pass": agg["pass"], "fail": agg["fail"],
                         "inconclusive": agg["inconclusive"],
-                        "sandbox": agg["sandbox"]},
+                        "sandbox": agg["sandbox"], "replay": agg["replay"]},
         unsortable_count=(agg["unsortable_count"]
                           if sort == "total_return_desc" else 0))

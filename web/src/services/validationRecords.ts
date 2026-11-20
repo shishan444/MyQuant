@@ -19,28 +19,19 @@ export {
   type ValidationRecordsResponse,
 } from "./workbench";
 
-export const VALIDATION_LEVELS = [
-  "isolated_backtest",
-  "random_window",
-  "staged_validation",
-  "composite",
-  "component",
-] as const;
-export const VALIDATION_VERDICTS = ["pass", "fail", "inconclusive"] as const;
+/** 列表排序封闭枚举（L4 三键控件映射；time_asc 后端支持前端不暴露）。
+ *  排序值域字面量联合——原 VALIDATION_LEVELS/VALIDATION_VERDICTS/
+ *  VALIDATION_SORTS 三常量生产面零引用（组件侧本地字面量为事实
+ *  权威）已清退，类型联合保消费面零感知 */
+export type ValidationSort = "time_desc" | "total_return_desc" | "verdict_quality";
 
-/** 列表排序封闭枚举（L4 三键控件映射；time_asc 后端支持前端不暴露） */
-export const VALIDATION_SORTS = [
-  "time_desc",
-  "total_return_desc",
-  "verdict_quality",
-] as const;
-export type ValidationSort = (typeof VALIDATION_SORTS)[number];
-
-/** 类型筛选三枚（中文标签——R-021 b 形制；composite/component 死值域不进枚举） */
+/** 类型筛选（中文标签）：对齐写入白名单 _RECORD_LEVELS 两值
+ *  （fix-replay-list-channel FE-2）——isolated/random/staged 为已
+ *  退役 level（写入面不再产生，选项值清退；历史行经「全部」流+搜
+ *  索仍可达——筛选不可达是「不再产生」的如实反映） */
 export const VALIDATION_TYPE_OPTIONS = [
-  { value: "isolated_backtest", label: "隔离验证" },
-  { value: "random_window", label: "随机窗口" },
-  { value: "staged_validation", label: "分段验证" },
+  { value: "sandbox_backtest", label: "沙盒回测" },
+  { value: "replay", label: "回放" },
 ] as const;
 
 /** 逐笔形制（后端笔对形：entry/exit 对+direction 定买卖语义；

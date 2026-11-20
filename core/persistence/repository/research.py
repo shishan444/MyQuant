@@ -529,6 +529,19 @@ _WORST_RETURN_EXPR = case(
            func.json_extract(ValidationRecord.result,
                              "$.summary.worst_segment.total_return")),
           else_=None)),
+    # replay 键位（fix-replay-list-channel G-2b）：优先 result.replay.
+    # total_return 计算键；历史行（增键前落库）缺该键代理回退
+    # total_pnl——代理口径（跨 initial_cash 不可比）如实标注，仅
+    # 排序用不入呈现面；coalesce 在 json_valid 先验分支内（裸串已归
+    # NULL——COALESCE 求值顺序坑先例不触发）
+    (ValidationRecord.level == "replay",
+     case((func.json_valid(ValidationRecord.result) == 1,
+           func.coalesce(
+               func.json_extract(ValidationRecord.result,
+                                 "$.replay.total_return"),
+               func.json_extract(ValidationRecord.result,
+                                 "$.replay.total_pnl"))),
+          else_=None)),
     )
 
 # 记录侧标的/周期（B1.4 泛化双路——三型键位路由；先验同上 D-01）
@@ -675,14 +688,16 @@ def validation_records_aggregates(
     level: Optional[str] = None,
     verdict: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """聚合查询（B1.2）：verdict_counts 四键恒在场+unsortable_count。
+    """聚合查询（B1.2）：verdict_counts 五键恒在场+unsortable_count。
 
     口径与 count 同基数（当前过滤维全集）；unsortable=worst 值缺失
     （NULL 键位或死值域 level）计数——非 total_return_desc 排序时
     端点恒报 0（语义键在场值退化），仓储如实计数两态均可判别。
     sandbox 第四键按 level='sandbox_backtest' 计数（add-sandbox-
     records-unified-flow C4/D2——锚身份字段而非结果字段：沙盒行
-    verdict 恒空串不命中三键，A5 结构性保证三键纯净）。
+    verdict 恒空串不命中三键，A5 结构性保证三键纯净）；replay 第五键
+    按 level='replay' 计数（fix-replay-list-channel——同锚身份字段，
+    行 verdict 恒空串同不命中三态键）。
     """
     from sqlalchemy import literal
 
@@ -711,6 +726,7 @@ def validation_records_aggregates(
             func.sum(case((v.verdict == "fail", 1), else_=0)),
             func.sum(case((v.verdict == "inconclusive", 1), else_=0)),
             func.sum(case((v.level == "sandbox_backtest", 1), else_=0)),
+            func.sum(case((v.level == "replay", 1), else_=0)),
             func.count(literal(1)),
         ])
         row = conn.execute(agg).one()
@@ -720,7 +736,8 @@ def validation_records_aggregates(
     return {
         "pass": int(row[0] or 0), "fail": int(row[1] or 0),
         "inconclusive": int(row[2] or 0), "sandbox": int(row[3] or 0),
-        "total": int(row[4] or 0),
+        "replay": int(row[4] or 0),
+        "total": int(row[5] or 0),
         "unsortable_count": int(n_unsort or 0),
     }
 

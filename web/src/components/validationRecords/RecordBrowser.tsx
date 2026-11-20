@@ -3,7 +3,7 @@
  * 卡片流四段卡（标识徽标/statement 引文两行截断/区间币种笔数/收益夏普
  * 回撤固定槽——指标取行内嵌 result JSON 直读）+搜索三路由（hyp_/st_
  * 前缀+statement 关键词）+筛选（verdict 四枚带计数联动=verdict_counts+
- * 类型三枚中文标签+泛化 toggle 交集）+排序三键（服务端执行）+懒加载
+ * 类型两枚中文标签+泛化 toggle 交集）+排序三键（服务端执行）+懒加载
  * （每批 50+滚动到底+失败重试不丢内容+已加载 N/总数 M+无值落尾披露）
  * +左右分栏（左卡片流独立滚动/右明细常驻）。
  * 分页语义沿端点契约：六维过滤 WHERE 下推——total=过滤基数、页满恒
@@ -44,7 +44,7 @@ const SORT_OPTIONS: Array<{ value: ValidationSort; label: string }> = [
   { value: "verdict_quality", label: "结果" },
 ];
 
-/** V-S 筛选栏（L2/L3/L4——搜索三路由+verdict 四枚带计数+类型三枚+
+/** V-S 筛选栏（L2/L3/L4——搜索三路由+verdict 四枚带计数+类型两枚+
  *  泛化 toggle+排序三键+重置；全部服务端执行） */
 export function FilterBar({
   filters,

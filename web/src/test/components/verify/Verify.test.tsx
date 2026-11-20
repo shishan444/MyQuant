@@ -26,24 +26,21 @@ vi.mock("@/hooks/useStrategies", () => ({
 // Q2 修复（fix/fe-validation-forms-remediation）：浏览骨架数据源 mock——
 // 原缺失时 RecordsTable 以错误态渲染（「验证记录源暂不可达」）因无断言侥幸绿
 // upgrade-validation-records-list 5.1：卡片流消费面扩展（union-balance+
-// 类型三枚+排序枚举——RecordsBrowser 组合）；响应补计数两键
+// 类型两枚+排序枚举——RecordsBrowser 组合）；响应计数五键
+// （fix-replay-list-channel——mock 替身对齐端点契约：三死常量随源
+// 清退删除，verdict_counts 补 sandbox/replay 第五键，TYPE_OPTIONS
+// 对齐写入白名单两值）
 vi.mock("@/services/validationRecords", () => ({
   getValidationRecordsPage: vi.fn().mockResolvedValue({
     records: [], total: 0, offset: 0, limit: 50, has_more: false,
-    verdict_counts: { pass: 0, fail: 0, inconclusive: 0 },
+    verdict_counts: { pass: 0, fail: 0, inconclusive: 0, sandbox: 0, replay: 0 },
     unsortable_count: 0,
   }),
   getValidationRecordDetail: vi.fn(),
   getUnionBalance: vi.fn(),
-  VALIDATION_LEVELS: [
-    "isolated_backtest", "random_window", "staged_validation", "composite", "component",
-  ],
-  VALIDATION_VERDICTS: ["pass", "fail", "inconclusive"],
-  VALIDATION_SORTS: ["time_desc", "total_return_desc", "verdict_quality"],
   VALIDATION_TYPE_OPTIONS: [
-    { value: "isolated_backtest", label: "隔离验证" },
-    { value: "random_window", label: "随机窗口" },
-    { value: "staged_validation", label: "分段验证" },
+    { value: "sandbox_backtest", label: "沙盒回测" },
+    { value: "replay", label: "回放" },
   ],
 }));
 

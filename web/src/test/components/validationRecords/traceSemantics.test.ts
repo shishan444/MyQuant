@@ -6,6 +6,7 @@
  * 三型组装实锚）。
  */
 import { describe, it, expect, vi } from "vitest";
+import { VALIDATION_TYPE_OPTIONS } from "@/services/validationRecords";
 import {
   buildCardModel,
   eventSemantics,
@@ -19,6 +20,15 @@ import {
   traceMarkers,
   TRACE_FAMILY_COLOR,
 } from "@/components/validationRecords/traceSemantics";
+
+describe("类型筛选选项集（fix-replay-list-channel FE-2——对齐写入白名单）", () => {
+  it("选项恰两值：沙盒回测+回放（isolated/random/staged 已退役清退）", () => {
+    expect(VALIDATION_TYPE_OPTIONS).toEqual([
+      { value: "sandbox_backtest", label: "沙盒回测" },
+      { value: "replay", label: "回放" },
+    ]);
+  });
+});
 import type { ValidationRecordRow, VrExecution, VrTrade, VrTraceRow } from "@/services/validationRecords";
 
 function makeRow(over: Partial<ValidationRecordRow> = {}): ValidationRecordRow {
@@ -40,6 +50,63 @@ function makeRow(over: Partial<ValidationRecordRow> = {}): ValidationRecordRow {
 }
 
 describe("buildCardModel 三型提取（卡片四段对照逐值）", () => {
+  it("replay：params 顶层平铺+result.replay 真值（fix-replay-list-channel FE-3）", () => {
+    const row = makeRow({
+      level: "replay",
+      params: { symbol: "BTCUSDT", timeframe: "1h",
+                start: "2025-04-01", end: "2025-10-01",
+                fee: 0.001, slippage: 0.0005,
+                init_cash: 100000, leverage: 1 },
+      result: { replay: { task_id: "t1", status: "completed",
+                          total_trades: 544, total_pnl: -1.2,
+                          final_equity: 99880,
+                          total_return: -0.0012 } },
+    });
+    const m = buildCardModel(row);
+    expect(m.typeLabel).toBe("回放");
+    expect(m.rangeLabel).toBe("2025-04-01 → 2025-10-01");
+    expect(m.symbol).toBe("BTCUSDT");
+    expect(m.trades).toBe(544);
+    expect(m.metrics).toEqual({
+      total_return: -0.0012, sharpe_ratio: null, max_drawdown: null,
+    });
+    expect(m.worstLabel).toBeNull();
+  });
+
+  it("replay 历史行（无 total_return 键）：指标组如实缺省+笔数照取"
+      + "（呈现面不做 PnL 代理）", () => {
+    const row = makeRow({
+      level: "replay",
+      params: { symbol: "BTCUSDT", timeframe: "1h",
+                start: "2025-04-01", end: "2025-10-01" },
+      result: { replay: { task_id: "t2", total_trades: 544,
+                          total_pnl: -1.2, final_equity: 99880 } },
+    });
+    const m = buildCardModel(row);
+    expect(m.typeLabel).toBe("回放");
+    expect(m.trades).toBe(544);
+    expect(m.metrics).toBeNull();
+  });
+
+  it("sandbox 卡片收编（FE-2 同病）：result.metrics 五项真值"
+      + "（沙盒详情形态同源键位）", () => {
+    const row = makeRow({
+      level: "sandbox_backtest",
+      params: { symbol: "ETHUSDT", timeframe: "4h",
+                start: "2026-01-01", end: "2026-02-01" },
+      result: { metrics: { total_return: 0.052, sharpe_ratio: 1.4,
+                           max_drawdown: -0.06, total_trades: 12 } },
+    });
+    const m = buildCardModel(row);
+    expect(m.typeLabel).toBe("沙盒回测");
+    expect(m.rangeLabel).toBe("2026-01-01 → 2026-02-01");
+    expect(m.symbol).toBe("ETHUSDT");
+    expect(m.trades).toBe(12);
+    expect(m.metrics).toEqual({
+      total_return: 0.052, sharpe_ratio: 1.4, max_drawdown: -0.06,
+    });
+  });
+
   it("isolated：metrics 直嵌+request_range 区间+result.symbol", () => {
     const row = makeRow({
       level: "isolated_backtest",
