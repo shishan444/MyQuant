@@ -225,14 +225,11 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
   const tidRaw = replay.replay?.task_id;
   const tid = tidRaw != null && TID_RE.test(tidRaw) ? tidRaw : undefined;
   // 选中行键集合（C4 Q3 互达多笔）：图→行命中同 bar 全部相关行并列
-  // 高亮；行→图 toggle 单键（既有交互不变，选中态载体从单键扩集合）
+  // 高亮；行→图替换式单选（点非选中行=整集替换为该行，同键再点取消）
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const toggleRow = (key: string) => {
-    setSelectedKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
+    setSelectedKeys((prev) =>
+      prev.has(key) ? new Set() : new Set([key]));
   };
   // 行 DOM ref（互达「标记→行」：scrollIntoView 定位面——key=行键）
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
