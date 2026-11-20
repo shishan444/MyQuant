@@ -186,12 +186,13 @@ class TestExistingTablesUnchanged:
         for t in sorted(before):
             if t == "pt_task":
                 # 追加面（paper-trading-revamp 组 B + sandbox-and-report-
-                # supplement D3②）：first_met_at＋熔断三列均表尾追加
+                # supplement D3② + fix-replay-task-lifecycle origin 列）：
+                # 均表尾追加
                 assert after[t][:len(before[t])] == before[t], \
                     "pt_task 既有列不得改动（含列序）"
                 assert after[t][len(before[t]):] == [
                     "first_met_at", "halt_drawdown_pct", "halted_at",
-                    "halt_reason"]
+                    "halt_reason", "origin"]
                 continue
             if t == "pt_equity":
                 # 追加面（paper-trading-revamp 组 E）：既有列前缀逐位保持

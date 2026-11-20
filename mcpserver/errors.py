@@ -45,6 +45,11 @@ HINTS: Dict[str, str] = {
         "模板内部错误：附 detail 的 template/exception_type/summary "
         "提交问题报告；同参数重试大概率无效（0.3.2 卡4/卡5——诊断字段 "
         "保留异常文本，message 通道已保持干净）",
+    # 回放执行段异常收敛码（fix-replay-task-lifecycle 2.3——禁裸 500）
+    "REPLAY_EXECUTION_FAILED":
+        "回放执行异常：经任务查询核对 task 行终态与 error_detail "
+        "摘要；同参数重试大概率无效，属工程缺陷时附 detail 的 "
+        "exception 摘要提交问题报告",
     # ---- 多周期条件（0.2.14）
     "TIMEFRAME_UNKNOWN":
         "周期键非法：用合法键集内的周期（detail.legal_range）；高周期"

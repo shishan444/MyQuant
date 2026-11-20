@@ -128,6 +128,10 @@ _EXPECTED_CATCHES = {
     # 宽窄双通道窄通道：bare re-raise 防吞（删则 ResearchError 掉进
     # 宽通道被转 RESEARCH_TEMPLATE_INTERNAL 500）
     "api/routes/research/analysis.py": ("except ResearchError:",),
+    # 回放端点宽窄双通道窄通道（fix-replay-task-lifecycle 2.3）：bare
+    # re-raise 防吞——删则上游 ResearchError（数据/参数语义）掉进宽
+    # 通道被转 REPLAY_EXECUTION_FAILED 500 丢原语义
+    "api/routes/research/validation.py": ("except ResearchError:",),
 }
 
 # research_error_to_http 消费点（文件 + 语句语义）：hypothesis_cards 为
