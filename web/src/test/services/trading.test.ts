@@ -21,6 +21,7 @@ import {
   stopTradingTask,
   cloneTradingTask,
   getTradingFills,
+  getTradingSignals,
   getTradingFunding,
   getTradingRunnerStatus,
   getTradingEquity,
@@ -121,6 +122,25 @@ describe("trading service（/api/paper-trading 新域）", () => {
       params: { limit: undefined, offset: undefined },
     });
     expect(result).toEqual(mockResponse);
+  });
+
+  it("getTradingSignals/getTradingEquity 第三参 AbortSignal 同构透传"
+      + "（CARD-01 三函数契约——代表项通过不代替其余项）", async () => {
+    const ac = new AbortController();
+    mockedGet.mockResolvedValueOnce({ signals: [], has_more: false });
+    await getTradingSignals("t1", { limit: 500 }, ac.signal);
+    expect(mockedGet).toHaveBeenCalledWith(
+      "/api/paper-trading/tasks/t1/signals", {
+        params: { limit: 500, offset: undefined },
+        signal: ac.signal,
+      });
+    mockedGet.mockResolvedValueOnce({ snapshots: [], has_more: false });
+    await getTradingEquity("t1", { limit: 500 }, ac.signal);
+    expect(mockedGet).toHaveBeenCalledWith(
+      "/api/paper-trading/tasks/t1/equity", {
+        params: { limit: 500, offset: undefined },
+        signal: ac.signal,
+      });
   });
 
   it("getTradingFills 第三参 AbortSignal 透传给 api.get（CARD-01 取消链）", async () => {

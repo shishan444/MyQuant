@@ -172,6 +172,21 @@ describe("ReplayDetailPanel 组件渲染与互达（P3 建网+CARD-01/03 验收�
     expect(screen.getByText(/基因：RSI\.value lt 30/)).toBeInTheDocument();
   });
 
+  it("行选中 toggle：二次点击同一行取消选中（CARD-01 流水表迁移行"
+      + " 交互契约）", async () => {
+    stubFetch(FILLS, SIGNALS);
+    renderPanel(RECORD("task-toggle"));
+    const row = await screen.findByTestId("replay-flow-row-0");
+    fireEvent.click(row);
+    await waitFor(() => {
+      expect(row.className).toContain("bg-surface-active");
+    });
+    fireEvent.click(row);
+    await waitFor(() => {
+      expect(row.className).not.toContain("bg-surface-active");
+    });
+  });
+
   it("零成交主体仍在：fills 空→空态文案+K 线挂载标记空（CARD-01 ③）", async () => {
     stubFetch([], SIGNALS);
     renderPanel(RECORD("task-4"));
@@ -373,6 +388,33 @@ describe("明细源失败降级与分页全量（fix-replay-presentation-pipelin
     expect(row0.textContent).not.toContain("exit_max_hold");
     expect(screen.getByTestId("replay-flow-row-1").textContent)
       .toContain("未识别动作（future_kind）");
+  });
+
+  it("signalToPanel 坏值形收窄（CARD-01 类型边界契约）：非字符串值"
+      + "如实串化/回退不丢行", async () => {
+    const badSignals = [{
+      bar_time: "2025-12-31T20:00:00Z",
+      exec_bar_time: "2026-01-01T00:00:00Z",
+      kind: "open", outcome: "filled",
+      fill_seq: 1, reject_reason: null,
+      gene_hits: [
+        // indicator 数值串化；field/condition/target 非法形回退省略
+        { indicator: 123, field: 456, condition: true, target: null },
+        { indicator: "EMA", condition: "gt", target: 2 },
+      ],
+    }];
+    mockFills.mockResolvedValue(
+      { fills: FILLS.slice(0, 1), has_more: false } as never);
+    mockSignals.mockResolvedValue(
+      { signals: badSignals, has_more: false } as never);
+    renderPanel(RECORD("task-bad"));
+    await screen.findByTestId("replay-flow-row-0");
+    fireEvent.click(screen.getByTestId("replay-flow-row-0"));
+    await waitFor(() => {
+      // 「123 」尾空格=geneDescription 两段拼接形制（第一段尾空格在
+      // trim 作用域外）——呈现级细节非缺陷，断言按实际形制锚定
+      expect(screen.getByText(/基因：123 ；EMA gt 2/)).toBeInTheDocument();
+    });
   });
 
   it("signal 透传组件面：react-query AbortSignal 经 fetchPage 到服务层"

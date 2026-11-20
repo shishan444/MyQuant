@@ -80,6 +80,38 @@ describe("仓位流水派生（derivePositionFlow）", () => {
       [0, 10, 10], [10, 5, 15], [15, -2, 13], [13, -13, 0],
     ]);
   });
+  it("quantity 可空守卫（CARD-01 服务层可空形对齐）：null 量=零操作量，"
+      + "仓位不漂移；close 全量平不受 quantity 影响", () => {
+    const flow = derivePositionFlow([
+      fill({ kind: "open", side: "long", quantity: null as unknown as number }),
+      fill({ kind: "open", side: "long", quantity: 5 }),
+      fill({ kind: "add", side: "long", quantity: null as unknown as number }),
+      fill({ kind: "reduce", side: "long", quantity: null as unknown as number }),
+      fill({ kind: "close", side: "long", quantity: null as unknown as number }),
+    ]);
+    // open null：0→0（零操作量不建仓）；open 5：0→5；add null：5→5；
+    // reduce null：5→5（-0=减方向有符号零——quantity 缺失仍走减向
+    // 符号运算，零操作量语义）；
+    // close：5→0（全量平与 quantity 无关）
+    expect(flow.map((r) => [r.before, r.qty, r.after])).toEqual([
+      [0, 0, 0], [0, 5, 5], [5, 0, 5], [5, -0, 5], [5, -5, 0],
+    ]);
+  });
+
+  it("仓位守恒恒等式（属性锚）：任意混排序列每行 after=before+qty", () => {
+    // 八值 kind 混排×长短交替×量 1-3——守恒不变量对任意流水成立
+    const kinds = ["open", "add", "reduce", "close", "exit_sl",
+      "exit_tp", "exit_max_hold", "exit_time"] as const;
+    const mixed = kinds.map((kind, i) => fill({
+      kind,
+      side: (i % 2 ? "long" : "short") as "long" | "short",
+      quantity: (i % 3) + 1,
+    }));
+    for (const r of derivePositionFlow(mixed)) {
+      expect(r.after).toBe(r.before + r.qty);
+    }
+  });
+
   it("reduce_terminated 行触发原因=减仓终止", () => {
     const flow = derivePositionFlow([
       fill({ kind: "open", side: "long", quantity: 4 }),

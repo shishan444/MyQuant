@@ -33,6 +33,29 @@ describe("分页聚合循环器（pagedFetch——fix-replay-presentation-pipeli
     expect(pageMock).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    { pages: [500, 500, 97], calls: 3 },
+    { pages: [500, 500, 500, 3], calls: 4 },
+    { pages: [500, 1], calls: 2 },
+  ])("多页切分 $pages → 聚合保序全量（属性：任意页切分输出=拼接）",
+    async ({ pages, calls }: { pages: number[]; calls: number }) => {
+      let seq = 0;
+      pageMock.mockImplementation((offset: number) => {
+        const idx = offset / DETAIL_PAGE_SIZE;
+        const n = pages[idx] ?? 0;
+        return Promise.resolve({
+          items: Array.from({ length: n }, () => ({ seq: seq++ })),
+          hasMore: idx + 1 < pages.length,
+        });
+      });
+      const all = await pagedFetch<{ seq: number }>({ fetchPage: pageMock });
+      expect(all).toHaveLength(pages.reduce((a, b) => a + b, 0));
+      // 保序不变量：输出全局递增序（到达序拼接=全局序的属性化表达）
+      expect(all.map((x) => x.seq)).toEqual(
+        Array.from({ length: all.length }, (_, i) => i));
+      expect(pageMock).toHaveBeenCalledTimes(calls);
+    });
+
   it("页未满终止：3 条且 hasMore=true 也不再续页（页未满是独立终止条件）", async () => {
     pageMock.mockResolvedValue({
       items: [{ seq: 1 }, { seq: 2 }, { seq: 3 }], hasMore: true });
@@ -88,8 +111,8 @@ describe("分页聚合循环器（pagedFetch——fix-replay-presentation-pipeli
     })).rejects.toThrow(/网络连接失败/);
   });
 
-  it("熔断防线现状锁定（特征测试）：恒满页+恒 has_more → 超熔断页数"
-      + "抛错（防病态续页死循环）", async () => {
+  it("熔断防线：恒满页+恒 has_more → 超熔断页数抛错"
+      + "（防病态续页死循环——分页契约防御条款）", async () => {
     const fullPage = Array.from(
       { length: DETAIL_PAGE_SIZE }, (_, i) => ({ seq: i }));
     pageMock.mockResolvedValue({ items: fullPage, hasMore: true });
