@@ -163,9 +163,9 @@ def _insert(db: Path, record_id: str, hid: str, level: str,
             f" '{created_at}')"))
 
 
-class TestVerdictCountsFourKeys:
-    def test_verdict_counts_four_keys_three_pure(self, env):
-        """TC-2-5：四键恒在场+sandbox 按 level 计数+三键纯净+互斥边界
+class TestVerdictCountsFiveKeys:
+    def test_verdict_counts_five_keys_three_pure(self, env):
+        """TC-2-5：五键恒在场+sandbox/replay 按 level 计数+三键纯净+互斥边界
         （G5/G10——verdict 筛选不命中沙盒行/composite 不落键）。"""
         client, hid, out, db, d = env
         # 补直插基线：module env 已有正式 pass×1（rec_formal_1）与真实
@@ -192,7 +192,7 @@ class TestVerdictCountsFourKeys:
         assert full["verdict_counts"] == {
             "pass": 2, "fail": 1, "inconclusive": 0, "sandbox": 3,
             "replay": 0}
-        assert full["total"] == 7  # 四键和 6<7——composite 不落键
+        assert full["total"] == 7  # 五键和 6<7——composite 不落键
         # level 互斥过滤：sandbox=0 恒在场
         iso = client.get("/api/research/validation-records",
                          params={"level": "isolated_backtest"}).json()
@@ -331,7 +331,7 @@ class TestZeroChangeFaces:
         原仅由既有非沙盒用例+TC-6-1 机制拼合承接）。
 
         放本类（TC-2-5 之后执行）：本用例真实跑 adhoc 沙盒使共享库
-        sandbox 计数 +1，若在 TestVerdictCountsFourKeys 之前执行会
+        sandbox 计数 +1，若在 TestVerdictCountsFiveKeys 之前执行会
         污染其 base 精确快照（sandbox: 1）——顺序隔离入此类尾。
         """
         client, hid, out, db, d = env

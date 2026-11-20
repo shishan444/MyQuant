@@ -163,8 +163,9 @@ class TestQSearch:
     def test_q_miss_empty(self, env):
         out = _list(env, q="不存在的词")
         assert out["total"] == 0 and out["records"] == []
-        # 四键恒在场（add-sandbox-records-unified-flow C4——sandbox
-        # 第四键按 level 计数，空集 0）
+        # 五键恒在场（add-sandbox-records-unified-flow C4——sandbox
+        # 第四键按 level 计数；fix-replay-list-channel——replay 第五键
+        # 同锚 level 计数，空集 0）
         assert out["verdict_counts"] == {
             "pass": 0, "fail": 0, "inconclusive": 0, "sandbox": 0,
             "replay": 0}

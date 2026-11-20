@@ -158,6 +158,9 @@ class TestReplayListChannel:
         vc = r.json()["verdict_counts"]
         assert vc["replay"] == 2
         assert vc["pass"] == 1  # iso 行 pass；replay 行空串不入三态
+        assert r.json()["total"] == 3  # 同基数直锚（iso 1+replay 2）
+        assert r.json()["total"] == 3  # 同基数直锚（iso 1+replay 2）
+        assert r.json()["total"] == 3  # 同基数直锚（iso 1+replay 2）
 
     def test_new_row_result_carries_key(self, env):
         """落库行 result.replay 携带 total_return（列表 params/result 读回）。"""
@@ -172,3 +175,43 @@ class TestReplayListChannel:
         hist = next(x for x in r.json()["records"]
                     if x["record_id"] == _HIST_ID)
         assert "total_return" not in hist["result"]["replay"]
+
+    def test_level_replay_with_strategy_combo(self, env):
+        """S5 组合筛选：level=replay×strategy_id 下钻——组合交集等集
+        +排他锚（strategy 维不参与下推时 total 不会为 0）。"""
+        c, body, _, _ = env
+        r = c.get("/api/research/validation-records",
+                  params={"level": "replay", "strategy_id": "st_api",
+                          "limit": 50})
+        assert r.status_code == 200, r.text
+        j = r.json()
+        ids = [x["record_id"] for x in j["records"]]
+        assert set(ids) == {body["record_id"], _HIST_ID}
+        assert all(x["level"] == "replay" for x in j["records"])
+        # 计数键随组合过滤同基数收窄（不回全局基数）
+        assert j["verdict_counts"]["replay"] == 2
+        # 排他：不存在的 strategy 组合恒空（strategy 维真实下推）
+        r2 = c.get("/api/research/validation-records",
+                   params={"level": "replay", "strategy_id": "st_none",
+                           "limit": 50})
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["total"] == 0
+        assert r2.json()["records"] == []
+
+    def test_new_row_identity_and_params_form(self, env):
+        """真实 replay 行身份与落库形制：hypothesis_id='adhoc' 字面量、
+        verdict 恒空串、params 顶层八键平铺（spec 落库形制——
+        init_cash 为落库实符键名，Lead 已裁决修正 delta 文本）。"""
+        c, body, _, _ = env
+        r = c.get("/api/research/validation-records",
+                  params={"level": "replay", "limit": 50})
+        row = next(x for x in r.json()["records"]
+                   if x["record_id"] == body["record_id"])
+        assert row["hypothesis_id"] == "adhoc"
+        assert row["verdict"] == ""
+        prm = row["params"]
+        assert set(prm) == {"symbol", "timeframe", "start", "end",
+                            "fee", "slippage", "init_cash", "leverage"}
+        assert prm["symbol"] == "BTCUSDT"
+        assert prm["timeframe"] == "4h"
+        assert prm["init_cash"] == 100000
