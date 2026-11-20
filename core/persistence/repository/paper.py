@@ -226,6 +226,7 @@ def create_task(
     stop_loss_pct: Optional[float] = None,
     halt_drawdown_pct: Optional[float] = None,
     task_id: Optional[str] = None,
+    origin: str = "paper",
     conn: Optional[Connection] = None,
 ) -> str:
     """创建纸盘任务（status 硬编码 pending、bars_processed=0、账户组
@@ -235,6 +236,11 @@ def create_task(
     conn 可选透传（build-strategy-lifecycle 5.1 挂盘同事务）：传入则
     插入走外层事务（挂盘迁移+建任务两侧原子成败——外层回滚则两侧
     皆无）；缺省自开单事务（既有直建行为不变）。
+
+    origin（fix-replay-task-lifecycle 1.2）：来源域标记 paper/replay，
+    缺省 paper——存量纸盘调用（REST 建行/克隆）零改动；回放链路
+    （ReplayRunner 建行——pool worker 与 run_from_dna 经 run() 汇聚
+    自动继承）显式传 origin="replay"。
     """
     now = _now()
     tid = task_id or new_task_id()
@@ -246,6 +252,7 @@ def create_task(
         stop_loss_pct=stop_loss_pct, halt_drawdown_pct=halt_drawdown_pct,
         bars_processed=0,
         research_status_snapshot=research_status_snapshot,
+        origin=origin,
         created_at=now, updated_at=now,
     )
     if conn is not None:
@@ -316,17 +323,27 @@ def list_tasks(
     db_path: Path, status: Optional[str] = None, limit: int = 50,
     offset: int = 0, order: str = "desc",
     status_in: Optional[Iterable[str]] = None,
+    origin: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """列纸盘任务（status 单值/status_in 集合过滤+created_at 排序+
     分页；desc=REST 列表倒序缺省，asc=调度器拾取最早优先序；
     status_in=集合过滤 SQL 下推——调度器终态域扫描查询收窄
-    （refactor-paper-runtime-data-access A-1），空集=零行）。"""
+    （refactor-paper-runtime-data-access A-1），空集=零行）。
+
+    origin（fix-replay-task-lifecycle 1.2）：可选来源域过滤（缺省
+    不过滤——REST/MCP 既有读面零变化）；调度器扫描面传 'paper' 实现
+    域隔离（SQL 下推——终态域回流扫描的「每策略最新终态行」选取
+    必须在过滤后域内进行，后置滤域会把被 replay 行覆盖的策略整段
+    误跳过）。
+    """
     stmt = select(PtTask)
     if status:
         stmt = stmt.where(PtTask.status == status)
     if status_in is not None:
         stmt = stmt.where(
             PtTask.status.in_(_as_status_tuple(status_in)))
+    if origin is not None:
+        stmt = stmt.where(PtTask.origin == origin)
     col = PtTask.created_at.desc() if order == "desc" else PtTask.created_at.asc()
     stmt = stmt.order_by(col).limit(limit).offset(offset)
     engine = _engine_for(db_path)

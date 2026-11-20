@@ -667,6 +667,15 @@ class PtTask(Base):
     stop_reason: Mapped[Optional[str]] = mapped_column(Text)
     heartbeat_at: Mapped[Optional[str]] = mapped_column(Text)
     error_detail: Mapped[Optional[str]] = mapped_column(Text)
+    # 来源域标记（fix-replay-task-lifecycle 1.1——回放与纸盘实时共表
+    # 后的调度域判别）：值域 paper/replay，缺省 paper（存量纸盘调用
+    # 零改动——create_task 缺省参数同值）。纸盘调度器全部自动扫描面
+    # （运行域三入口+终态域两面）仅处置 origin='paper' 行；replay 行
+    # 由回放编排自身全权管理生命周期。追加在表尾与 Alembic ALTER
+    # ADD COLUMN 列序一致（PtFill 先例）。值域约束在写入通道（仓储
+    # 参数面）不在列定义（SQLite CHECK 双声明漂移面）。
+    origin: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'paper'"))
 
 
 class PtFill(Base):
