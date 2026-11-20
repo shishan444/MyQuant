@@ -89,6 +89,14 @@ PT_STATUS_TERMINAL: frozenset = frozenset(PT_STATUS_PREDECESSORS) - set().union(
 # 模块级形制；has_no_active_tasks 判定集合的单点，SQL 下推同源消费）
 PT_STATUS_ACTIVE: frozenset = frozenset(PT_STATUS_PREDECESSORS) - PT_STATUS_TERMINAL
 
+# pt_task 来源域值域单源（fix-replay-task-lifecycle 1.1+审查修复
+# CARD-03——spec 主条款「值域 paper/replay」SHALL 的实现锚）：
+# create_task 缺省引用+写入通道校验消费此单源；消费面分支判定仍用
+# 字面量（与状态域「值域声明单源+分支字面量直写」同纪律——生产面
+# 字面量收敛不并入本卡，未来全域收敛有锚可引）
+PT_ORIGIN_PAPER = "paper"
+PT_ORIGIN_REPLAY = "replay"
+
 
 def _as_status_tuple(expected_status: Union[str, Iterable[str]]) -> tuple:
     """expected_status 归一（str→单元组；可迭代→元组）——显式前态集
@@ -226,7 +234,7 @@ def create_task(
     stop_loss_pct: Optional[float] = None,
     halt_drawdown_pct: Optional[float] = None,
     task_id: Optional[str] = None,
-    origin: str = "paper",
+    origin: str = PT_ORIGIN_PAPER,
     conn: Optional[Connection] = None,
 ) -> str:
     """创建纸盘任务（status 硬编码 pending、bars_processed=0、账户组
@@ -240,8 +248,14 @@ def create_task(
     origin（fix-replay-task-lifecycle 1.2）：来源域标记 paper/replay，
     缺省 paper——存量纸盘调用（REST 建行/克隆）零改动；回放链路
     （ReplayRunner 建行——pool worker 与 run_from_dna 经 run() 汇聚
-    自动继承）显式传 origin="replay"。
+    自动继承）显式传 origin="replay"。值域外取值当场 ValueError
+    （审查修复 CARD-03——spec SHALL 值域的写入通道锚，错值进不了
+    库不产生静默孤儿行）。
     """
+    if origin not in (PT_ORIGIN_PAPER, PT_ORIGIN_REPLAY):
+        raise ValueError(
+            f"origin 值域外取值: {origin!r}（合法 "
+            f"{PT_ORIGIN_PAPER}/{PT_ORIGIN_REPLAY}）")
     now = _now()
     tid = task_id or new_task_id()
     values = dict(

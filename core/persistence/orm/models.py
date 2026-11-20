@@ -672,8 +672,9 @@ class PtTask(Base):
     # 零改动——create_task 缺省参数同值）。纸盘调度器全部自动扫描面
     # （运行域三入口+终态域两面）仅处置 origin='paper' 行；replay 行
     # 由回放编排自身全权管理生命周期。追加在表尾与 Alembic ALTER
-    # ADD COLUMN 列序一致（PtFill 先例）。值域约束在写入通道（仓储
-    # 参数面）不在列定义（SQLite CHECK 双声明漂移面）。
+    # ADD COLUMN 列序一致（PtFill 先例）。值域约束在仓储参数面校验
+    # （create_task——PT_ORIGIN 单源+值域外 ValueError）不在列定义
+    # （SQLite CHECK 双声明漂移面）。
     origin: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'paper'"))
 
