@@ -103,7 +103,9 @@ def finalize_report(
 ) -> Dict[str, Any]:
     """结题固化（version=1）：三终态时生成完整报告落 pt_report。
 
-    调用方=调度器/执行器在终态迁移点（组 3 接线）；error 态保留已产出
+    调用方=app 装配的终态回调（app.py lifespan 注入 on_concluded——
+    executor 三终态经 _finalize→调度器透传触发；不经回调的终态路径
+    〔stop 的 CAS 直写/恢复清场转 error〕不固化）。error 态保留已产出
     数据同样出报告。
 
     Raises:
@@ -151,7 +153,8 @@ def get_final_report(
 
     Returns:
         {task_id, report_version, generated_at, as_of, report}；终态而
-        无固化版返回 None（结题即固化为调度器契约，此处不代偿补算）。
+        无固化版返回 None（固化由终态回调异步落库——不经回调的终态
+        路径可能无固化版，此处不代偿补算）。
 
     Raises:
         ValueError: 任务不存在。

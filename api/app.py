@@ -174,8 +174,26 @@ def create_app(
         load_min_notional(fetch_exchange_info=_mn_fetch)
         from core.paper_trading.runtime.scheduler import PaperScheduler
 
+        # final 固化接线（fix-paper-deviation-contrast 0.1/0.2）：终态
+        # 回调注入——executor 三终态经 _finalize → 调度器 _executor_
+        # concluded 透传 → 此处固化结题报告落 pt_report（final 路由与
+        # MCP final=True 的生产供数源）。固化失败 try/except 与终态
+        # 迁移解耦：终态是主语义（executor 先落终态再回调），固化是
+        # 增强面——抛错只留痕不回滚不阻断（executor 层兜底之外此处
+        # 再收一层，失败归因到「固化」而非笼统「结题回调」）
+        def _on_paper_task_concluded(task_id: str, status: str) -> None:
+            try:
+                from core.paper_trading.reporting import finalize_report
+
+                finalize_report(db_path, data_dir, task_id)
+            except Exception:
+                logger.exception(
+                    "纸盘任务 %s 结题固化失败（终态不受影响，status=%s）",
+                    task_id, status)
+
         paper_scheduler = PaperScheduler(
-            db_path=db_path, data_dir=data_dir, push=_make_push("/trading"))
+            db_path=db_path, data_dir=data_dir, push=_make_push("/trading"),
+            on_concluded=_on_paper_task_concluded)
         paper_scheduler.startup_recover()
         app.state.paper_scheduler = paper_scheduler
         paper_scheduler.start()
