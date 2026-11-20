@@ -87,8 +87,10 @@ def _seed(db_path) -> None:
           100.0 + (i % 10), 0.5, 0.01,
           -0.5 if i % 3 == 0 else None, None)
          for i in range(N_FILLS)])
+    # C4 D7：condition dict 形制（后端 dna.py 权威——生产形制对齐）
     gene = json.dumps([{"gene_index": 0, "indicator": "RSI",
-                        "field": "rsi", "condition": "lt", "target": 30,
+                        "field": "rsi",
+                        "condition": {"type": "lt", "threshold": 30},
                         "role": "open", "timeframe": "1h"}])
     cur.executemany(
         "INSERT INTO pt_signal (task_id, strategy_id, bar_time,"

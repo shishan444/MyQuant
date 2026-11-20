@@ -156,11 +156,12 @@ describe("基因触发描述（geneDescription）", () => {
       exec_bar_time: "2026-01-01T00:00:00Z",
       kind: "open", outcome: "filled",
       fill_seq: 3, reject_reason: null,
+      // C4 D7：condition dict 形制（后端 dna.py 权威）+Q1 词表翻译
       gene_hits: [{ indicator: "RSI", field: "rsi",
-                    condition: "lt", target: 45 }],
+                    condition: { type: "lt", threshold: 45 } }],
     }];
     expect(geneDescription(sigs, "2026-01-01T00:00:00Z", 3))
-      .toBe("RSI.rsi lt 45");
+      .toBe("RSI.rsi < 45");
   });
   it("差一根 pending 族命中（CARD-02 验收）：join 键=exec_bar_time"
       + " 非 bar_time（决策锚前一根）——旧键形制下恒 miss 根治", () => {
@@ -169,12 +170,12 @@ describe("基因触发描述（geneDescription）", () => {
       exec_bar_time: "2026-01-01T00:00:00Z",
       kind: "open", outcome: "filled",
       fill_seq: 1, reject_reason: null,
-      gene_hits: [{ indicator: "EMA", condition: "crossover",
-                    target: "ema_20" }],
+      gene_hits: [{ indicator: "EMA",
+                    condition: { type: "cross_above" } }],
     }];
     // join 目标=执行 bar（与 fill 同轴）→命中
     expect(geneDescription(sigs, "2026-01-01T00:00:00Z", 1))
-      .toBe("EMA crossover ema_20");
+      .toBe("EMA 金叉");
     // 旧键倒退锚：若实现回退用 bar_time join，以 bar_time 调用
     // 才会命中——exec 键实现下此处必 miss
     expect(geneDescription(sigs, "2025-12-31T20:00:00Z", 1)).toBe("");
@@ -186,10 +187,40 @@ describe("基因触发描述（geneDescription）", () => {
       exec_bar_time: "2026-01-02T00:00:00Z",
       kind: "exit_sl", outcome: "filled",
       fill_seq: 5, reject_reason: null,
-      gene_hits: [{ indicator: "ATR", condition: "gt", target: 2 }],
+      gene_hits: [{ indicator: "ATR",
+                    condition: { type: "gt", threshold: 2 } }],
     }];
     expect(geneDescription(sigs, "2026-01-02T00:00:00Z", 5))
-      .toBe("ATR gt 2");
+      .toBe("ATR > 2");
+  });
+  it("词表未命中 type 显原文（C4 Q1 防御——未来条件类型扩值不静默"
+      + "丢描述）", () => {
+    const sigs = [{
+      bar_time: "2025-12-31T20:00:00Z",
+      exec_bar_time: "2026-01-01T00:00:00Z",
+      kind: "open", outcome: "filled",
+      fill_seq: 1, reject_reason: null,
+      gene_hits: [{ indicator: "NEW_IND",
+                    condition: { type: "future_op", threshold: 7 } }],
+    }];
+    expect(geneDescription(sigs, "2026-01-01T00:00:00Z", 1))
+      .toBe("NEW_IND future_op 7");
+  });
+  it("多基因组合「；」分隔+阈值完整（C4 D7/Q1）", () => {
+    const sigs = [{
+      bar_time: "2025-12-31T20:00:00Z",
+      exec_bar_time: "2026-01-01T00:00:00Z",
+      kind: "open", outcome: "filled",
+      fill_seq: 2, reject_reason: null,
+      gene_hits: [
+        { indicator: "RSI", field: "rsi",
+          condition: { type: "lt", threshold: 30 } },
+        { indicator: "EMA",
+          condition: { type: "ge", threshold: 200 } },
+      ],
+    }];
+    expect(geneDescription(sigs, "2026-01-01T00:00:00Z", 2))
+      .toBe("RSI.rsi < 30；EMA >= 200");
   });
   it("未命中（无 gene_hits）→ 空串（如实话术由呈现层承载）", () => {
     const sigs = [{
