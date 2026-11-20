@@ -5,7 +5,9 @@
  * mock 面：KlineChart mock（jsdom 不渲染真图——断言 props 链：
  * data 主体/signalMarkers 六态/selectedMarkerTime/onMarkerClick）+
  * getOhlcvBySymbol 服务层 mock（CARD-01 取数单源）+global fetch
- * stubGlobal 按 URL 分派 fills/signals。
+ * stubGlobal 按 URL 分派 fills/signals；失败形（422/5xx）与分页形
+ * （limit/offset/has_more 两页）补齐（fix-replay-presentation-pipeline
+ * ——mock 契约边界教训：mock 只含 ok:true 形曾掩盖恒 422 缺陷）。
  * 踩坑实录：React 函数组件 mock 调用传 (props, context) 两参——
  * props 在 calls[-1][0]。
  */
@@ -210,5 +212,123 @@ describe("ReplayDetailPanel 组件渲染与互达（P3 建网+CARD-01/03 验收�
     stubFetch(FILLS, SIGNALS);
     renderPanel(RECORD("a".repeat(64)));
     await screen.findByTestId("replay-position-flow");
+  });
+});
+
+describe("明细源失败降级与分页全量（fix-replay-presentation-pipeline FE-1 修复面）", () => {
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockReset();
+    mockChart.mock.calls.length = 0;
+    mockOhlcv.mockReset();
+    mockOhlcv.mockResolvedValue({ data: OHLCV } as never);
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** 失败形：ok=false+status（json 故意 reject——失败路径不应读取体） */
+  function stubFail(status: number) {
+    fetchMock.mockImplementation(() => Promise.resolve({
+      ok: false, status,
+      json: () => Promise.reject(new Error("失败响应不应读取 body")),
+    } as Response));
+  }
+
+  /** 分页形成功 stub：按 offset 分派页（真实契约形——limit/offset/has_more） */
+  function stubPaged(
+    pages: Record<number, { fills?: unknown[]; signals?: unknown[];
+                            has_more?: boolean }>,
+  ) {
+    fetchMock.mockImplementation((url: string) => {
+      const offset = Number(/offset=(\d+)/.exec(url)?.[1] ?? 0);
+      const isFills = url.includes("/fills");
+      const page = pages[offset] ?? {};
+      const items = isFills ? (page.fills ?? []) : (page.signals ?? []);
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({
+          [isFills ? "fills" : "signals"]: items,
+          limit: 500, offset,
+          has_more: page.has_more ?? false }),
+      } as Response);
+    });
+  }
+
+  it.each([422, 503])(
+    "失败形 HTTP %i：明细源不可达出现+「无成交」不出现+流水不部分呈现（3.2）",
+    async (status) => {
+      stubFail(status);
+      renderPanel(RECORD("task-err"));
+      expect(await screen.findByText(/明细源不可达/)).toBeInTheDocument();
+      expect(screen.queryByText(/无成交/)).not.toBeInTheDocument();
+      expect(screen.queryByTestId("replay-position-flow"))
+        .not.toBeInTheDocument();
+    });
+
+  it("重试入口接通：失败→重试→成功后四件套呈现", async () => {
+    stubFail(503);
+    renderPanel(RECORD("task-retry"));
+    expect(await screen.findByText(/明细源不可达/)).toBeInTheDocument();
+    stubPaged({ 0: { fills: FILLS, signals: SIGNALS } });
+    fireEvent.click(screen.getByRole("button", { name: /重试/ }));
+    await screen.findByTestId("replay-position-flow");
+    expect(screen.getByTestId("replay-flow-row-0")).toBeInTheDocument();
+  });
+
+  it("分页全量：500+2 两页→502 行无尾部截断（3.1 组件面——超上限"
+      + " 不丢尾）", async () => {
+    const big = Array.from({ length: 502 }, (_, i) => ({
+      bar_time: new Date(Date.UTC(2026, 0, 1) + i * 3600_000).toISOString(),
+      seq: i + 1, kind: "open", side: "long", price: 100,
+      quantity: 1, fee: 0, realized_pnl: null, reason: null,
+    }));
+    stubPaged({ 0: { fills: big.slice(0, 500), signals: SIGNALS,
+                      has_more: true },
+                500: { fills: big.slice(500) } });
+    renderPanel(RECORD("task-big"));
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-testid^="replay-flow-row-"]'))
+        .toHaveLength(502);
+    });
+  });
+
+  it("同 bar 多笔行为锚定（3.4 现状锁定）：两笔各成行成标+图→行定位"
+      + " 该 bar 首笔", async () => {
+    const sameBar = [
+      { ...FILLS[0], seq: 1, kind: "open" },
+      { ...FILLS[0], seq: 2, kind: "add", quantity: 1 },
+    ];
+    stubPaged({ 0: { fills: sameBar, signals: SIGNALS } });
+    renderPanel(RECORD("task-same"));
+    await waitFor(() => {
+      expect((lastChartProps().signalMarkers ?? []).length).toBe(2);
+    });
+    expect(screen.getByTestId("replay-flow-row-0")).toBeInTheDocument();
+    expect(screen.getByTestId("replay-flow-row-1")).toBeInTheDocument();
+    lastChartProps().onMarkerClick!(epochOf(sameBar[0].bar_time)!);
+    await waitFor(() => {
+      expect(screen.getByTestId("replay-flow-row-0").className)
+        .toContain("bg-surface-active");
+    });
+  });
+
+  it("exit_max_hold 平仓标记+流水动作中文；未知 kind 如实标注不滤除"
+      + "（3.5）", async () => {
+    const fills = [
+      { ...FILLS[0], kind: "exit_max_hold", side: "long" },
+      { ...FILLS[1], kind: "future_kind", side: "long", seq: 2 },
+    ];
+    stubPaged({ 0: { fills, signals: SIGNALS } });
+    renderPanel(RECORD("task-vocab"));
+    await waitFor(() => {
+      const texts = (lastChartProps().signalMarkers ?? []).map((m) => m.text);
+      expect(texts).toEqual(["平多", "未识别动作（future_kind）"]);
+    });
+    const row0 = screen.getByTestId("replay-flow-row-0");
+    expect(row0.textContent).toContain("平多");
+    expect(row0.textContent).not.toContain("exit_max_hold");
+    expect(screen.getByTestId("replay-flow-row-1").textContent)
+      .toContain("未识别动作（future_kind）");
   });
 });

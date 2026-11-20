@@ -10,6 +10,7 @@ import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { KlineChart } from "@/components/charts/KlineChart";
 import { epochOf } from "./fullRangeData";
+import { pagedFetch, paperDetailUrl } from "./pagedFetch";
 import {
   eventSemantics, legacySide, markerMorphText, markerShape,
   markerSide, normalizeDirection, TRACE_FAMILY_COLOR,
@@ -54,21 +55,15 @@ interface ValidationRecordLike {
   params?: Record<string, unknown> | null;
 }
 
-const API = {
-  fills: (tid: string) =>
-    `/api/paper-trading/tasks/${encodeURIComponent(tid)}/fills?limit=10000`,
-  signals: (tid: string) =>
-    `/api/paper-trading/tasks/${encodeURIComponent(tid)}/signals?limit=10000`,
-};
-
 /** 回放 fill kind → vr 事件码适配（P3-CARD-05 薄层）：词表/色/
  *  形/箭头全吃 traceSemantics EVENT_SEMANTICS 单源——六字义=开多/
  *  开空/加仓/减仓/平多/平空（加减仓无方向词缀，方向经侧位/价格
  *  就近承载——fe-vr-marker-fidelity 终态裁决）；close 族 reason
  *  （signal/reverse/reduce_terminated 升格）统一归 strategy 平仓
- *  态码 13（升格辨析由流水行「减仓终止」文案承载）；值域外 kind
- *  无词条——沿 vr「无词条滤除」返回 null（marker 滤除、流水
- *  dirLabel 显 kind 原文） */
+ *  态码 13（升格辨析由流水行「减仓终止」文案承载）；exit_max_hold
+ *  补码 25（fix-replay-presentation-pipeline 2.1——vr 域 max_hold
+ *  词条先例，pt_fill.kind 十值全覆盖）；词表未命中走 replayMarker
+ *  未识别防线（如实标注不滤除） */
 function replayEventCode(kind: string): number | null {
   if (kind === "open") return 10;
   if (kind === "add") return 11;
@@ -78,23 +73,34 @@ function replayEventCode(kind: string): number | null {
   if (kind === "exit_liquidation") return 22;
   if (kind === "exit_max_loss") return 23;
   if (kind === "exit_time") return 24;
+  if (kind === "exit_max_hold") return 25;
   if (kind === "close") return 13;
   return null;
 }
 
 /** 六态标记映射（P3-CARD-05：薄适配层接 EVENT_SEMANTICS 单源——
  *  与 vr 标记同码同字义同色；position=legacySide 族侧位回退值，
- *  组装层有 bar 时按 markerSide 价格就近覆盖） */
+ *  组装层有 bar 时按 markerSide 价格就近覆盖。未识别防线
+ *  （fix-replay-presentation-pipeline 2.2）：词表未命中如实标注
+ *  「未识别动作（kind 原文）」不返回 null 滤除——防未来 kind 扩
+ *  值静默丢标记；灰族色+action 缺省（排序退化输入序——不猜动作族） */
 export function replayMarker(f: PaperFill): {
   text: string;
   position: "aboveBar" | "belowBar";
   shape: "arrowUp" | "arrowDown" | "circle";
   color: string;
-  action: "open" | "add" | "reduce" | "exit";
-} | null {
+  action?: "open" | "add" | "reduce" | "exit";
+} {
   const code = replayEventCode(f.kind);
   const sem = code != null ? eventSemantics(code) : null;
-  if (!sem) return null;
+  if (!sem) {
+    return {
+      text: `未识别动作（${f.kind}）`,
+      position: "aboveBar",
+      shape: "circle",
+      color: TRACE_FAMILY_COLOR.blocked,
+    };
+  }
   const dir = normalizeDirection(f.side);
   return {
     text: markerMorphText(sem, dir),
@@ -126,7 +132,7 @@ export function derivePositionFlow(
     return {
       before, qty,
       after: pos,
-      dirLabel: replayMarker(f)?.text ?? f.kind,
+      dirLabel: replayMarker(f).text,
       reason: f.reason ?? "signal",
     };
   });
@@ -176,26 +182,26 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
             start: s("start"), end: s("end") };
   }, [record.params]);
 
+  // 明细装载（fix-replay-presentation-pipeline 1.1/1.2）：分页聚
+  //  合循环器（页大小=端点上限 500，按页满/has_more 续页聚合全量）
+  //  ——limit=10000 恒 422+`!r.ok → []` 吞错伪装空态的病灶路径已
+  //  删除；任页失败 queryFn 抛错走 isError 降级（不部分呈现）
   const fillsQ = useQuery({
     queryKey: ["replay-fills", tid],
-    queryFn: async (): Promise<PaperFill[]> => {
-      if (!tid) return [];
-      const r = await fetch(API.fills(tid));
-      if (!r.ok) return [];
-      const j = await r.json();
-      return (j.fills ?? j.items ?? []) as PaperFill[];
-    },
+    queryFn: ({ signal }) => pagedFetch<PaperFill>({
+      url: (offset, limit) => paperDetailUrl("fills", tid!, offset, limit),
+      itemsKey: "fills",
+      signal,
+    }),
     enabled: !!tid,
   });
   const signalsQ = useQuery({
     queryKey: ["replay-signals", tid],
-    queryFn: async (): Promise<PaperSignal[]> => {
-      if (!tid) return [];
-      const r = await fetch(API.signals(tid));
-      if (!r.ok) return [];
-      const j = await r.json();
-      return (j.signals ?? j.items ?? []) as PaperSignal[];
-    },
+    queryFn: ({ signal }) => pagedFetch<PaperSignal>({
+      url: (offset, limit) => paperDetailUrl("signals", tid!, offset, limit),
+      itemsKey: "signals",
+      signal,
+    }),
     enabled: !!tid,
   });
   // K 线主体（P3-CARD-01）：服务层单源（路径段编码+ApiError 错误
@@ -228,16 +234,15 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
     return m;
   }, [ohlcvQ.data]);
   const markers = useMemo(
-    () => fills.flatMap((f) => {
-      const mk = replayMarker(f);
-      if (!mk) return [];  // 值域外 kind——沿 vr 无词条滤除
+    () => fills.map((f) => {
+      const mk = replayMarker(f);  // 未识别 kind 如实标注（不滤除）
       const e = epochOf(f.bar_time);
       const bar = e != null ? barByEpoch.get(e) : undefined;
       // 侧位（fe-vr-marker-fidelity 契约 4 同构）：有 bar 有价按
       // 价格就近（markerSide），否则族侧位回退（legacySide）
       const position = f.price != null && bar
         ? markerSide(f.price, bar) : mk.position;
-      return [{ time: f.bar_time, price: f.price, ...mk, position }];
+      return { time: f.bar_time, price: f.price, ...mk, position };
     }),
     [fills, barByEpoch],
   );
@@ -273,8 +278,24 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
       {/* 六态标记 K 线（P3-CARD-01 补主体+P3-CARD-03 互达；点位锚定
           沿 fe-vr-marker-fidelity 契约——K 线=回放区间、六态标记挂
           真实 bar 时间轴；ohlcv 不可达降级文案如实不报错） */}
-      {fillsQ.isLoading ? (
+      {fillsQ.isLoading || signalsQ.isLoading ? (
         <p className="text-xs text-text-muted">成交明细装载中…</p>
+      ) : fillsQ.isError || signalsQ.isError ? (
+        <div className="space-y-1 text-xs" data-testid="replay-detail-error">
+          <p className="text-text-muted">
+            明细源不可达（成交/信号明细请求失败）——四件套降级，不呈现半量数据
+          </p>
+          <button
+            type="button"
+            className="rounded border border-border px-2 py-0.5"
+            onClick={() => {
+              void fillsQ.refetch();
+              void signalsQ.refetch();
+            }}
+          >
+            重试
+          </button>
+        </div>
       ) : (
         <>
           {fills.length === 0 && (
@@ -304,55 +325,56 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
               onMarkerClick={locateRow}
             />
           )}
+          {/* 仓位操作流水（任务 3.1——每笔一行：前/量/后/触发原因
+              +基因描述；失败态整体降级——不呈现半量流水） */}
+          <div className="text-xs">
+            <p className="mb-1 font-medium">仓位操作流水（逐笔审计）</p>
+            {flow.length === 0 ? (
+              <p className="text-text-muted">无操作记录</p>
+            ) : (
+              <table className="w-full font-num text-[11px]" data-testid="replay-position-flow">
+                <thead>
+                  <tr className="text-text-muted">
+                    <th className="text-left">时间</th><th className="text-left">动作</th>
+                    <th className="text-right">前仓位</th><th className="text-right">操作量</th>
+                    <th className="text-right">后仓位</th><th className="text-left">触发原因</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fills.map((f, i) => {
+                    const key = `${f.bar_time}#${f.seq}`;
+                    const desc = geneDescription(signals, f.bar_time, f.seq);
+                    return (
+                      <tr
+                        key={key}
+                        ref={(el) => { rowRefs.current[key] = el; }}
+                        onClick={() => setSelected(selected === key ? null : key)}
+                        className={`cursor-pointer border-t border-border ${
+                          selected === key ? "bg-surface-active" : ""}`}
+                        data-testid={`replay-flow-row-${i}`}
+                      >
+                        <td>{formatTimestamp(f.bar_time, "minute")}</td>
+                        <td>{flow[i].dirLabel}</td>
+                        <td className="text-right">{flow[i].before.toFixed(4)}</td>
+                        <td className="text-right">{flow[i].qty.toFixed(4)}</td>
+                        <td className="text-right">{flow[i].after.toFixed(4)}</td>
+                        <td>
+                          {f.reason === "reduce_terminated" ? "减仓终止" : flow[i].reason}
+                          {selected === key && desc && (
+                            <span className="ml-2 text-text-muted">
+                              基因：{desc}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
         </>
       )}
-      {/* 仓位操作流水（任务 3.1——每笔一行：前/量/后/触发原因+基因描述） */}
-      <div className="text-xs">
-        <p className="mb-1 font-medium">仓位操作流水（逐笔审计）</p>
-        {flow.length === 0 ? (
-          <p className="text-text-muted">无操作记录</p>
-        ) : (
-          <table className="w-full font-num text-[11px]" data-testid="replay-position-flow">
-            <thead>
-              <tr className="text-text-muted">
-                <th className="text-left">时间</th><th className="text-left">动作</th>
-                <th className="text-right">前仓位</th><th className="text-right">操作量</th>
-                <th className="text-right">后仓位</th><th className="text-left">触发原因</th>
-              </tr>
-            </thead>
-            <tbody>
-              {fills.map((f, i) => {
-                const key = `${f.bar_time}#${f.seq}`;
-                const desc = geneDescription(signals, f.bar_time, f.seq);
-                return (
-                  <tr
-                    key={key}
-                    ref={(el) => { rowRefs.current[key] = el; }}
-                    onClick={() => setSelected(selected === key ? null : key)}
-                    className={`cursor-pointer border-t border-border ${
-                      selected === key ? "bg-surface-active" : ""}`}
-                    data-testid={`replay-flow-row-${i}`}
-                  >
-                    <td>{formatTimestamp(f.bar_time, "minute")}</td>
-                    <td>{flow[i].dirLabel}</td>
-                    <td className="text-right">{flow[i].before.toFixed(4)}</td>
-                    <td className="text-right">{flow[i].qty.toFixed(4)}</td>
-                    <td className="text-right">{flow[i].after.toFixed(4)}</td>
-                    <td>
-                      {f.reason === "reduce_terminated" ? "减仓终止" : flow[i].reason}
-                      {selected === key && desc && (
-                        <span className="ml-2 text-text-muted">
-                          基因：{desc}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
     </div>
   );
 }
