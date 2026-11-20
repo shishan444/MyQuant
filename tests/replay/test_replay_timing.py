@@ -86,3 +86,96 @@ class TestAuxVisibility:
         assert feeder.main.index[-1] <= pd.Timestamp(end)
         # 主帧含请求区间末根（闭端含入）
         assert pd.Timestamp(end) in feeder.main.index
+
+
+class TestFeedSideVisibility:
+    """feed 链侧可见性契约锚（fix-replay-task-lifecycle G1-4——
+    最低限度替代形制）。
+
+    回放侧（TestAuxVisibility）已锚 ReplayFeeder 段切片的「辅收盘 ≤
+    主收盘含等号」契约；本组在纸盘 feed 链的组装面同口径锚：辅帧
+    进入 executor 组装面的唯一入口=executor._make_aux_handler 的
+    on_aux 回调（实时链=辅 feed 闭合推送驱动，此处按契约集直接驱动
+    该通道）。等号语义双侧同锚：等号辅 bar 可见、越一刻不可见。"""
+
+    def test_on_aux_channel_visibility_contract(self, tmp_path):
+        """经 on_aux 回调通道推进的辅帧可见集与契约集逐位一致（含
+        等号向+越一刻向双侧锚）。"""
+        from core.paper_trading.runtime.executor import PaperTaskExecutor
+        from core.paper_trading.runtime.feed import FeedRegistry
+        from core.persistence.repository import paper
+
+        feeder = _feeder_loaded(tmp_path)
+        main, aux = feeder.main, feeder._aux["1d"]
+        paper.create_task(
+            feeder.db_path, strategy_id="strat-1",
+            dna_snapshot_json=feeder.dna.to_json(),
+            symbol="BTCUSDT", timeframe="4h",
+            research_status_snapshot="unverified", task_id="vis01")
+        registry = FeedRegistry(
+            feeder.data_dir,
+            rest_fetcher=lambda *a, **k: pd.DataFrame(),
+            funding_refresher=lambda **k: pd.DataFrame())
+        executor = PaperTaskExecutor(
+            feeder.db_path, paper.get_task(feeder.db_path, "vis01"),
+            registry=registry,
+            start_after=feeder.main_start.isoformat())
+        on_aux = executor._make_aux_handler("1d")  # feed 推送通道形制
+
+        main_close = main.index + pd.Timedelta(minutes=240)
+        aux_close = aux.index + pd.Timedelta(minutes=1440)
+        # 等号锚的构造前提：存在主 bar 其收盘时刻恰等于某辅 bar
+        # 收盘时刻（4h×6=24h 网格对齐——合成数据时间轴保证）
+        equal_hits = sum(
+            1 for mc in main_close if mc in set(aux_close))
+        assert equal_hits >= 1, "等号时刻无构造面（时间轴网格错位）"
+
+        j0 = int(main.index.searchsorted(pd.Timestamp(feeder.main_start)))
+        for i in range(j0, len(main)):
+            visible = int((aux_close <= main_close[i]).sum())
+            on_aux(aux.iloc[:visible], 0)  # 契约集整帧引用推送
+            snap = executor._aux_frames.get("1d")
+            assert snap is not None and len(snap) == visible, (
+                f"bar {i}：组装面可见集 {0 if snap is None else len(snap)}"
+                f" != 契约集 {visible}")
+            if visible < len(aux):
+                # 越一刻向：下一辅 bar 收盘已过该主 bar 收盘——不可见
+                assert aux_close[visible] > main_close[i]
+            if visible > 0 and aux_close[visible - 1] == main_close[i]:
+                pass  # 等号向命中：收盘相等的辅 bar 恰在可见集末位
+        # 等号向总结锚：整个推进中至少一次「辅末收盘==主收盘」命中
+        assert any(
+            aux_close[int((aux_close <= mc).sum()) - 1] == mc
+            for mc in main_close[j0:]
+            if (aux_close <= mc).sum() > 0), "等号可见向未被推进命中"
+
+    def test_replay_segments_vs_feed_assembly(self, tmp_path):
+        """对照轴（G1-4 完整版判据）：同一 parquet 下 ReplayFeeder
+        逐段组装的辅帧切片 vs feed 链逐 bar 组装的可见集——段边界
+        bar 上两侧切片逐字段一致（index+values）；段内 bar 上回放
+        快照不超前 feed 侧该 bar 可见集（不未来性）。"""
+        feeder = _feeder_loaded(tmp_path)
+        main, aux = feeder.main, feeder._aux["1d"]
+        main_close = main.index + pd.Timedelta(minutes=240)
+        aux_close = aux.index + pd.Timedelta(minutes=1440)
+        j0 = int(main.index.searchsorted(pd.Timestamp(feeder.main_start)))
+        # feed 链逐 bar 可见集（契约推进——组装通道同上一用例）
+        barwise_len = {
+            i: int((aux_close <= main_close[i]).sum())
+            for i in range(j0, len(main))}
+
+        segs = [s for s in feeder.segments() if s[1] >= j0]
+        assert len(segs) >= 2, "MTF 多段（区间内）"
+        for seg_start, seg_end, aux_frames in segs:
+            seg_aux = aux_frames.get("1d")
+            # 段边界追平：段尾 bar 上回放切片 == feed 侧可见集（逐字段）
+            feed_cut = aux.iloc[: barwise_len[seg_end]]
+            assert seg_aux.index.equals(feed_cut.index), (
+                f"段尾 {seg_end} 切片 index 与 feed 组装不一致")
+            assert seg_aux.equals(feed_cut), (
+                f"段尾 {seg_end} 切片值与 feed 组装不一致")
+            # 段内不超前：段内任意 bar 上回放快照长度 ≤ feed 侧该 bar
+            # 可见集（快照滞后于逐 bar 推进合法，超前=看见未来）
+            for i in range(max(seg_start, j0), seg_end + 1):
+                assert len(seg_aux) <= barwise_len[i], (
+                    f"段内 bar {i} 回放快照超前 feed 可见集")

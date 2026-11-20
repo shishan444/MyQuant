@@ -191,10 +191,15 @@ class PaperScheduler:
 
         无条件扫全部 running 残态（进程重启遗留）：不可信转 error 保留
         数据；可信重建执行器并由本调度器起工作线程续跑（不待心跳超时）。
+
+        origin='paper' 域过滤（fix-replay-task-lifecycle 3.2）：回放
+        running 残行（回放执行中崩溃遗留）跳过——不恢复执行、不转
+        error、不改写任何字段（终态清理由回放域异常兜底或人工渠道）。
         """
         counts = {"recovered": 0, "untrusted": 0}
         for row in paper_repo.list_tasks(
-                self.db_path, status="running", limit=10_000):
+                self.db_path, status="running", limit=10_000,
+                origin="paper"):
             with self._lock:
                 known = row["task_id"] in self._executors
             if known:
@@ -276,10 +281,16 @@ class PaperScheduler:
 
         本进程执行器假死先协作停（request_stop）下一轮再移交；启动
         遗留/他进程崩溃直接移交。
+
+        origin='paper' 域过滤（fix-replay-task-lifecycle 3.3）：回放
+        running 行（同步调用驱动、调用方持有执行线程）不进移交集——
+        heartbeat_at 恒 NULL 本就不判超时，域过滤使语义显式（即使
+        未来回放假写心跳也不被换执行器/转态）。
         """
         now = self._now()
         for row in paper_repo.list_tasks(
-                self.db_path, status="running", limit=1000):
+                self.db_path, status="running", limit=1000,
+                origin="paper"):
             heartbeat = row.get("heartbeat_at")
             if heartbeat is None:
                 continue  # 尚未处理过 bar（刚置 running）——不判超时
@@ -345,6 +356,10 @@ class PaperScheduler:
         装载校验失败的执行器在 prepare 内直写 error（pending→error
         合法迁移——不进 running），线程随即结束由 _reap_finished 摘除，
         不占并发槽。
+
+        origin='paper' 域过滤（fix-replay-task-lifecycle 3.1）：回放
+        pending 行（origin=replay，装载/指标计算窗口）不进拾取集——
+        双执行器双写防线（回放行由回放编排自身驱动）。
         """
         with self._lock:
             active = len(self._executors)
@@ -352,7 +367,8 @@ class PaperScheduler:
         if capacity <= 0:
             return
         pending = paper_repo.list_tasks(
-            self.db_path, status="pending", order="asc", limit=capacity)
+            self.db_path, status="pending", order="asc", limit=capacity,
+            origin="paper")
         for row in pending:
             with self._lock:
                 if row["task_id"] in self._executors:
@@ -360,7 +376,18 @@ class PaperScheduler:
             self._launch(row)
 
     def _launch(self, row: Dict[str, Any]) -> None:
-        """启动执行器工作线程（每任务一个线程+协作控制器）。"""
+        """启动执行器工作线程（每任务一个线程+协作控制器）。
+
+        域守卫（fix-replay-task-lifecycle 3.4——防直调旁路）：非
+        paper 域行拒绝 launch——拾取查询已过滤，本守卫拦截不经
+        _pickup_pending 的直调面（守卫形制与 spec「零拾取零 launch」
+        对齐：replay 行不订阅任何实时行情 feed）。
+        """
+        if row.get("origin") != "paper":
+            logger.warning(
+                "纸盘调度器拒绝 launch 非 paper 域任务行（%s 域）: %s",
+                row.get("origin"), row["task_id"])
+            return
         task_id = row["task_id"]
         executor = PaperTaskExecutor(
             self.db_path, row,
@@ -511,13 +538,20 @@ class PaperScheduler:
         # 集合——与 Python 判定同一对象），原 Python 终态过滤行拆除。
         # 每策略最新终态任务归并保留（最新行选取是业务语义，SQL 窗口
         # 化收益薄不改）。
+        # origin='paper' 域过滤（fix-replay-task-lifecycle 3.5）：**前置
+        # 在查询域内（SQL 下推）**——「每策略最新终态行」的选取在
+        # paper 域内进行，等价于「策略在纸盘域的最近验证结束」；后置
+        # 滤域（取完最新再滤）会把「真实纸盘终态被更新的回放行覆盖」
+        # 的策略整段误跳过（backend-designer 对质警示）。回放行不注册
+        # 为回流研究证据。
         from core.persistence.repository.strategy import list_strategies
         if not list_strategies(self.db_path, status="paper"):
             return
         latest: Dict[str, Dict[str, Any]] = {}
         for row in paper_repo.list_tasks(
                 self.db_path, limit=100_000,
-                status_in=paper_repo.PT_STATUS_TERMINAL):
+                status_in=paper_repo.PT_STATUS_TERMINAL,
+                origin="paper"):
             sid = row["strategy_id"]
             prev = latest.get(sid)
             if prev is None or row["created_at"] >= prev["created_at"]:
@@ -571,14 +605,29 @@ class PaperScheduler:
         写被 run() 侧 CAS 拒绝）；零命中=前态已变（并发拾取置
         running）→重读按现态分流。
 
+        域守卫否定式前移（fix-replay-task-lifecycle 3.7+审查修复
+        CARD-01）：终态判定后、状态分流前，origin!=paper 一律域
+        不符——域判定与状态无关，pending 装载窗口与 pending→running
+        迁移瞬间同拦（原肯定式守卫只点名 running，replay pending 行
+        溜进撤销分支被直写 stopped，回放线程不知情照常驱动全程——
+        状态-数据背离）。
+
         Returns:
             str: "stopped"（CAS 命中，终局已落笔）｜"stopping"（本进程
             执行器协作停已请求——bar 边界收敛 stopped）｜"terminal"
-            （终态拒绝）｜"not_found"。
+            （终态拒绝）｜"domain_forbidden"（replay 域非终态行拒绝
+            ——REST 转 409 域不符）｜"not_found"。
         """
         row = paper_repo.get_task(self.db_path, task_id)
         if row is None:
             return "not_found"
+        # 终态优先（对外 terminal detail 零漂移）；非终态域守卫否定式
+        # （与 _launch 域守卫同形制——非 paper 一律拒，盖 pending/
+        # running 全态；五态外脏值按终态拒绝兜住）
+        if row["status"] not in paper_repo.PT_STATUS_ACTIVE:
+            return "terminal"
+        if row.get("origin") != "paper":
+            return "domain_forbidden"
         status = row["status"]
         if status == "pending":
             with self._lock:
@@ -594,14 +643,13 @@ class PaperScheduler:
             if hit > 0:
                 return "stopped"
             # 零命中=并发拾取已置 running——按现态分流（孤儿 running
-            # 的 CAS 由 _stop_running 收口）
+            # 的 CAS 由 _stop_running 收口；域不变——origin 非终态
+            # 迁移不改写）
             current = paper_repo.get_task(self.db_path, task_id)
             if current is not None and current["status"] == "running":
                 return self._stop_running(task_id)
             return "terminal"
-        if status == "running":
-            return self._stop_running(task_id)
-        return "terminal"
+        return self._stop_running(task_id)
 
     def _stop_running(self, task_id: str) -> str:
         """running 态停：本进程执行器协作停；无执行器（移交中/启动

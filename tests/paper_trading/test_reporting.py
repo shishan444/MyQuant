@@ -39,7 +39,8 @@ def _make_db(tmp_path: Path) -> Path:
 def _seed_task(db: Path, task_id: str = "pt_report00001", *,
                timeframe: str = "4h", status: str = "running",
                research_status: str = "unverified",
-               leverage: int = 5, started_at: str = BASE_TIME) -> str:
+               leverage: int = 5, started_at: str = BASE_TIME,
+               origin: str = "paper") -> str:
     """直建任务（测试通道）+按合法迁移链迁到目标态（组 2 缺陷⑤ CAS
     守门后 update_task 拒非法直迁——pending→running→终态）。"""
     from core.persistence.repository import paper
@@ -47,7 +48,8 @@ def _seed_task(db: Path, task_id: str = "pt_report00001", *,
         db, task_id=task_id, strategy_id="strat-1",
         dna_snapshot_json=DNA_JSON, symbol="BTCUSDT", timeframe=timeframe,
         research_status_snapshot=research_status,
-        initial_cash=50_000.0, leverage=leverage, window_bars=180)
+        initial_cash=50_000.0, leverage=leverage, window_bars=180,
+        origin=origin)
     if status != "pending":
         paper.update_task(db, task_id, status="running",
                           started_at=started_at)
@@ -227,6 +229,29 @@ class TestDeviationLayer:
         report = build_report(db, tmp_path, tid)
         assert report["deviation"]["backtest"] is None
         assert "无对照区间" in report["deviation"]["unavailable_reason"]
+
+    def test_replay_terminal_domain_specific_reason(self, tmp_path):
+        """origin=replay 终态任务降级文案按域分形（fix-replay-task-
+        lifecycle 4.2）：回放走 process_frames 不经 executor.run()，
+        started_at 恒 NULL 恒落降级分支——文案为回放域准确语（不出现
+        「任务尚未开始」误导表述）；paper 域行文案不变（分形不影响
+        纸盘域表述）。测试通道用 started_at 有值+零权益行等价落点
+        （同分支同一 or 条件臂）。"""
+        from core.paper_trading.reporting import build_report
+        db = _make_db(tmp_path)
+        replay_tid = _seed_task(db, "pt_replay_r0001", status="stopped",
+                                origin="replay")
+        paper_tid = _seed_task(db, "pt_paper_p0001", status="pending")
+
+        replay_report = build_report(db, tmp_path, replay_tid)
+        reason = replay_report["deviation"]["unavailable_reason"]
+        assert replay_report["deviation"]["backtest"] is None
+        assert "实时偏差对照" in reason
+        assert "尚未开始" not in reason
+
+        paper_report = build_report(db, tmp_path, paper_tid)
+        assert "尚未开始" in paper_report["deviation"][
+            "unavailable_reason"]
 
     def test_success_path_params_and_leverage_override(
             self, tmp_path, monkeypatch):

@@ -9,6 +9,7 @@ P1=验证用临时库）。装载链 1-11 全部在 pt_task 行创建之前完�
 """
 from __future__ import annotations
 
+import logging
 import math
 import uuid
 from dataclasses import dataclass
@@ -28,6 +29,8 @@ from core.strategy.validator import (
     validate_dna,
     validate_trading_compatibility,
 )
+
+logger = logging.getLogger("replay")
 
 
 class ReplayError(Exception):
@@ -243,7 +246,8 @@ class ReplayRunner:
             initial_cash=initial_cash, fee=fee, slippage=slippage,
             leverage=leverage, window_bars=window_bars,
             stop_loss_pct=stop_loss_pct,
-            halt_drawdown_pct=halt_drawdown_pct, task_id=tid)
+            halt_drawdown_pct=halt_drawdown_pct, task_id=tid,
+            origin="replay")
         from core.paper_trading.runtime.executor import PaperTaskExecutor
         from core.paper_trading.runtime.feed import FeedRegistry
 
@@ -262,27 +266,66 @@ class ReplayRunner:
             db_path, task_row, registry=registry,
             start_after=feeder.main_start.isoformat(),
             funding_lookup=feeder.funding_lookup)
-        if _dna_override is None and not executor.prepare():
-            # prepare=纸盘上盘纵深防线（库 dna 被改后重启场景），回放
-            # 库策略路径沿用（防库行被外部篡改）；研究模板 override 场
-            # 景跳过——其职能（数据可行性/compat/指标可算/atr）已由
-            # 回放装载链 3/4/8/9 覆盖，纵深校验的库值域交叉与实验
-            # dna 双量纲合法形制冲突（任务 2.2 适配）
-            raise ReplayError(
-                "REPLAY_PREPARE_FAILED", "执行器装载校验意外未过")
-        paper_repo.update_task(db_path, tid, status="running")
-        # ── 分段驱动（前缀切片形制：每段 process_frames 收到「含全
-        # 部历史的前缀帧」+from_idx=段起点——信号窗口完整、循环自然
-        # 止于段边界〔range(from_idx, len(前缀))〕；段边界刷新辅帧
-        # 引用即重建可见性，与全帧单段特例同构）──
+        # ── 建行后全程异常兜底（fix-replay-task-lifecycle 2.2 扩范围
+        # ——Lead 终裁「prepare 缝」闭合）：try 从 prepare 段起包，
+        # 任何异常先落 error 终态再上抛，行不残 pending/running。
+        # _finalize 经实现面核对：update_task 无 CAS 前态门，pending
+        # 直迁 error 合法；_finalized 标志保进程内幂等。──
         main = feeder.main
-        for seg_start, seg_end, aux_frames in feeder.segments():
-            executor._aux_frames.update(aux_frames)
-            prefix = main.iloc[:seg_end + 1]
-            executor.process_frames(
-                prefix, seg_start, throttle_seconds=throttle_seconds)
-            if executor._concluded_status is not None:
-                break
+        try:
+            if _dna_override is None and not executor.prepare():
+                # prepare=纸盘上盘纵深防线（库 dna 被改后重启场景），回放
+                # 库策略路径沿用（防库行被外部篡改）；研究模板 override 场
+                # 景跳过——其职能（数据可行性/compat/指标可算/atr）已由
+                # 回放装载链 3/4/8/9 覆盖，纵深校验的库值域交叉与实验
+                # dna 双量纲合法形制冲突（任务 2.2 适配）
+                raise ReplayError(
+                    "REPLAY_PREPARE_FAILED", "执行器装载校验意外未过")
+            # 置 running CAS 自检（审查修复 CARD-01/S-2——与纸盘 run()
+            # 启动 CAS 零命中放弃同构）：零命中=行已被外部写者迁出可
+            # 启动态（人工 SQL/未来他写者）——数据写入无状态门（状态
+            # 机守门只管 pt_task.status 字段本身），闷头驱动=状态-数据
+            # 背离，记日志中止驱动并上抛结构化 422
+            hit = paper_repo.update_task(
+                db_path, tid, status="running",
+                expected_status={"pending", "running"})
+            if hit == 0:
+                logger.warning(
+                    "回放任务 %s 置 running 零命中（行被外部改写）"
+                    "——中止驱动", tid)
+                raise ReplayError(
+                    "REPLAY_TASK_PREEMPTED",
+                    "回放任务行启动前已被外部改写，放弃驱动",
+                    detail=f"task_id={tid}")
+            # ── 分段驱动（前缀切片形制：每段 process_frames 收到「含全
+            # 部历史的前缀帧」+from_idx=段起点——信号窗口完整、循环自然
+            # 止于段边界〔range(from_idx, len(前缀))〕；段边界刷新辅帧
+            # 引用即重建可见性，与全帧单段特例同构）──
+            for seg_start, seg_end, aux_frames in feeder.segments():
+                executor._aux_frames.update(aux_frames)
+                prefix = main.iloc[:seg_end + 1]
+                executor.process_frames(
+                    prefix, seg_start, throttle_seconds=throttle_seconds)
+                if executor._concluded_status is not None:
+                    break
+        except Exception as exc:
+            # 建行后异常兜底（fix-replay-task-lifecycle 2.2——与纸盘
+            # run() 异常面同构）：先落 error 终态再上抛，行不残
+            # pending/running。_finalize 幂等（_finalized 标志）——
+            # 先行终态（本段窗口到点/停止条件后清理路径异常）不重复
+            # 迁移不覆盖既有终态与 error_detail。上抛分派：ReplayError
+            # （prepare 段客户端语义码）原样上抛走 422 通道零漂移；
+            # 其余异常转 ResearchError 语义 5xx（全局 handler
+            # research_error_to_http 结构化出站，禁裸 500 栈穿透）。
+            logger.exception("回放任务 %s 建行后异常", tid)
+            executor._finalize(
+                "error", error_detail=f"{type(exc).__name__}: {exc}")
+            if isinstance(exc, ReplayError):
+                raise
+            raise ResearchError(
+                "REPLAY_EXECUTION_FAILED",
+                f"回放执行段异常: {type(exc).__name__}: {exc}",
+                status=500, detail={"task_id": tid}) from exc
         if executor._concluded_status is None:
             executor._finalize("completed")  # 区间自然耗尽
         return self._collect(db_path, tid, strategy_id, start, end,

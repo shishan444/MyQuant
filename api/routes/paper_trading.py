@@ -560,6 +560,13 @@ def stop_task(
     result = scheduler.stop_task(task_id)
     if result == "not_found":
         raise HTTPException(status_code=404, detail="paper task not found")
+    if result == "domain_forbidden":
+        # 回放域 running 拒绝（fix-replay-task-lifecycle 3.7）：回放为
+        # 调用方同步驱动，无干预通道——外部 stop 只会制造终态写入竞态
+        raise HTTPException(
+            status_code=409,
+            detail="stop not applicable to replay tasks "
+                   "(caller-driven synchronous execution)")
     if result == "terminal":
         raise HTTPException(
             status_code=409,

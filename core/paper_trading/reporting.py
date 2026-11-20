@@ -299,10 +299,18 @@ def _deviation_layer(
     empty_diff = {k: None for k in _DIFF_KEYS}
     started_at = task["started_at"]
     if started_at is None or not equity_rows:
+        # 降级文案按来源域分形（fix-replay-task-lifecycle 4.1）：回放
+        # 走 process_frames 不经 executor.run()，started_at 恒 NULL——
+        # 已终态回放任务落此分支时「任务尚未开始」是误导表述；回放域
+        # 给准确语（回放本身就是回测口径，无「实时 vs 回测」偏差语义）
+        if task.get("origin") == "replay":
+            reason = "回放任务不适用实时偏差对照（回放无实时对照语义）"
+        else:
+            reason = "任务尚未开始或无权益数据，无对照区间"
         return {
             "backtest": None,
             "diff": empty_diff,
-            "unavailable_reason": "任务尚未开始或无权益数据，无对照区间",
+            "unavailable_reason": reason,
             "attribution_notes": notes,
         }
 

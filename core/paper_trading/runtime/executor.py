@@ -741,7 +741,14 @@ class PaperTaskExecutor:
         )
 
     def _reject(self, detail: str) -> bool:
-        """装载拒绝：pending→error（不进 running），保留数据。"""
+        """装载拒绝：pending→error（不进 running），保留数据。
+
+        终态写入置幂等标志——与 _finalize 对齐：_reject 本质是一次
+        终态写入（error+具体详因），置标志后回放兜底 _finalize 见牌
+        即返，详因不被笼统文案覆写。
+        """
+        self._finalized = True
+        self._concluded_status = "error"
         paper_repo.update_task(
             self.db_path, self.task_id, status="error",
             error_detail=detail)
