@@ -144,3 +144,20 @@ class TestPacedModeSurface:
         assert not any(
             "throttle" in p or "pace" in p for p in params), (
             f"MCP 面泄漏限速参数: {sorted(params)}")
+
+    def test_signature_frozen_whitelist(self):
+        """签名白名单全等（子串负向的上位守卫——限速参数若以
+        throttle/pace 之外命名（delay/interval/speed 等）泄漏，子串
+        锚漏检，白名单全等必红；合法新增参数时同步更新本集合，
+        走契约评审）。"""
+        import inspect
+        mcp, _api = _register("research")
+        fn = mcp.registered["run_replay_backtest"]
+        params = set(inspect.signature(fn).parameters)
+        expected = {
+            "strategy_id", "start", "end", "fee", "slippage",
+            "initial_cash", "leverage", "window_bars", "stop_loss_pct",
+            "halt_drawdown_pct", "task_id", "strategy_ids", "max_workers",
+        }
+        assert params == expected, (
+            f"MCP 签名面漂移: {sorted(params ^ expected)}")

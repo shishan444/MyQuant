@@ -44,22 +44,66 @@ class TestPacedMode:
         assert paced_secs < expect * 3.0 + 5.0, "节流时长异常放大"
         assert base_secs < expect * 0.5, "基准档应显著快于节流档"
         # 结果逐位一致（节流只影响墙钟不影响 bar 序/执行语义）
+        # summary 组全覆盖：ReplayResult 执行语义字段（status/
+        # stop_reason/win_count/loss_count/total_trades/total_pnl/
+        # final_balance/final_equity/bars_processed/last_bar_time/
+        # halted_at/halt_reason/first_met_at——身份组 task_id/db_path
+        # 两档天然不同不比；start/end 同输入构造性相同）
         assert paced.status == base.status
+        assert paced.stop_reason == base.stop_reason
+        assert paced.win_count == base.win_count
+        assert paced.loss_count == base.loss_count
         assert paced.total_trades == base.total_trades
         assert paced.total_pnl == base.total_pnl
         assert paced.final_balance == base.final_balance
         assert paced.final_equity == base.final_equity
         assert paced.bars_processed == base.bars_processed
         assert paced.last_bar_time == base.last_bar_time
+        assert paced.halted_at == base.halted_at
+        assert paced.halt_reason == base.halt_reason
+        assert paced.first_met_at == base.first_met_at
+        # 明细组逐位（沿 ReplayResult 取数面四通道之三——fills/
+        # equity/signals 全行投影比对；严格 == 非 approx：同输入同
+        # 代码路径确定性计算应 bit 相等；id/task_id/created_at 为
+        # 环境差键（自增/两档任务名/墙钟时间戳）排除）
+        from core.persistence.repository import paper
+        drop = {"id", "task_id"}
+        for lister, name in (
+            (paper.list_fills, "fills"),
+            (paper.list_equity_snapshots, "equity"),
+        ):
+            a = [{k: v for k, v in r.items() if k not in drop}
+                 for r in lister(env.db, "pace_base", limit=5000)]
+            b = [{k: v for k, v in r.items() if k not in drop}
+                 for r in lister(env.db, "pace_th", limit=5000)]
+            assert a == b, f"{name} 明细逐位一致（{name} 档间漂移）"
+        sig_drop = {"id", "task_id", "created_at"}
+        sig_a = [{k: v for k, v in r.items() if k not in sig_drop}
+                 for r in paper.list_signals(env.db, "pace_base", limit=5000)]
+        sig_b = [{k: v for k, v in r.items() if k not in sig_drop}
+                 for r in paper.list_signals(env.db, "pace_th", limit=5000)]
+        assert sig_a == sig_b, "signals 明细逐位一致（signals 档间漂移）"
 
-    @pytest.mark.parametrize("bad", [0.0, -0.01, -1.0])
+    @pytest.mark.parametrize("bad", [
+        0.0, -0.01, -1.0,
+        pytest.param(float("nan"), id="nan"),
+        pytest.param(float("inf"), id="inf"),
+        pytest.param(float("-inf"), id="-inf"),
+        pytest.param(60.01, id="over-upper-60.01"),
+    ])
     def test_throttle_invalid_rejected(self, tmp_path, bad):
-        """参数校验：0/负值显式 422 拒（不静默当 None）。"""
+        """参数校验：(0,60] 值域外显式拒（0/负/nan/inf/越上界——
+        不静默当 None；nan/inf 此前穿透：nan 进 sleep 中程炸裸
+        ValueError、inf 永久阻塞，CARD-06/F1 收口）。"""
         env = ReplayEnv(tmp_path, n_bars=120)
         rr = ReplayRunner(env.data_dir)
         start, end = env.range(head_bars=80)
         with pytest.raises(ReplayError) as ei:
             rr.run(env.db, env.strategy_id, start, end,
+                   task_id="pace_invalid",
                    throttle_seconds=bad)
         assert "throttle_seconds" in str(ei.value)
         assert ei.value.code == "RESEARCH_PARAM_INVALID"
+        # 载入即拒纪律：pt_task 行不建（CARD-06 验收面）
+        from core.persistence.repository import paper
+        assert paper.get_task(env.db, "pace_invalid") is None

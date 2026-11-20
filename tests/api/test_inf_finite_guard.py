@@ -295,3 +295,48 @@ class TestUpperBoundAccepted:
                                 slippage=1.0))
         assert r.status_code == 200, r.text
         assert r.json()["record_id"].startswith("rec_")
+
+
+class TestThresholdParamRejectForm:
+    """CARD-06 验证目标 2+REST 补口：双阈值参数（stop_loss_pct/
+    halt_drawdown_pct——schema 无约束穿透面）病态/越值 422 出站
+    形态。halt 经路由 require_halt_drawdown_pct 拒（detail 三键
+    附 legal_range——value 非有限 str 化：Starlette JSONResponse
+    allow_nan=False，修复前携原始 nan/inf 序列化炸 500 裸穿）；
+    stop_loss 经 run() 装载链 0 拒（ReplayError 转 422——
+    detail 键为 null）。有限越界值 detail.value 数值原样（复刻
+    默认形制无行为漂移）。"""
+
+    @pytest.mark.parametrize(("field", "value", "expect_value"), [
+        pytest.param("halt_drawdown_pct", INF, "inf",
+                     id="halt=inf value str 化"),
+        pytest.param("halt_drawdown_pct", NAN, "nan",
+                     id="halt=nan value str 化"),
+        pytest.param("halt_drawdown_pct", 1.5, 1.5,
+                     id="halt=1.5 有限值数值原样"),
+    ])
+    def test_halt_require_detail_form(self, env, field, value,
+                                      expect_value):
+        r = _post(env, "/api/research/backtest-replay",
+                  _replay_body(**{field: value}))
+        assert r.status_code == 422, r.text
+        d = r.json()["detail"]
+        assert d["code"] == "RESEARCH_PARAM_INVALID"
+        assert d["detail"]["field"] == "halt_drawdown_pct"
+        assert d["detail"]["value"] == expect_value
+        assert d["detail"]["legal_range"] == "(0,1)"
+
+    @pytest.mark.parametrize(("field", "value"), [
+        pytest.param("stop_loss_pct", INF, id="stop_loss=inf"),
+        pytest.param("stop_loss_pct", NAN, id="stop_loss=nan"),
+        pytest.param("stop_loss_pct", 1.5, id="stop_loss=1.5 越界"),
+    ])
+    def test_stop_loss_load_chain_422(self, env, field, value):
+        """stop_loss_pct schema 无约束——经 run() 装载链 0 拒后
+        结构化 422 出站（CARD-06 顺带封堵的 REST 存量穿透面）。"""
+        r = _post(env, "/api/research/backtest-replay",
+                  _replay_body(**{field: value}))
+        assert r.status_code == 422, r.text
+        d = r.json()["detail"]
+        assert d["code"] == "RESEARCH_PARAM_INVALID"
+        assert "stop_loss_pct" in d["message"]
