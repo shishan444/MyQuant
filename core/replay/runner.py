@@ -9,6 +9,7 @@ P1=验证用临时库）。装载链 1-11 全部在 pt_task 行创建之前完�
 """
 from __future__ import annotations
 
+import math
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,9 +103,61 @@ class ReplayRunner:
         stop_loss_pct: Optional[float] = None,
         halt_drawdown_pct: Optional[float] = None,
         task_id: Optional[str] = None,
+        throttle_seconds: Optional[float] = None,
         _dna_override: Optional[StrategyDNA] = None,
     ) -> ReplayResult:
-        """跑一次完整回放（装载失败即抛 ReplayError，行不建）。"""
+        """跑一次完整回放（装载失败即抛 ReplayError，行不建）。
+
+        throttle_seconds（add-replay-paced-mode）：可选限速演示参数
+        （None=不限速零开销缺省）——透传 process_frames 逐 bar sleep
+        （bar 级节流；段级锚定对单周期策略只调一次不可满足——2026-11
+        -19 战役教训四）。(0,60] 值域校验（0/负/>60/nan/inf 显式拒绝
+        ——C5 审查 F1）。MCP 参数面不暴露（演示语义归人类脚本直调）。
+        """
+        # ── 装载链 0：任务覆写面数值参数有限性+值域校验（载入即拒
+        # ——nan/inf/越界在 pt_task 行创建前显式拒绝，行不建）。REST
+        # 面已由 schema 值域+require_* 同域前置，此块收口直调通道
+        # （run/run_from_dna/pool worker 四路汇聚点，一处全覆盖）。
+        # 值域与既有面逐字对齐不发明：fee/slippage/initial_cash 同
+        # ReplayBacktestRequest schema，stop_loss_pct/halt_drawdown_
+        # pct 同 require_halt_drawdown_pct 开区间（0 无意义、1 恒不
+        # 触发同为非法配置面），throttle 上界 60 封 inf。isfinite 显式
+        # 前置沿 fapi 覆写先例：nan 落库即 NULL——止损/熔断静默变
+        # 「未配置」，inf 恒不触发——病态值封死在保护参数面）──
+        if not math.isfinite(fee) or not 0.0 <= fee <= 1.0:
+            raise ReplayError(
+                "RESEARCH_PARAM_INVALID",
+                f"fee 非法（[0,1] 费率比率）: {fee!r}")
+        if not math.isfinite(slippage) or not 0.0 <= slippage <= 1.0:
+            raise ReplayError(
+                "RESEARCH_PARAM_INVALID",
+                f"slippage 非法（[0,1] 滑点比率）: {slippage!r}")
+        if (not math.isfinite(initial_cash)
+                or not 1.0 <= initial_cash <= 1e12):
+            raise ReplayError(
+                "RESEARCH_PARAM_INVALID",
+                f"initial_cash 非法（[1,1e12] 初始资金）: {initial_cash!r}")
+        if (stop_loss_pct is not None
+                and (not math.isfinite(stop_loss_pct)
+                     or not 0.0 < stop_loss_pct < 1.0)):
+            raise ReplayError(
+                "RESEARCH_PARAM_INVALID",
+                f"stop_loss_pct 非法（(0,1) 开区间亏损比率）: "
+                f"{stop_loss_pct!r}")
+        if (halt_drawdown_pct is not None
+                and (not math.isfinite(halt_drawdown_pct)
+                     or not 0.0 < halt_drawdown_pct < 1.0)):
+            raise ReplayError(
+                "RESEARCH_PARAM_INVALID",
+                f"halt_drawdown_pct 非法（(0,1) 开区间回撤比率）: "
+                f"{halt_drawdown_pct!r}")
+        if (throttle_seconds is not None
+                and (not math.isfinite(throttle_seconds)
+                     or not 0.0 < throttle_seconds <= 60.0)):
+            raise ReplayError(
+                "RESEARCH_PARAM_INVALID",
+                f"throttle_seconds 非法（(0,60] 秒）: "
+                f"{throttle_seconds!r}")
         db_path = Path(db_path)
         # ── 装载链 1-5（策略域校验；6-10 归 feeder.load()）──
         # _dna_override：内存 DNA 直传入口（run_from_dna 进——exit_sweep
@@ -226,7 +279,8 @@ class ReplayRunner:
         for seg_start, seg_end, aux_frames in feeder.segments():
             executor._aux_frames.update(aux_frames)
             prefix = main.iloc[:seg_end + 1]
-            executor.process_frames(prefix, seg_start)
+            executor.process_frames(
+                prefix, seg_start, throttle_seconds=throttle_seconds)
             if executor._concluded_status is not None:
                 break
         if executor._concluded_status is None:

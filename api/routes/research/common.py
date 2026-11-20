@@ -12,6 +12,8 @@ validation；encode/decode_cursor——hypotheses/hypothesis_cards/log。
 """
 from __future__ import annotations
 
+import math
+
 from typing import Optional, Tuple
 
 from fastapi import HTTPException
@@ -92,7 +94,14 @@ def require_halt_drawdown_pct(halt_drawdown_pct: Optional[float]) -> None:
             f"halt_drawdown_pct 非法（(0,1) 开区间回撤比率）: "
             f"{halt_drawdown_pct!r}",
             detail={"field": "halt_drawdown_pct",
-                    "value": halt_drawdown_pct,
+                    # value 非有限时 str 化（沿 require_finite_values
+                    # 先例）：Starlette JSONResponse allow_nan=False，
+                    # detail 携原始 nan/inf 序列化炸——结构化 422 变
+                    # 空体 500 裸穿（C5 审查 CARD-06 验证目标 2 补口）
+                    "value": (halt_drawdown_pct
+                              if halt_drawdown_pct is None
+                              or math.isfinite(halt_drawdown_pct)
+                              else str(halt_drawdown_pct)),
                     "legal_range": "(0,1)"})
 
 
