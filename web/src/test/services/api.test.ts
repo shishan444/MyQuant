@@ -173,3 +173,18 @@ describe("成功路径与参数序列化", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("CARD-01 signal 透传（RequestOptions→底层 fetch init）", () => {
+  it("api.get 带 RequestOptions.signal → 底层 fetch init.signal 同一实例", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    const ac = new AbortController();
+    await api.get("/api/config", { signal: ac.signal });
+    // ky 将 signal 封装进 Request（fetch init 不携带——node 探针实证）；
+    // 取消链语义锚：abort 原控制器 → Request signal 连带 aborted
+    // （比实例同一性更强的行为锚——传输层封装是实现细节）
+    const req = fetchMock.mock.calls[0]?.[0] as Request;
+    expect(req.signal.aborted).toBe(false);
+    ac.abort();
+    expect(req.signal.aborted).toBe(true);
+  });
+});

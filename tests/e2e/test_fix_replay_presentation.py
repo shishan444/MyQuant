@@ -44,7 +44,7 @@ def _seed(db_path) -> None:
         "INSERT INTO strategy (strategy_id, name, dna_json, status,"
         " source, symbol, timeframe, created_at, updated_at)"
         " VALUES (?,?,?,?,?,?,?,?,?)",
-        ("st_e2eseed0001", "e2e 种子策略", "{}", "active", "manual",
+        ("st_e2eseed", "e2e 种子策略", "{}", "active", "manual",
          "BTCUSDT", "1h", now, now))
     cur.execute(
         "INSERT INTO research_hypotheses (hypothesis_id, conditions,"
@@ -143,6 +143,10 @@ class TestReplayDetailPipeline:
         assert "无成交" not in body, "伪空态出现（FE-1 病灶回归）"
         assert "明细源不可达" not in body, "失败降级误触发"
         assert "未识别动作" not in body, "词表值域缺口（八值种子全覆盖）"
+        # Scenario「exit_max_hold 出场标记」THEN(b) 负向锚：动作列
+        # 中文动作名，英文枚举原文不出现（词表命中且渲染中文化）
+        assert "exit_max_hold" not in body, (
+            "出场动作英文枚举原文出现（词义中文化回归）")
 
         # 互达：点击首行（选中高亮+基因描述展开面）
         page.locator('[data-testid="replay-flow-row-0"]').click()

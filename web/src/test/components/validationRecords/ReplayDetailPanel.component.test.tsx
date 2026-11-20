@@ -4,14 +4,15 @@
  *
  * mock 面：KlineChart mock（jsdom 不渲染真图——断言 props 链：
  * data 主体/signalMarkers 六态/selectedMarkerTime/onMarkerClick）+
- * getOhlcvBySymbol 服务层 mock（CARD-01 取数单源）+global fetch
- * stubGlobal 按 URL 分派 fills/signals；失败形（422/5xx）与分页形
- * （limit/offset/has_more 两页）补齐（fix-replay-presentation-pipeline
- * ——mock 契约边界教训：mock 只含 ok:true 形曾掩盖恒 422 缺陷）。
+ * 服务层 mock（getOhlcvBySymbol 与 getTradingFills/getTradingSignals
+ * ——CARD-01 取数单源收敛后的注入点）；失败形（422/5xx/网络错，经
+ * ApiError 仿真）与分页形（offset/has_more 两页）补齐（fix-replay-
+ * presentation-pipeline——mock 契约边界教训：mock 只含 ok 形曾掩盖
+ * 恒 422 缺陷）。
  * 踩坑实录：React 函数组件 mock 调用传 (props, context) 两参——
  * props 在 calls[-1][0]。
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -19,6 +20,10 @@ import { ReplayDetailPanel } from "@/components/validationRecords/ReplayDetailPa
 import { epochOf } from "@/components/validationRecords/fullRangeData";
 import { KlineChart } from "@/components/charts/KlineChart";
 import { getOhlcvBySymbol } from "@/services/datasets";
+import {
+  getTradingFills, getTradingSignals,
+} from "@/services/trading";
+import { ApiError } from "@/services/api";
 
 vi.mock("@/components/charts/KlineChart", () => ({
   KlineChart: vi.fn(() => null),
@@ -26,8 +31,14 @@ vi.mock("@/components/charts/KlineChart", () => ({
 vi.mock("@/services/datasets", () => ({
   getOhlcvBySymbol: vi.fn(),
 }));
+vi.mock("@/services/trading", () => ({
+  getTradingFills: vi.fn(),
+  getTradingSignals: vi.fn(),
+}));
 const mockChart = vi.mocked(KlineChart);
 const mockOhlcv = vi.mocked(getOhlcvBySymbol);
+const mockFills = vi.mocked(getTradingFills);
+const mockSignals = vi.mocked(getTradingSignals);
 
 const FILLS = [
   { bar_time: "2026-01-01T00:00:00Z", seq: 1, kind: "open",
@@ -94,24 +105,18 @@ function lastChartProps() {
 }
 
 describe("ReplayDetailPanel 组件渲染与互达（P3 建网+CARD-01/03 验收）", () => {
-  const fetchMock = vi.fn();
   beforeEach(() => {
-    vi.stubGlobal("fetch", fetchMock);
-    fetchMock.mockReset();
+    mockFills.mockReset();
+    mockSignals.mockReset();
     mockChart.mock.calls.length = 0;
     mockOhlcv.mockReset();
     mockOhlcv.mockResolvedValue({ data: OHLCV } as never);
     Element.prototype.scrollIntoView = vi.fn();
   });
-  afterEach(() => vi.unstubAllGlobals());
 
   function stubFetch(fills: unknown[], signals: unknown[]) {
-    fetchMock.mockImplementation((url: string) => {
-      const body = url.includes("/fills") ? { fills } : { signals };
-      return Promise.resolve({
-        ok: true, json: () => Promise.resolve(body),
-      } as Response);
-    });
+    mockFills.mockResolvedValue({ fills, has_more: false } as never);
+    mockSignals.mockResolvedValue({ signals, has_more: false } as never);
   }
 
   it("数据态：主体非空+流水表逐笔+六态标记传图表（CARD-01 ①）", async () => {
@@ -203,8 +208,9 @@ describe("ReplayDetailPanel 组件渲染与互达（P3 建网+CARD-01/03 验收�
       + "不可用降级且零请求", async () => {
     renderPanel(RECORD("../etc/passwd"));
     expect(screen.getByText(/形制不可用/)).toBeInTheDocument();
-    // 闸后零请求（useQuery enabled !!tid——fetch 不触达）
-    expect(fetchMock).not.toHaveBeenCalled();
+    // 闸后零请求（useQuery enabled !!tid——服务层不触达）
+    expect(mockFills).not.toHaveBeenCalled();
+    expect(mockSignals).not.toHaveBeenCalled();
     expect(mockOhlcv).not.toHaveBeenCalled();
   });
 
@@ -216,43 +222,43 @@ describe("ReplayDetailPanel 组件渲染与互达（P3 建网+CARD-01/03 验收�
 });
 
 describe("明细源失败降级与分页全量（fix-replay-presentation-pipeline FE-1 修复面）", () => {
-  const fetchMock = vi.fn();
   beforeEach(() => {
-    vi.stubGlobal("fetch", fetchMock);
-    fetchMock.mockReset();
+    mockFills.mockReset();
+    mockSignals.mockReset();
     mockChart.mock.calls.length = 0;
     mockOhlcv.mockReset();
     mockOhlcv.mockResolvedValue({ data: OHLCV } as never);
     Element.prototype.scrollIntoView = vi.fn();
   });
-  afterEach(() => vi.unstubAllGlobals());
 
-  /** 失败形：ok=false+status（json 故意 reject——失败路径不应读取体） */
+  /** 失败形：服务层 ApiError 仿真（kind 按状态分层——传输细节归服务层） */
   function stubFail(status: number) {
-    fetchMock.mockImplementation(() => Promise.resolve({
-      ok: false, status,
-      json: () => Promise.reject(new Error("失败响应不应读取 body")),
-    } as Response));
+    const err = status === 422
+      ? new ApiError("validation", "请求参数有误", status)
+      : new ApiError("server", "服务暂不可用，请稍后重试", status);
+    mockFills.mockRejectedValue(err);
+    mockSignals.mockRejectedValue(err);
   }
 
-  /** 分页形成功 stub：按 offset 分派页（真实契约形——limit/offset/has_more） */
+  /** 分页形成功 stub：按 params.offset 分派页（服务层单页函数契约形） */
   function stubPaged(
     pages: Record<number, { fills?: unknown[]; signals?: unknown[];
                             has_more?: boolean }>,
   ) {
-    fetchMock.mockImplementation((url: string) => {
-      const offset = Number(/offset=(\d+)/.exec(url)?.[1] ?? 0);
-      const isFills = url.includes("/fills");
-      const page = pages[offset] ?? {};
-      const items = isFills ? (page.fills ?? []) : (page.signals ?? []);
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({
-          [isFills ? "fills" : "signals"]: items,
-          limit: 500, offset,
-          has_more: page.has_more ?? false }),
-      } as Response);
-    });
+    mockFills.mockImplementation(
+      (_taskId: string, params?: { offset?: number }) => {
+        const page = pages[params?.offset ?? 0] ?? {};
+        return Promise.resolve({
+          fills: page.fills ?? [],
+          has_more: page.has_more ?? false } as never);
+      });
+    mockSignals.mockImplementation(
+      (_taskId: string, params?: { offset?: number }) => {
+        const page = pages[params?.offset ?? 0] ?? {};
+        return Promise.resolve({
+          signals: page.signals ?? [],
+          has_more: page.has_more ?? false } as never);
+      });
   }
 
   it.each([422, 503])(
@@ -265,6 +271,33 @@ describe("明细源失败降级与分页全量（fix-replay-presentation-pipelin
       expect(screen.queryByTestId("replay-position-flow"))
         .not.toBeInTheDocument();
     });
+
+  it("网络错形（fetch reject——非 HTTP 状态形）：明细源不可达+「无成交」"
+      + "不出现（design §4 mock 形族补齐）", async () => {
+    mockFills.mockRejectedValue(
+      new ApiError("network", "网络连接失败，请检查网络后重试"));
+    mockSignals.mockRejectedValue(
+      new ApiError("network", "网络连接失败，请检查网络后重试"));
+    renderPanel(RECORD("task-net"));
+    expect(await screen.findByText(/明细源不可达/)).toBeInTheDocument();
+    expect(screen.queryByText(/无成交/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("replay-position-flow"))
+      .not.toBeInTheDocument();
+  });
+
+  it("单通道失败组合：signals 503 而 fills 200 → 整体降级不部分呈现"
+      + "（Scenario WHEN「fills/signals 返回非 2xx」任一语义）", async () => {
+    mockFills.mockResolvedValue(
+      { fills: FILLS, has_more: false } as never);
+    mockSignals.mockRejectedValue(
+      new ApiError("server", "服务暂不可用，请稍后重试", 503));
+    renderPanel(RECORD("task-half"));
+    expect(await screen.findByText(/明细源不可达/)).toBeInTheDocument();
+    // fills 数据已到达但不部分呈现（半量数据=病灶族根因教训）
+    expect(screen.queryByTestId("replay-position-flow"))
+      .not.toBeInTheDocument();
+    expect(screen.queryByText(/无成交/)).not.toBeInTheDocument();
+  });
 
   it("重试入口接通：失败→重试→成功后四件套呈现", async () => {
     stubFail(503);
@@ -290,6 +323,16 @@ describe("明细源失败降级与分页全量（fix-replay-presentation-pipelin
     await waitFor(() => {
       expect(document.querySelectorAll('[data-testid^="replay-flow-row-"]'))
         .toHaveLength(502);
+    });
+    // 六态标记面同全量（Scenario THEN「六态标记覆盖全部笔」——
+    // 502 标记无尾部截断）
+    expect((lastChartProps().signalMarkers ?? []).length).toBe(502);
+    // 互达尾部面：第二页行（offset=500 的末笔）点击可达（Scenario
+    // THEN「互达覆盖全部笔」——聚合尾部不丢锚）
+    fireEvent.click(screen.getByTestId("replay-flow-row-501"));
+    await waitFor(() => {
+      expect(lastChartProps().selectedMarkerTime)
+        .toBe(epochOf(big[501].bar_time));
     });
   });
 
@@ -330,5 +373,14 @@ describe("明细源失败降级与分页全量（fix-replay-presentation-pipelin
     expect(row0.textContent).not.toContain("exit_max_hold");
     expect(screen.getByTestId("replay-flow-row-1").textContent)
       .toContain("未识别动作（future_kind）");
+  });
+
+  it("signal 透传组件面：react-query AbortSignal 经 fetchPage 到服务层"
+      + " 第三参（CARD-01 取消链——queryFn ({signal}) 注入路径）", async () => {
+    stubPaged({ 0: { fills: FILLS, signals: SIGNALS } });
+    renderPanel(RECORD("task-sig"));
+    await screen.findByTestId("replay-flow-row-0");
+    expect(mockFills.mock.calls[0][2]).toBeInstanceOf(AbortSignal);
+    expect(mockSignals.mock.calls[0][2]).toBeInstanceOf(AbortSignal);
   });
 });

@@ -1,116 +1,134 @@
 /**
  * 分页聚合循环器单测（fix-replay-presentation-pipeline 任务 1.1/3.1）。
  *
- * 契约：页大小=端点声明上限 500；按「页未满或 has_more=false」终止；
+ * 契约：页大小=端点声明上限 500；按「页未满或 hasMore=false」终止；
  * 聚合保序（后端保证页内 bar_time+seq 升序——到达序拼接即全局序）；
  * 任页失败整体抛错（useQuery isError 消费，不部分呈现——半量数据+
  * 吞错是「恒 422 伪装空态」缺陷族的根因教训）。
+ * mock 面（CARD-01 注入形）：fetchPage 以 vi.fn 注入（传输通道归服务
+ * 层，不再 stubGlobal fetch）；失败形按服务层真实错误形态仿真 ApiError
+ * （kind/status——中文化 message 通道）。
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  DETAIL_PAGE_SIZE, pagedFetch, paperDetailUrl,
+  DETAIL_PAGE_SIZE, pagedFetch,
 } from "@/components/validationRecords/pagedFetch";
-
-const okPage = (body: unknown): Response => ({
-  ok: true, status: 200,
-  json: () => Promise.resolve(body),
-} as Response);
-/** 失败形：json 故意 reject——失败路径不应读取响应体（先判 ok） */
-const failPage = (status: number): Response => ({
-  ok: false, status,
-  json: () => Promise.reject(new Error("失败响应不应读取 body")),
-} as Response);
-
-const offsetOf = (url: string): number =>
-  Number(/offset=(\d+)/.exec(url)?.[1] ?? 0);
+import { ApiError } from "@/services/api";
 
 describe("分页聚合循环器（pagedFetch——fix-replay-presentation-pipeline）", () => {
-  const fetchMock = vi.fn();
-  beforeEach(() => {
-    vi.stubGlobal("fetch", fetchMock);
-    fetchMock.mockReset();
-  });
-  afterEach(() => vi.unstubAllGlobals());
+  const pageMock = vi.fn();
+  beforeEach(() => pageMock.mockReset());
 
   it("两页 500+97 → 597 全量聚合且保序（到达序拼接=全局序）", async () => {
     const mk = (from: number, n: number) =>
       Array.from({ length: n }, (_, i) => ({ seq: from + i }));
-    fetchMock.mockImplementation((url: string) =>
-      Promise.resolve(okPage({
-        fills: offsetOf(url) === 0 ? mk(0, 500) : mk(500, 97),
-        limit: DETAIL_PAGE_SIZE, offset: offsetOf(url),
-        has_more: offsetOf(url) === 0,
-      })));
-    const all = await pagedFetch<{ seq: number }>({
-      url: (offset, limit) =>
-        `/api/paper-trading/tasks/t1/fills?limit=${limit}&offset=${offset}`,
-      itemsKey: "fills",
-    });
+    pageMock.mockImplementation((offset: number) =>
+      Promise.resolve({
+        items: offset === 0 ? mk(0, 500) : mk(500, 97),
+        hasMore: offset === 0,
+      }));
+    const all = await pagedFetch<{ seq: number }>({ fetchPage: pageMock });
     expect(all).toHaveLength(597);
     expect(all.map((x) => x.seq)).toEqual(mk(0, 597).map((x) => x.seq));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(pageMock).toHaveBeenCalledTimes(2);
   });
 
-  it("页未满终止：3 条且 has_more=true 也不再续页（页未满是独立终止条件）", async () => {
-    fetchMock.mockImplementation(() =>
-      Promise.resolve(okPage({
-        fills: [{ seq: 1 }, { seq: 2 }, { seq: 3 }], has_more: true })));
-    const all = await pagedFetch({
-      url: (o) => `/x?offset=${o}`, itemsKey: "fills" });
+  it("页未满终止：3 条且 hasMore=true 也不再续页（页未满是独立终止条件）", async () => {
+    pageMock.mockResolvedValue({
+      items: [{ seq: 1 }, { seq: 2 }, { seq: 3 }], hasMore: true });
+    const all = await pagedFetch({ fetchPage: pageMock });
     expect(all).toHaveLength(3);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(pageMock).toHaveBeenCalledTimes(1);
   });
 
-  it("页满+has_more=false 终止：单页 500 即止", async () => {
-    fetchMock.mockImplementation(() =>
-      Promise.resolve(okPage({
-        fills: Array.from({ length: 500 }, (_, i) => ({ seq: i })),
-        has_more: false })));
-    const all = await pagedFetch({
-      url: (o) => `/x?offset=${o}`, itemsKey: "fills" });
+  it("页满+hasMore=false 终止：单页 500 即止", async () => {
+    pageMock.mockResolvedValue({
+      items: Array.from({ length: 500 }, (_, i) => ({ seq: i })),
+      hasMore: false });
+    const all = await pagedFetch({ fetchPage: pageMock });
     expect(all).toHaveLength(500);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(pageMock).toHaveBeenCalledTimes(1);
   });
 
+  it("hasMore 缺失（undefined 形）：满页即终止不续页（契约终止条件 ≠true 边界）", async () => {
+    pageMock.mockResolvedValue({
+      items: Array.from(
+        { length: DETAIL_PAGE_SIZE }, (_, i) => ({ seq: i })) });
+    const all = await pagedFetch({ fetchPage: pageMock });
+    expect(all).toHaveLength(500);
+    expect(pageMock).toHaveBeenCalledTimes(1);
+  });
+
+  // 失败注入用手写闭包（vitest 4 直测场景下 vi.fn 产生 rejection
+  //  会触发 spy 追踪链 unhandled rejection——错误不经 mock 中转）
   it("任页失败整体抛错（第二页 503）：不产出部分聚合", async () => {
-    fetchMock.mockImplementation((url: string) =>
-      offsetOf(url) === 0
-        ? Promise.resolve(okPage({
-            fills: Array.from({ length: 500 }, (_, i) => ({ seq: i })),
-            has_more: true }))
-        : Promise.resolve(failPage(503)));
     await expect(pagedFetch({
-      url: (o) => `/x?offset=${o}`, itemsKey: "fills" }))
-      .rejects.toThrow(/503/);
+      fetchPage: (offset: number) =>
+        offset === 0
+          ? Promise.resolve({
+              items: Array.from({ length: 500 }, (_, i) => ({ seq: i })),
+              hasMore: true })
+          : Promise.reject(new ApiError(
+              "server", "服务暂不可用，请稍后重试", 503)),
+    })).rejects.toThrow(/服务暂不可用/);
   });
 
   it("422 校验拒绝形抛错不吞（恒 422 伪装空态缺陷族锚——FE-1 先红锚）", async () => {
-    fetchMock.mockImplementation(() => Promise.resolve(failPage(422)));
     await expect(pagedFetch({
-      url: (o) => `/x?limit=10000&offset=${o}`, itemsKey: "fills" }))
-      .rejects.toThrow(/422/);
+      fetchPage: () => Promise.reject(
+        new ApiError("validation", "请求参数有误", 422)),
+    })).rejects.toThrow(/请求参数有误/);
   });
 
-  it("equity 通道接口预留：itemsKey=snapshots 同一实现（C4 复用锚）", async () => {
-    fetchMock.mockImplementation((url: string) =>
-      Promise.resolve(okPage({
-        snapshots: offsetOf(url) === 0
+  it("网络错形（fetch 本身 reject）：整体抛错不吞（design §4 失败形族"
+      + "——非 HTTP 状态形的第三形）", async () => {
+    await expect(pagedFetch({
+      fetchPage: () => Promise.reject(
+        new ApiError("network", "网络连接失败，请检查网络后重试")),
+    })).rejects.toThrow(/网络连接失败/);
+  });
+
+  it("熔断防线现状锁定（特征测试）：恒满页+恒 has_more → 超熔断页数"
+      + "抛错（防病态续页死循环）", async () => {
+    const fullPage = Array.from(
+      { length: DETAIL_PAGE_SIZE }, (_, i) => ({ seq: i }));
+    pageMock.mockResolvedValue({ items: fullPage, hasMore: true });
+    await expect(pagedFetch({ fetchPage: pageMock }))
+      .rejects.toThrow(/熔断页数/);
+    expect(pageMock).toHaveBeenCalledTimes(1000);
+  });
+
+  it("signal 透传：options.signal 逐页传给 fetchPage（取消链——CARD-01"
+      + " 修复行为面）；缺省不注入", async () => {
+    const ac = new AbortController();
+    pageMock.mockImplementation((offset: number) =>
+      Promise.resolve({
+        items: offset === 0
+          ? Array.from(
+              { length: DETAIL_PAGE_SIZE }, (_, i) => ({ seq: i }))
+          : [{ seq: 500 }],
+        hasMore: offset === 0,
+      }));
+    await pagedFetch({ fetchPage: pageMock, signal: ac.signal });
+    // 两页逐页同传同一实例（翻页不丢取消链）
+    expect(pageMock).toHaveBeenNthCalledWith(1, 0, ac.signal);
+    expect(pageMock).toHaveBeenNthCalledWith(2, 500, ac.signal);
+    // 缺省面：不注入 signal → 第二参 undefined（默认不打扰）
+    pageMock.mockReset();
+    pageMock.mockResolvedValue({ items: [], hasMore: false });
+    await pagedFetch({ fetchPage: pageMock });
+    expect(pageMock).toHaveBeenCalledWith(0, undefined);
+  });
+
+  it("equity 通道接口预留：fetchPage 注入任意 T 同一实现（C4 复用锚）", async () => {
+    pageMock.mockImplementation((offset: number) =>
+      Promise.resolve({
+        items: offset === 0
           ? Array.from({ length: 500 }, (_, i) => ({ equity: i }))
           : [{ equity: 500 }],
-        has_more: offsetOf(url) === 0,
-      })));
-    const all = await pagedFetch<{ equity: number }>({
-      url: (o) => `/api/paper-trading/tasks/t1/equity?limit=500&offset=${o}`,
-      itemsKey: "snapshots" });
+        hasMore: offset === 0,
+      }));
+    const all = await pagedFetch<{ equity: number }>({ fetchPage: pageMock });
     expect(all).toHaveLength(501);
-  });
-
-  it("paperDetailUrl：通道+task_id 转义+limit/offset 查询面", () => {
-    expect(paperDetailUrl("fills", "t/1", 500, 500)).toBe(
-      "/api/paper-trading/tasks/t%2F1/fills?limit=500&offset=500");
-    expect(paperDetailUrl("signals", "abc", 0)).toBe(
-      "/api/paper-trading/tasks/abc/signals?limit=500&offset=0");
-    expect(paperDetailUrl("equity", "abc", 500)).toBe(
-      "/api/paper-trading/tasks/abc/equity?limit=500&offset=500");
   });
 });

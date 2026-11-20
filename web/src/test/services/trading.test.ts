@@ -123,6 +123,17 @@ describe("trading service（/api/paper-trading 新域）", () => {
     expect(result).toEqual(mockResponse);
   });
 
+  it("getTradingFills 第三参 AbortSignal 透传给 api.get（CARD-01 取消链）", async () => {
+    const mockResponse = { fills: [], limit: 500, offset: 0, has_more: false };
+    mockedGet.mockResolvedValueOnce(mockResponse);
+    const ac = new AbortController();
+    await getTradingFills("t1", { limit: 500 }, ac.signal);
+    expect(mockedGet).toHaveBeenCalledWith("/api/paper-trading/tasks/t1/fills", {
+      params: { limit: 500, offset: undefined },
+      signal: ac.signal,
+    });
+  });
+
   // --- getTradingFunding（新增端点） ---
   it("getTradingFunding calls correct endpoint", async () => {
     const mockResponse = { records: [], limit: 100, offset: 0, has_more: false };
