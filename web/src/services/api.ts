@@ -112,12 +112,13 @@ const kyInstance = ky.create({
   },
 });
 
-/** 请求参数：查询串（params→searchParams）、JSON 体、FormData 体、单请求超时 */
+/** 请求参数：查询串（params→searchParams）、JSON 体、FormData 体、单请求超时、取消信号 */
 export interface RequestOptions {
   params?: Record<string, string | number | boolean | undefined | null>;
   json?: unknown;
   body?: FormData | URLSearchParams | string;
   timeout?: number;
+  signal?: AbortSignal;
 }
 
 function buildOptions(opts: RequestOptions = {}): Record<string, unknown> {
@@ -130,6 +131,7 @@ function buildOptions(opts: RequestOptions = {}): Record<string, unknown> {
   if (opts.json !== undefined) out.json = opts.json;
   if (opts.body !== undefined) out.body = opts.body;
   if (opts.timeout !== undefined) out.timeout = opts.timeout;
+  if (opts.signal !== undefined) out.signal = opts.signal;
   return out;
 }
 

@@ -24,6 +24,7 @@ export type {
   FundingRecordList,
   PaperFill,
   PaperFillList,
+  PaperSignal,
   PaperSignalList,
   TradingFinalReport,
   TradingReport,
@@ -80,10 +81,12 @@ export async function deleteTradingTask(taskId: string): Promise<{ deleted: bool
 
 export async function getTradingFills(
   taskId: string,
-  params?: ListPageParams
+  params?: ListPageParams,
+  signal?: AbortSignal
 ): Promise<PaperFillList> {
     return api.get(`/api/paper-trading/tasks/${taskId}/fills`, {
     params: { limit: params?.limit, offset: params?.offset },
+    signal,
   });
 }
 
@@ -91,19 +94,23 @@ export async function getTradingFills(
  *  （fe-asset-data-domain 2.1——HUD 信号浮层与决策回溯数据源） */
 export async function getTradingSignals(
   taskId: string,
-  params?: ListPageParams
+  params?: ListPageParams,
+  signal?: AbortSignal
 ): Promise<PaperSignalList> {
   return api.get(`/api/paper-trading/tasks/${taskId}/signals`, {
     params: { limit: params?.limit, offset: params?.offset },
+    signal,
   });
 }
 
 export async function getTradingEquity(
   taskId: string,
-  params?: ListPageParams
+  params?: ListPageParams,
+  signal?: AbortSignal
 ): Promise<EquitySnapshotList> {
     return api.get(`/api/paper-trading/tasks/${taskId}/equity`, {
     params: { limit: params?.limit, offset: params?.offset },
+    signal,
   });
 }
 

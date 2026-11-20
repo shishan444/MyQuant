@@ -1,4 +1,4 @@
-/** 回放详情面板纯函数测试（fe-replay-presentation 任务 2.1/3.1/4.1）。 */
+/** 回放详情面板纯函数测试（fe-replay-presentation+fix-replay-presentation-pipeline 补强）。 */
 import { describe, expect, it } from "vitest";
 import { eventSemantics, TRACE_FAMILY_COLOR } from "@/components/validationRecords/traceSemantics";
 import {
@@ -32,17 +32,30 @@ describe("六态标记映射（replayMarker）", () => {
     expect(replayMarker(fill({
       kind: "exit_sl", side: "long" }))!.text).toBe("平多");
   });
+  it("exit_max_hold → 码 25 平仓族（fix-replay-presentation-pipeline"
+      + " 2.1——vr 域 max_hold 词条先例，六态值域完备）", () => {
+    expect(replayMarker(fill({
+      kind: "exit_max_hold", side: "long" }))!.text).toBe("平多");
+    expect(replayMarker(fill({
+      kind: "exit_max_hold", side: "short" }))!.text).toBe("平空");
+    expect(replayMarker(fill({
+      kind: "exit_max_hold", side: "long" }))!.action).toBe("exit");
+  });
 
-  it("值域外 kind → null 防线（沿 vr 无词条滤除——marker 滤除"
-      + " 流水显原文）", () => {
-    expect(replayMarker(fill({ kind: "unknown_kind" }))).toBeNull();
-    expect(replayMarker(fill({ kind: "" }))).toBeNull();
+  it("未知 kind 防线（fix-replay-presentation-pipeline 2.2）：词表未"
+      + "命中如实标注不滤除——防未来 kind 扩值静默丢标记", () => {
+    const m = replayMarker(fill({ kind: "future_kind" }))!;
+    // kind 原文可见（未识别动作如实呈现）
+    expect(m.text).toBe("未识别动作（future_kind）");
+    expect(m.action).toBeUndefined();  // 不猜动作族（排序退化输入序）
+    expect(m.color).toBe(TRACE_FAMILY_COLOR.blocked);  // 灰族未知色
+    expect(replayMarker(fill({ kind: "" })).text).toBe("未识别动作（）");
   });
   it("回放与 vr 同 kind 同字义同色（P3-CARD-05 单源一致性）："
       + "replayMarker 输出与 eventSemantics 同码词条逐键一致", () => {
     for (const [kind, code] of [
       ["open", 10], ["add", 11], ["reduce", 12], ["close", 13],
-      ["exit_sl", 20],
+      ["exit_sl", 20], ["exit_max_hold", 25],
     ] as const) {
       const m = replayMarker(fill({ kind }))!;
       const sem = eventSemantics(code)!;
@@ -67,6 +80,38 @@ describe("仓位流水派生（derivePositionFlow）", () => {
       [0, 10, 10], [10, 5, 15], [15, -2, 13], [13, -13, 0],
     ]);
   });
+  it("quantity 可空守卫（CARD-01 服务层可空形对齐）：null 量=零操作量，"
+      + "仓位不漂移；close 全量平不受 quantity 影响", () => {
+    const flow = derivePositionFlow([
+      fill({ kind: "open", side: "long", quantity: null as unknown as number }),
+      fill({ kind: "open", side: "long", quantity: 5 }),
+      fill({ kind: "add", side: "long", quantity: null as unknown as number }),
+      fill({ kind: "reduce", side: "long", quantity: null as unknown as number }),
+      fill({ kind: "close", side: "long", quantity: null as unknown as number }),
+    ]);
+    // open null：0→0（零操作量不建仓）；open 5：0→5；add null：5→5；
+    // reduce null：5→5（-0=减方向有符号零——quantity 缺失仍走减向
+    // 符号运算，零操作量语义）；
+    // close：5→0（全量平与 quantity 无关）
+    expect(flow.map((r) => [r.before, r.qty, r.after])).toEqual([
+      [0, 0, 0], [0, 5, 5], [5, 0, 5], [5, -0, 5], [5, -5, 0],
+    ]);
+  });
+
+  it("仓位守恒恒等式（属性锚）：任意混排序列每行 after=before+qty", () => {
+    // 八值 kind 混排×长短交替×量 1-3——守恒不变量对任意流水成立
+    const kinds = ["open", "add", "reduce", "close", "exit_sl",
+      "exit_tp", "exit_max_hold", "exit_time"] as const;
+    const mixed = kinds.map((kind, i) => fill({
+      kind,
+      side: (i % 2 ? "long" : "short") as "long" | "short",
+      quantity: (i % 3) + 1,
+    }));
+    for (const r of derivePositionFlow(mixed)) {
+      expect(r.after).toBe(r.before + r.qty);
+    }
+  });
+
   it("reduce_terminated 行触发原因=减仓终止", () => {
     const flow = derivePositionFlow([
       fill({ kind: "open", side: "long", quantity: 4 }),
@@ -75,6 +120,30 @@ describe("仓位流水派生（derivePositionFlow）", () => {
     // 派生层保留原始 reason 码（审计值）；「减仓终止」中文映射在
     // 组件呈现层（td 渲染分支）——两层语义分界
     expect(flow[1].reason).toBe("reduce_terminated");
+  });
+});
+
+describe("short 方向对称（derivePositionFlow 数值断言——fix-replay-presentation-pipeline 3.3）", () => {
+  it("开空负仓→加空更负→减空正量→平空归零（镜像 long 序列）", () => {
+    const fills = [
+      fill({ kind: "open", side: "short", quantity: 10 }),
+      fill({ kind: "add", side: "short", quantity: 5 }),
+      fill({ kind: "reduce", side: "short", quantity: 2 }),
+      fill({ kind: "close", side: "short" }),
+    ];
+    const flow = derivePositionFlow(fills);
+    // open：0→-10；add：-10→-15（-5）；reduce：-15→-13（+2）；close：-13→0（+13）
+    expect(flow.map((r) => [r.before, r.qty, r.after])).toEqual([
+      [0, -10, -10], [-10, -5, -15], [-15, 2, -13], [-13, 13, 0],
+    ]);
+  });
+  it("exit_max_hold 出场=全量平且流水动作列中文（3.5）", () => {
+    const flow = derivePositionFlow([
+      fill({ kind: "open", side: "short", quantity: 4 }),
+      fill({ kind: "exit_max_hold", side: "short", quantity: 4 }),
+    ]);
+    expect(flow[1]).toMatchObject({ before: -4, qty: 4, after: 0 });
+    expect(flow[1].dirLabel).toBe("平空");
   });
 });
 
