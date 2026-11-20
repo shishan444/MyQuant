@@ -76,7 +76,9 @@ const OHLCV = [
 
 const RECORD = (taskId?: string, params?: Record<string, unknown>) => ({
   record_id: "rec_test", level: "replay",
-  statement: null,  // replay 恒 adhoc 无假设关联——回显区如实显「—」
+  // statement 可空：replay 恒 adhoc 无假设关联显「—」（D6 空态）；
+  // 放宽 string|null 供真值呈现用例覆盖构造
+  statement: null as string | null,
   params: params === undefined
     ? { symbol: "BTCUSDT", timeframe: "4h",
         start: "2026-01-01", end: "2026-01-31",
@@ -564,5 +566,156 @@ describe("C4 详情完整面（参数回显/权益曲线/多笔高亮）", () =>
       expect(screen.getByTestId("replay-flow-row-1").className)
         .toContain("bg-surface-active");
     });
+  });
+
+  it("权益快照形制异常全滤（D5 空态四格·形制异常格）：equity 全"
+      + " null 行如实标注不静默", async () => {
+    mockEquity.mockResolvedValue({
+      snapshots: [
+        { bar_time: "2026-01-01T00:00:00Z", equity: null },
+        { bar_time: "2026-01-02T00:00:00Z", equity: null },
+      ],
+      has_more: false } as never);
+    renderPanel(RECORD("task-eq7"));
+    expect(await screen.findByText(
+      /权益快照形制异常（2 行值缺失——如实标注）/))
+      .toBeInTheDocument();
+  });
+
+  it("权益快照形制异常部分滤（D5）：正常行摘要+缺失行计数后缀",
+     async () => {
+    mockEquity.mockResolvedValue({
+      snapshots: [
+        { bar_time: "2026-01-01T00:00:00Z", equity: 100000 },
+        { bar_time: "2026-01-02T00:00:00Z", equity: null },
+        { bar_time: "2026-01-03T00:00:00Z", equity: 99880 },
+      ],
+      has_more: false } as never);
+    renderPanel(RECORD("task-eq8"));
+    const text = (await screen.findByTestId("replay-equity-summary"))
+      .textContent ?? "";
+    expect(text).toContain("（一致）");  // 末值 99880 对账锚
+    expect(text).toContain("｜1 行值缺失（形制异常）");
+  });
+
+  it("零成交平线非空态（D5 空态四格·平线格）：全区间初始资金"
+      + "水平线摘要+equity 副图如实呈现", async () => {
+    mockEquity.mockResolvedValue({
+      snapshots: [
+        { bar_time: "2026-01-01T00:00:00Z", equity: 100000 },
+        { bar_time: "2026-01-02T00:00:00Z", equity: 100000 },
+        { bar_time: "2026-01-03T00:00:00Z", equity: 100000 },
+      ],
+      has_more: false } as never);
+    renderPanel({ ...RECORD("task-eq6"),
+      result: { replay: { task_id: "task-eq6", status: "completed",
+        total_trades: 0, total_pnl: 0, final_equity: 100000 } } });
+    const text = (await screen.findByTestId("replay-equity-summary"))
+      .textContent ?? "";
+    expect(text).toContain("+0.00%");
+    expect(screen.queryByText(/权益快照为空/)).toBeNull();
+    await waitFor(() => {
+      const props = mockChart.mock.calls[
+        mockChart.mock.calls.length - 1][0] as {
+          subChartType?: string; equityData?: unknown[] };
+      expect(props.subChartType).toBe("equity");
+      expect(props.equityData).toHaveLength(3);
+    });
+  });
+
+  it("对账无锚值降级（D5）：final_equity 缺失显「未知（无锚值）」",
+     async () => {
+    mockEquity.mockResolvedValue({
+      snapshots: [
+        { bar_time: "2026-01-01T00:00:00Z", equity: 100000 },
+      ],
+      has_more: false } as never);
+    // 工厂推断 result 带 final_equity——无锚值场景本身就是缺该键的
+    // 变体（联合 {} 分支），字面量直配触发缺属检查，断言收窄
+    // （运行时形制即此变体）
+    const rec = { ...RECORD("task-eq9"),
+      result: { replay: { task_id: "task-eq9", status: "completed",
+        total_trades: 1, total_pnl: 0 } } };
+    renderPanel(rec as ReturnType<typeof RECORD>);
+    const text = (await screen.findByTestId("replay-equity-summary"))
+      .textContent ?? "";
+    expect(text).toContain("未知");
+    expect(text).toContain("（无锚值）");
+  });
+
+  it("参数回显 statement 真值（D6 正向）：非空陈述直读呈现",
+     async () => {
+    renderPanel({ ...RECORD("task-p7"),
+      statement: "BTC 20 日布林突破回测假设" });
+    const text = (await screen.findByTestId("replay-params-panel"))
+      .textContent ?? "";
+    expect(text).toContain("策略陈述：BTC 20 日布林突破回测假设");
+  });
+
+  it("condition 字符串旧形制回退（D7 防御面）：非 dict 塞回 type"
+      + "经词表翻译+无 [object Object] 坏值", async () => {
+    mockSignals.mockResolvedValue({
+      signals: [{
+        bar_time: "2025-12-31T20:00:00Z",
+        exec_bar_time: "2026-01-01T00:00:00Z",
+        kind: "open", outcome: "filled",
+        fill_seq: 1, reject_reason: null,
+        gene_hits: [{ indicator: "OLD", condition: "lt" }],
+      }], has_more: false } as never);
+    renderPanel(RECORD("task-d7s"));
+    fireEvent.click(await screen.findByTestId("replay-flow-row-0"));
+    await waitFor(() => {
+      expect(screen.getByText(/基因：OLD </)).toBeInTheDocument();
+    });
+    // spec THEN 文字显式锚：无 "[object Object]" 坏值（D7 病灶）
+    expect(screen.queryByText(/\[object Object\]/)).toBeNull();
+  });
+
+  it("行点击替换式单选（CARD-02 回归锚）：点 A 再点 B 仅 B 高亮"
+      + "（积累式多选回归防御）", async () => {
+    renderPanel(RECORD("task-c02"));
+    fireEvent.click(await screen.findByTestId("replay-flow-row-0"));
+    await waitFor(() => {
+      expect(screen.getByTestId("replay-flow-row-0").className)
+        .toContain("bg-surface-active");
+    });
+    fireEvent.click(screen.getByTestId("replay-flow-row-1"));
+    await waitFor(() => {
+      expect(screen.getByTestId("replay-flow-row-1").className)
+        .toContain("bg-surface-active");
+      // 替换语义：前一行不再高亮（积累式实现下此处红）
+      expect(screen.getByTestId("replay-flow-row-0").className)
+        .not.toContain("bg-surface-active");
+    });
+  });
+
+  it("参数回显空 params 全降级+非数值门（D6 阶段四盲区消解）："
+      + "区间/币种/周期「未知」，字符串费率直读、字符串杠杆「未知」",
+     async () => {
+    renderPanel(RECORD("task-p8", {
+      fee: "0.001", leverage: "2",
+    }));
+    const text = (await screen.findByTestId("replay-params-panel"))
+      .textContent ?? "";
+    expect(text).toContain("区间：未知 ~ 未知");
+    expect(text).toContain("未知 · 未知");
+    expect(text).toContain("费率 0.001");  // pv 字符串直读
+    expect(text).toContain("杠杆 未知");   // paramNum 非数值门
+  });
+
+  it("权益首值为 0 除零防护（D5 阶段四盲区消解）：delta 显「—」"
+      + "不产 NaN", async () => {
+    mockEquity.mockResolvedValue({
+      snapshots: [
+        { bar_time: "2026-01-01T00:00:00Z", equity: 0 },
+        { bar_time: "2026-01-02T00:00:00Z", equity: 5 },
+      ],
+      has_more: false } as never);
+    renderPanel(RECORD("task-eq10"));
+    const text = (await screen.findByTestId("replay-equity-summary"))
+      .textContent ?? "";
+    expect(text).toContain("（—）");
+    expect(text).not.toContain("NaN");
+    expect(text).not.toContain("Infinity");
   });
 });

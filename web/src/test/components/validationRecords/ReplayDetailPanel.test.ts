@@ -222,6 +222,48 @@ describe("基因触发描述（geneDescription）", () => {
     expect(geneDescription(sigs, "2026-01-01T00:00:00Z", 2))
       .toBe("RSI.rsi < 30；EMA >= 200");
   });
+  it("threshold=0 阈值不丢失（C4 Q1 边界）：零值阈值完整显示"
+      + "（falsy 误判丢 0 防御）", () => {
+    const sigs = [{
+      bar_time: "2025-12-31T20:00:00Z",
+      exec_bar_time: "2026-01-01T00:00:00Z",
+      kind: "open", outcome: "filled",
+      fill_seq: 1, reject_reason: null,
+      gene_hits: [{ indicator: "ATR",
+        condition: { type: "gt", threshold: 0 } }],
+    }];
+    expect(geneDescription(sigs, "2026-01-01T00:00:00Z", 1))
+      .toBe("ATR > 0");
+  });
+  it("cond.type=constructor 原型键名不沿原型链命中（CARD-01）："
+      + "显原文键名而非函数串", () => {
+    const sigs = [{
+      bar_time: "2025-12-31T20:00:00Z",
+      exec_bar_time: "2026-01-01T00:00:00Z",
+      kind: "open", outcome: "filled",
+      fill_seq: 1, reject_reason: null,
+      gene_hits: [{ indicator: "X",
+        condition: { type: "constructor" } }],
+    }];
+    // 修复前：CONDITION_TYPE_LABELS["constructor"] 沿原型链命中
+    // Object.prototype.constructor（函数，truthy），?? 不兜底 →
+    // 渲染函数串；hasOwn 守卫后未命中显原文键名
+    expect(geneDescription(sigs, "2026-01-01T00:00:00Z", 1))
+      .toBe("X constructor");
+  });
+  it("cond.type=toString 原型键名不沿原型链命中（CARD-01）："
+      + "显原文键名+阈值完整", () => {
+    const sigs = [{
+      bar_time: "2025-12-31T20:00:00Z",
+      exec_bar_time: "2026-01-01T00:00:00Z",
+      kind: "open", outcome: "filled",
+      fill_seq: 1, reject_reason: null,
+      gene_hits: [{ indicator: "X",
+        condition: { type: "toString", threshold: 7 } }],
+    }];
+    expect(geneDescription(sigs, "2026-01-01T00:00:00Z", 1))
+      .toBe("X toString 7");
+  });
   it("未命中（无 gene_hits）→ 空串（如实话术由呈现层承载）", () => {
     const sigs = [{
       bar_time: "2025-12-31T20:00:00Z",
