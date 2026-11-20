@@ -187,6 +187,36 @@ class TestTerminalIdempotence:
         assert task["stopped_at"] is not None  # 终态时点字段在位（finalize 写）
 
 
+class TestPrepareFailureLandsErrorTerminal:
+    """prepare 缝闭合（2.2 扩范围——Lead 终裁）：库 dna 路径 prepare
+    失败发生在建行后、置 running 前——扩范围后行落 error 终态（不残
+    pending 残行），ReplayError 原样上抛（REPLAY_PREPARE_FAILED 客户
+    端语义码走 422 通道，REST 出站语义零漂移）。"""
+
+    def test_prepare_failure_row_error_not_pending(self, tmp_path,
+                                                   monkeypatch):
+        from core.paper_trading.runtime import executor as exec_mod
+        from core.replay.runner import ReplayError
+
+        monkeypatch.setattr(
+            exec_mod.PaperTaskExecutor, "prepare",
+            lambda self: False)   # 建行后置 running 前的纵深防线拒绝
+        env = ReplayEnv(tmp_path, n_bars=600)
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=300)
+
+        with pytest.raises(ReplayError) as ei:
+            rr.run(env.db, env.strategy_id, start, end, task_id="et05")
+
+        assert ei.value.code == "REPLAY_PREPARE_FAILED"
+        task = paper.get_task(env.db, "et05")
+        assert task["status"] == "error", (
+            f"prepare 失败行应落 error 终态（实测 {task['status']}——"
+            "pending 残行即扩范围未闭合）")
+        assert "执行器装载校验意外未过" in task["error_detail"]
+        assert task["stopped_at"] is not None
+
+
 class TestOriginColumnPropagation:
     """建行传参面（任务 2.1）：回放建行 origin=replay；纸盘 REST 建行
     缺省 paper（同库对照——域标记分流实证）。"""

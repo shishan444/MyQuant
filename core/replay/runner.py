@@ -266,21 +266,26 @@ class ReplayRunner:
             db_path, task_row, registry=registry,
             start_after=feeder.main_start.isoformat(),
             funding_lookup=feeder.funding_lookup)
-        if _dna_override is None and not executor.prepare():
-            # prepare=纸盘上盘纵深防线（库 dna 被改后重启场景），回放
-            # 库策略路径沿用（防库行被外部篡改）；研究模板 override 场
-            # 景跳过——其职能（数据可行性/compat/指标可算/atr）已由
-            # 回放装载链 3/4/8/9 覆盖，纵深校验的库值域交叉与实验
-            # dna 双量纲合法形制冲突（任务 2.2 适配）
-            raise ReplayError(
-                "REPLAY_PREPARE_FAILED", "执行器装载校验意外未过")
-        paper_repo.update_task(db_path, tid, status="running")
-        # ── 分段驱动（前缀切片形制：每段 process_frames 收到「含全
-        # 部历史的前缀帧」+from_idx=段起点——信号窗口完整、循环自然
-        # 止于段边界〔range(from_idx, len(前缀))〕；段边界刷新辅帧
-        # 引用即重建可见性，与全帧单段特例同构）──
+        # ── 建行后全程异常兜底（fix-replay-task-lifecycle 2.2 扩范围
+        # ——Lead 终裁「prepare 缝」闭合）：try 从 prepare 段起包，
+        # 任何异常先落 error 终态再上抛，行不残 pending/running。
+        # _finalize 经实现面核对：update_task 无 CAS 前态门，pending
+        # 直迁 error 合法；_finalized 标志保进程内幂等。──
         main = feeder.main
         try:
+            if _dna_override is None and not executor.prepare():
+                # prepare=纸盘上盘纵深防线（库 dna 被改后重启场景），回放
+                # 库策略路径沿用（防库行被外部篡改）；研究模板 override 场
+                # 景跳过——其职能（数据可行性/compat/指标可算/atr）已由
+                # 回放装载链 3/4/8/9 覆盖，纵深校验的库值域交叉与实验
+                # dna 双量纲合法形制冲突（任务 2.2 适配）
+                raise ReplayError(
+                    "REPLAY_PREPARE_FAILED", "执行器装载校验意外未过")
+            paper_repo.update_task(db_path, tid, status="running")
+            # ── 分段驱动（前缀切片形制：每段 process_frames 收到「含全
+            # 部历史的前缀帧」+from_idx=段起点——信号窗口完整、循环自然
+            # 止于段边界〔range(from_idx, len(前缀))〕；段边界刷新辅帧
+            # 引用即重建可见性，与全帧单段特例同构）──
             for seg_start, seg_end, aux_frames in feeder.segments():
                 executor._aux_frames.update(aux_frames)
                 prefix = main.iloc[:seg_end + 1]
@@ -289,16 +294,19 @@ class ReplayRunner:
                 if executor._concluded_status is not None:
                     break
         except Exception as exc:
-            # 执行段异常兜底（fix-replay-task-lifecycle 2.2——与纸盘
+            # 建行后异常兜底（fix-replay-task-lifecycle 2.2——与纸盘
             # run() 异常面同构）：先落 error 终态再上抛，行不残
-            # running。_finalize 幂等（_finalized 标志）——先行终态
-            # （本段窗口到点/停止条件后清理路径异常）不重复迁移不
-            # 覆盖既有终态与 error_detail。上抛转 ResearchError 语义
-            # 5xx（全局 handler research_error_to_http 结构化出站，
-            # 禁裸 500 栈穿透）。
-            logger.exception("回放任务 %s 执行段异常", tid)
+            # pending/running。_finalize 幂等（_finalized 标志）——
+            # 先行终态（本段窗口到点/停止条件后清理路径异常）不重复
+            # 迁移不覆盖既有终态与 error_detail。上抛分派：ReplayError
+            # （prepare 段客户端语义码）原样上抛走 422 通道零漂移；
+            # 其余异常转 ResearchError 语义 5xx（全局 handler
+            # research_error_to_http 结构化出站，禁裸 500 栈穿透）。
+            logger.exception("回放任务 %s 建行后异常", tid)
             executor._finalize(
                 "error", error_detail=f"{type(exc).__name__}: {exc}")
+            if isinstance(exc, ReplayError):
+                raise
             raise ResearchError(
                 "REPLAY_EXECUTION_FAILED",
                 f"回放执行段异常: {type(exc).__name__}: {exc}",
