@@ -130,3 +130,17 @@ class TestLegacyBacktestOfflineMarking:
 
         assert "run_backtest" in EXPECTED_RESEARCH_TOOLS
         assert "run_replay_backtest" in EXPECTED_RESEARCH_TOOLS
+
+
+class TestPacedModeSurface:
+    """限速演示参数 MCP 面不暴露（add-replay-paced-mode 任务 2.2——
+    负向断言：演示语义归人类脚本直调，暴露引入滥用面）。"""
+
+    def test_no_throttle_param_on_registered_surface(self):
+        import inspect
+        mcp, _api = _register("research")
+        fn = mcp.registered["run_replay_backtest"]
+        params = set(inspect.signature(fn).parameters)
+        assert not any(
+            "throttle" in p or "pace" in p for p in params), (
+            f"MCP 面泄漏限速参数: {sorted(params)}")

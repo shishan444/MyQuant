@@ -33,6 +33,7 @@ import logging
 import math
 import queue
 import threading
+import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -856,13 +857,20 @@ class PaperTaskExecutor:
 
     # ── 八步序（测试注入通道——直接喂帧，不经真实时钟/feed） ──
 
-    def process_frames(self, df: pd.DataFrame, from_idx: int) -> None:
+    def process_frames(
+        self, df: pd.DataFrame, from_idx: int,
+        throttle_seconds: Optional[float] = None,
+    ) -> None:
         """消费一帧闭合 bar（from_idx 起逐根八步序——回放驱动入口）。
 
         信号组装按整帧计算（dna_to_signal_set 全帧形制，沿旧 runner）；
         MTF 时辅周期取各 feed 最新引用组装。窗口到点/停止条件置位后
         本帧剩余 bar 不再处理（观察已结束）；stop 在 bar 边界协作退出
         （当前 bar 已完整落库）。
+
+        throttle_seconds（add-replay-paced-mode）：逐 bar 节流尾参——
+        bar 级 sleep（演示「逐根回放」形态），缺省 None 零开销、实时
+        run() 路径恒不传；传入式观测参数不改执行判定语义。
         """
         # 运行期衍生品注入（fix-paper-funding-indicator-merge 任务 B
         # 最小版）：注入必须先于 MTF 帧组装——帧表主周期帧绑定注入
@@ -886,6 +894,11 @@ class PaperTaskExecutor:
                 if self._concluded_status is not None:
                     break  # 第 8 步已终态置位——后续 bar 不再感知
                 self._process_bar(df, i, sig_set)
+                # 逐 bar 节流（add-replay-paced-mode）：None 时零开销
+                # （不进 time 分支）；>0 时 sleep——bar 处理完落库后再
+                # 等待，节流不影响 bar 序与执行语义
+                if throttle_seconds is not None:
+                    time.sleep(throttle_seconds)
         except TaskStopRequested:
             self._finalize("stopped", stop_reason="user_stop")
             return

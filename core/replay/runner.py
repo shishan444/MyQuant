@@ -102,9 +102,21 @@ class ReplayRunner:
         stop_loss_pct: Optional[float] = None,
         halt_drawdown_pct: Optional[float] = None,
         task_id: Optional[str] = None,
+        throttle_seconds: Optional[float] = None,
         _dna_override: Optional[StrategyDNA] = None,
     ) -> ReplayResult:
-        """跑一次完整回放（装载失败即抛 ReplayError，行不建）。"""
+        """跑一次完整回放（装载失败即抛 ReplayError，行不建）。
+
+        throttle_seconds（add-replay-paced-mode）：可选限速演示参数
+        （None=不限速零开销缺省）——透传 process_frames 逐 bar sleep
+        （bar 级节流；段级锚定对单周期策略只调一次不可满足——2026-11
+        -19 战役教训四）。>0 校验（0/负显式拒绝）。MCP 参数面不暴露
+        （演示语义归人类脚本直调）。
+        """
+        if throttle_seconds is not None and throttle_seconds <= 0:
+            raise ReplayError(
+                "RESEARCH_PARAM_INVALID",
+                f"throttle_seconds 须为正浮点: {throttle_seconds!r}")
         db_path = Path(db_path)
         # ── 装载链 1-5（策略域校验；6-10 归 feeder.load()）──
         # _dna_override：内存 DNA 直传入口（run_from_dna 进——exit_sweep
@@ -226,7 +238,8 @@ class ReplayRunner:
         for seg_start, seg_end, aux_frames in feeder.segments():
             executor._aux_frames.update(aux_frames)
             prefix = main.iloc[:seg_end + 1]
-            executor.process_frames(prefix, seg_start)
+            executor.process_frames(
+                prefix, seg_start, throttle_seconds=throttle_seconds)
             if executor._concluded_status is not None:
                 break
         if executor._concluded_status is None:
