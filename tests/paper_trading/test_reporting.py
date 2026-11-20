@@ -251,10 +251,14 @@ class TestDeviationLayer:
         assert replay_report["deviation"]["backtest"] is None
         assert "实时偏差对照" in reason
         assert "尚未开始" not in reason
+        # 判域（1.0）：replay 任务无对照轴——contrast_source=None
+        # （唯一取 None 的路径；其余降级均按形态披露引擎）
+        assert replay_report["deviation"]["contrast_source"] is None
 
         paper_report = build_report(db, tmp_path, paper_tid)
         assert "尚未开始" in paper_report["deviation"][
             "unavailable_reason"]
+        assert paper_report["deviation"]["contrast_source"] == "legacy_vbt"
 
     def test_success_path_params_and_leverage_override(
             self, tmp_path, monkeypatch):
@@ -300,6 +304,58 @@ class TestDeviationLayer:
         assert any("清算" in n for n in notes)
         assert any("区间边界" in n for n in notes)
         assert any("挂起补记" in n for n in notes)
+        # rolling 成功路径（2.2）：对照源披露+第五注记（legacy 缺陷差
+        # 计入 diff——spec 滚动版义务）
+        assert report["deviation"]["contrast_source"] == "legacy_vbt"
+        assert any("legacy VBT" in n for n in notes)
+
+
+class TestFinalContrastInjection:
+    """final 对照注入形制（1.1 域方向 L2-H3）：计算器经参数注入，
+    缺省/抛错两降级面——报告不炸、原因如实、按形态披露对照源。"""
+
+    def _finalized(self, tmp_path, **kwargs):
+        """终态任务开跑后直调固化（测试通道 kwargs 透传 contrast_runner）。"""
+        from core.paper_trading.reporting import finalize_report
+        db = _make_db(tmp_path)
+        tid = _seed_task(db, status="completed")
+        _seed_equity_bars(db, tid, 10)
+        _seed_exit_fills(db, tid, [100.0])
+        return finalize_report(db, tmp_path, tid, **kwargs)
+
+    def test_final_without_runner_unavailable(self, tmp_path):
+        """未装配（contrast_runner=None——非 app 装配调用方）：final
+        报告照常固化，deviation 降级且原因明示未装配（非静默 None）。"""
+        report = self._finalized(tmp_path)
+        dev = report["deviation"]
+        assert dev["backtest"] is None
+        assert set(dev["diff"]) == {"total_return", "sharpe_ratio",
+                                    "max_drawdown", "win_rate"}
+        assert all(v is None for v in dev["diff"].values())
+        assert "未装配" in dev["unavailable_reason"]
+        # 降级同样按形态披露对照引擎（final=replay）
+        assert dev["contrast_source"] == "replay"
+        # final 形态注记三项（replay 实况分形——无 legacy 第五项）
+        assert len(dev["attribution_notes"]) == 3
+
+    def test_final_runner_exception_degrades(self, tmp_path):
+        """注入计算器抛错（错误族对报告器不可知——宽 Exception 捕获）：
+        降级原因含异常类名与消息，报告其余层正常。"""
+        from core.analysis.errors import ResearchError
+
+        def _boom(*args, **kwargs):
+            raise ResearchError(
+                "RESEARCH_DATA_INSUFFICIENT", "回放装载数据不足")
+
+        report = self._finalized(tmp_path, contrast_runner=_boom)
+        dev = report["deviation"]
+        assert dev["backtest"] is None
+        reason = dev["unavailable_reason"]
+        assert "ResearchError" in reason
+        assert "回放装载数据不足" in reason
+        assert dev["contrast_source"] == "replay"
+        # performance 层不受对照降级影响
+        assert report["performance"]["total_trades"] == 1
 
 
 def _get_task_dna(db: Path, task_id: str) -> str:
