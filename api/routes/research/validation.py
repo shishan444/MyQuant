@@ -101,7 +101,12 @@ def _replay_record_and_response(
                 "total_trades": result.total_trades,
                 "total_pnl": result.total_pnl,
                 "final_balance": result.final_balance,
-                "final_equity": result.final_equity}},
+                "final_equity": result.final_equity,
+                # 收益率计算键（fix-replay-list-channel G-2b）：收益类
+                # 排序的语义正确性——PnL 代理跨 initial_cash 不可比；
+                # 历史 replay 行无此键，消费面按缺键降级（排序代理回退）
+                "total_return": (result.final_equity
+                                 / payload.initial_cash - 1)}},
             ensure_ascii=False),
         range_hash=hashlib.sha256(_json.dumps(
             {**record_params, "record_id": record_id},
@@ -121,6 +126,7 @@ def _replay_record_and_response(
         "total_pnl": result.total_pnl,
         "final_balance": result.final_balance,
         "final_equity": result.final_equity,
+        "total_return": (result.final_equity / payload.initial_cash - 1),
         "halted_at": result.halted_at, "first_met_at": result.first_met_at,
     }
     # 熔断三态回显（P2-CARD-03：沿 sandbox halt_info 形制——未配置

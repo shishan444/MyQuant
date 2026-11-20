@@ -179,7 +179,9 @@ class TestVerdictCountsFourKeys:
                 "2026-01-04T00:00:00Z")
         base = client.get("/api/research/validation-records").json()
         assert base["verdict_counts"] == {
-            "pass": 2, "fail": 1, "inconclusive": 0, "sandbox": 1}
+            "pass": 2, "fail": 1, "inconclusive": 0, "sandbox": 1,
+            "replay": 0}  # 第五键（fix-replay-list-channel）——库内
+        # 无 replay 行时计数 0 恒在场
         # 再真实跑沙盒 2 次 → 沙盒×3；三键纯净（沙盒插入前后不变）
         for _ in range(2):
             run_sandbox_backtest(
@@ -188,13 +190,15 @@ class TestVerdictCountsFourKeys:
                 hypothesis_id=hid)
         full = client.get("/api/research/validation-records").json()
         assert full["verdict_counts"] == {
-            "pass": 2, "fail": 1, "inconclusive": 0, "sandbox": 3}
+            "pass": 2, "fail": 1, "inconclusive": 0, "sandbox": 3,
+            "replay": 0}
         assert full["total"] == 7  # 四键和 6<7——composite 不落键
         # level 互斥过滤：sandbox=0 恒在场
         iso = client.get("/api/research/validation-records",
                          params={"level": "isolated_backtest"}).json()
         assert iso["verdict_counts"] == {
-            "pass": 2, "fail": 0, "inconclusive": 0, "sandbox": 0}
+            "pass": 2, "fail": 0, "inconclusive": 0, "sandbox": 0,
+            "replay": 0}
         assert iso["total"] == 2
         # verdict=pass 筛选：沙盒行不在 records 不在计数（G5）
         vp = client.get("/api/research/validation-records",

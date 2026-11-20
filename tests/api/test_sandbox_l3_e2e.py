@@ -103,7 +103,8 @@ class TestL3AiResearchLoop:
         assert len(hashes) == 2
         # verdict_counts：sandbox=2 三键纯净（A3/A5）
         assert lv["verdict_counts"] == {
-            "pass": 0, "fail": 0, "inconclusive": 0, "sandbox": 2}
+            "pass": 0, "fail": 0, "inconclusive": 0, "sandbox": 2,
+            "replay": 0}  # 第五键（fix-replay-list-channel）恒在场
         # （卡片快照三数字锚随 hypothesis-cards 端点退役删除——
         # retire-legacy cards 族；沙盒不污染正式口径的等价断言=
         # 上方 verdict_counts 三键纯净）

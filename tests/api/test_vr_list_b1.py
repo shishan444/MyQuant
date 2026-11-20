@@ -166,7 +166,8 @@ class TestQSearch:
         # 四键恒在场（add-sandbox-records-unified-flow C4——sandbox
         # 第四键按 level 计数，空集 0）
         assert out["verdict_counts"] == {
-            "pass": 0, "fail": 0, "inconclusive": 0, "sandbox": 0}
+            "pass": 0, "fail": 0, "inconclusive": 0, "sandbox": 0,
+            "replay": 0}
 
     def test_q_wildcard_literal(self, env):
         assert _list(env, q="关键词%XYZ")["total"] == 0, "% 字面不放大"
@@ -500,7 +501,8 @@ class TestBareStringAnchors:
         # aggregates 路：total 与 verdict_counts 同基数
         assert out["total"] == 3
         assert out["verdict_counts"] == {
-            "pass": 3, "fail": 0, "inconclusive": 0, "sandbox": 0}
+            "pass": 3, "fail": 0, "inconclusive": 0, "sandbox": 0,
+            "replay": 0}
         # count 路：仓储直调同基数
         assert rr.count_validation_records(
             bareenv["db"], generalization=True) == 3
@@ -545,7 +547,8 @@ class TestCountsDualCaliber:
         out = _list(env)
         assert out["total"] == 3
         assert out["verdict_counts"] == {
-            "pass": 1, "fail": 1, "inconclusive": 1, "sandbox": 0}
+            "pass": 1, "fail": 1, "inconclusive": 1, "sandbox": 0,
+            "replay": 0}
 
 
 @pytest.fixture()
