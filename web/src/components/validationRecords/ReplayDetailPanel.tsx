@@ -10,7 +10,9 @@ import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { KlineChart } from "@/components/charts/KlineChart";
 import { epochOf } from "./fullRangeData";
-import { pagedFetch, paperDetailUrl } from "./pagedFetch";
+import { DETAIL_PAGE_SIZE, pagedFetch } from "./pagedFetch";
+import { getTradingFills, getTradingSignals } from "@/services/trading";
+import type { PaperSignal as PaperSignalDto } from "@/services/trading";
 import {
   eventSemantics, legacySide, markerMorphText, markerShape,
   markerSide, normalizeDirection, TRACE_FAMILY_COLOR,
@@ -18,28 +20,29 @@ import {
 import { getOhlcvBySymbol } from "@/services/datasets";
 import { formatTimestamp } from "@/lib/utils";
 
-/** 纸盘成交行（/tasks/{id}/fills——PtFill 列面子集） */
+/** 纸盘成交行（/tasks/{id}/fills——服务层 PaperFill 呈现子集，
+ *  可空形对齐生成类型：side/price/quantity/fee 后端 Optional 保守映射） */
 interface PaperFill {
   bar_time: string;
   seq: number;
   kind: string;
-  side: string;
-  price: number;
-  quantity: number;
-  fee: number;
-  realized_pnl: number | null;
-  reason: string | null;
+  side?: string | null;
+  price?: number | null;
+  quantity?: number | null;
+  fee?: number | null;
+  realized_pnl?: number | null;
+  reason?: string | null;
 }
-/** 纸盘信号行（gene_hits 字段族——触发描述数据源） */
+/** 纸盘信号行（gene_hits 字段族——触发描述数据源；服务层形经
+ *  signalToPanel 收窄——kind 字段后端实为 signal_kind 且组件无消费，不设） */
 interface PaperSignal {
   bar_time: string;
   /** 执行 bar（本根）——与 pt_fill.bar_time 同轴（C5 三元组锚
    *  task_id+exec_bar_time+fill_seq；bar_time=决策锚差一根） */
-  exec_bar_time: string;
-  kind: string;
+  exec_bar_time?: string | null;
   outcome: string;
-  fill_seq: number | null;
-  reject_reason: string | null;
+  fill_seq?: number | null;
+  reject_reason?: string | null;
   gene_hits: Array<{
     indicator: string; field?: string;
     condition?: string; target?: number | string;
@@ -122,11 +125,11 @@ export function derivePositionFlow(
   return fills.map((f) => {
     const before = pos;
     const sign = f.side === "long" || f.side === "buy" ? 1 : -1;
-    let qty = sign * f.quantity;
+    let qty = sign * (f.quantity ?? 0);  // 可空形守卫（null 量=零操作量）
     if (f.kind === "open") { pos = qty; }
     else if (f.kind === "add") { pos += qty; }
     else if (f.kind === "reduce") {
-      qty = -sign * f.quantity;  // 持仓方向内的减量（有符号取负）
+      qty = -sign * (f.quantity ?? 0);  // 持仓方向内的减量（有符号取负）
       pos += qty;
     } else { qty = -before; pos = 0; }  // 出场族=全量平（含终止升格）
     return {
@@ -154,6 +157,24 @@ export function geneDescription(
     (g) => `${g.indicator}${g.field ? `.${g.field}` : ""} `
       + `${g.condition ?? ""} ${g.target ?? ""}`.trim(),
   ).join("；");
+}
+
+/** 服务层信号行 → 呈现形：gene_hits 从生成层松散 dict（后端 List[dict]
+ *  的保守 TS 映射）收窄为结构化呈现契约——indicator 等四键非字符串值
+ *  如实串化/回退，不丢行（CARD-01 服务层收敛的类型边界收窄） */
+function signalToPanel(s: PaperSignalDto): PaperSignal {
+  return {
+    ...s,
+    gene_hits: s.gene_hits.map((g) => ({
+      indicator: typeof g.indicator === "string"
+        ? g.indicator : String(g.indicator ?? ""),
+      field: typeof g.field === "string" ? g.field : undefined,
+      condition: typeof g.condition === "string"
+        ? g.condition : undefined,
+      target: typeof g.target === "number" || typeof g.target === "string"
+        ? g.target : undefined,
+    })),
+  };
 }
 
 export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) {
@@ -185,12 +206,17 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
   // 明细装载（fix-replay-presentation-pipeline 1.1/1.2）：分页聚
   //  合循环器（页大小=端点上限 500，按页满/has_more 续页聚合全量）
   //  ——limit=10000 恒 422+`!r.ok → []` 吞错伪装空态的病灶路径已
-  //  删除；任页失败 queryFn 抛错走 isError 降级（不部分呈现）
+  //  删除；任页失败 queryFn 抛错走 isError 降级（不部分呈现）。
+  //  单页取数经服务层单源（CARD-01：鉴权/基址/超时+signal 取消
+  //  四能力继承——不再自拼 URL 自建裸 fetch 通道）
   const fillsQ = useQuery({
     queryKey: ["replay-fills", tid],
     queryFn: ({ signal }) => pagedFetch<PaperFill>({
-      url: (offset, limit) => paperDetailUrl("fills", tid!, offset, limit),
-      itemsKey: "fills",
+      fetchPage: async (offset, pageSignal) => {
+        const r = await getTradingFills(
+          tid!, { limit: DETAIL_PAGE_SIZE, offset }, pageSignal);
+        return { items: r.fills, hasMore: r.has_more };
+      },
       signal,
     }),
     enabled: !!tid,
@@ -198,8 +224,14 @@ export function ReplayDetailPanel({ record }: { record: ValidationRecordLike }) 
   const signalsQ = useQuery({
     queryKey: ["replay-signals", tid],
     queryFn: ({ signal }) => pagedFetch<PaperSignal>({
-      url: (offset, limit) => paperDetailUrl("signals", tid!, offset, limit),
-      itemsKey: "signals",
+      fetchPage: async (offset, pageSignal) => {
+        const r = await getTradingSignals(
+          tid!, { limit: DETAIL_PAGE_SIZE, offset }, pageSignal);
+        return {
+          items: r.signals.map(signalToPanel),
+          hasMore: r.has_more,
+        };
+      },
       signal,
     }),
     enabled: !!tid,
