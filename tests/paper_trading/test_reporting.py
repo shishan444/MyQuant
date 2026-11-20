@@ -218,7 +218,10 @@ class TestDeviationLayer:
         # performance 与 evidence 层正常返回
         assert report["performance"]["total_trades"] == 1
         assert report["evidence"]["bars_run"] == 10
-        assert len(report["deviation"]["attribution_notes"]) == 4
+        # rolling 形态五项（fix-paper-deviation-contrast：第五项 legacy
+        # 缺陷差披露——降级路径同样按形态披露，spec 滚动版义务）
+        assert len(report["deviation"]["attribution_notes"]) == 5
+        assert report["deviation"]["contrast_source"] == "legacy_vbt"
 
     def test_not_started_no_range(self, tmp_path):
         """pending 未开跑：无对照区间→unavailable（不调桥）。"""

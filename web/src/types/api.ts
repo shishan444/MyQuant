@@ -594,8 +594,12 @@ export interface TradingReportPerformance {
 }
 
 /**
- * 偏差对照层 ← 同策略同参数任务区间回测预期成绩+diff+归因披露。
+ * 偏差对照层 ← 同策略同参数任务区间对照预期成绩+diff+归因披露。
  * 对照失败该层标 unavailable（backtest=null），整份报告不失败。
+ * 对照源两形（fix-paper-deviation-contrast）：final=replay（回放引擎
+ * 同构直跑，diff=纯执行环境差）；rolling=legacy_vbt（缺陷差计入 diff，
+ * 注记第五项披露）；回放任务判域排除（不适用对照）为 null；旧报告
+ * 无此键合法（向后兼容纯增键）。
  */
 export interface TradingReportDeviation {
   backtest: Record<string, unknown> | null;
@@ -605,6 +609,7 @@ export interface TradingReportDeviation {
     max_drawdown: number | null;
     win_rate: number | null;
   };
+  contrast_source?: "replay" | "legacy_vbt" | null;
   unavailable_reason: string | null;
   attribution_notes: string[];
 }

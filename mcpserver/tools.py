@@ -206,8 +206,11 @@ def register_readonly_tools(mcp, api: QuantApiClient) -> None:
     def get_paper_report(task_id: str, final: bool = False) -> Dict[str, Any]:
         """纸盘验证报告（三层结构 performance/deviation/evidence，无
         可行/不可行自动判定——考场无观点）。final=False 滚动版（实时
-        计算，任意状态可取——running 中随时看当前成绩）；final=True
-        结题固化版（未结题 409 task not concluded）。"""
+        计算，任意状态可取——running 中随时看当前成绩；偏差对照
+        deviation.contrast_source=legacy_vbt——legacy VBT 缺陷差计入
+        diff，归因注记第五项披露）；final=True 结题固化版（未结题 409
+        task not concluded；偏差对照 contrast_source=replay——回放
+        引擎与执行核心同构直跑，diff=纯执行环境差）。"""
         # 路径字面量分派（AST 对拍形制——变量拼接会脱出白名单提取）
         if final:
             return api.get(

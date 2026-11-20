@@ -174,18 +174,24 @@ def create_app(
         load_min_notional(fetch_exchange_info=_mn_fetch)
         from core.paper_trading.runtime.scheduler import PaperScheduler
 
-        # final 固化接线（fix-paper-deviation-contrast 0.1/0.2）：终态
-        # 回调注入——executor 三终态经 _finalize → 调度器 _executor_
-        # concluded 透传 → 此处固化结题报告落 pt_report（final 路由与
-        # MCP final=True 的生产供数源）。固化失败 try/except 与终态
-        # 迁移解耦：终态是主语义（executor 先落终态再回调），固化是
-        # 增强面——抛错只留痕不回滚不阻断（executor 层兜底之外此处
-        # 再收一层，失败归因到「固化」而非笼统「结题回调」）
+        # final 固化接线（fix-paper-deviation-contrast 0.1/0.2 + 1.1
+        # 注入）：终态回调注入——executor 三终态经 _finalize → 调度器
+        # _executor_concluded 透传 → 此处固化结题报告落 pt_report
+        # （final 路由与 MCP final=True 的生产供数源）。对照计算器同
+        # 处注入（run_contrast_replay——replay 直跑能力；域方向 L2-H3
+        # 实时域不 import 回放域，装配点在 app 层合法）。固化失败
+        # try/except 与终态迁移解耦：终态是主语义（executor 先落终态
+        # 再回调），固化是增强面——抛错只留痕不回滚不阻断（executor
+        # 层兜底之外此处再收一层，失败归因到「固化」而非笼统
+        # 「结题回调」）
         def _on_paper_task_concluded(task_id: str, status: str) -> None:
             try:
                 from core.paper_trading.reporting import finalize_report
+                from core.replay.runner import run_contrast_replay
 
-                finalize_report(db_path, data_dir, task_id)
+                finalize_report(
+                    db_path, data_dir, task_id,
+                    contrast_runner=run_contrast_replay)
             except Exception:
                 logger.exception(
                     "纸盘任务 %s 结题固化失败（终态不受影响，status=%s）",

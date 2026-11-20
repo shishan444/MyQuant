@@ -774,7 +774,8 @@ def get_report(
     data_dir: Path = Depends(get_data_dir),
 ) -> dict:
     """滚动报告（实时计算不落库；任意状态可取——running 中随时取
-    当前版，三层退化自解释）。"""
+    当前版，三层退化自解释）。偏差对照为 legacy VBT 快算（deviation.
+    contrast_source=legacy_vbt，归因注记第五项披露缺陷差计入 diff）。"""
     try:
         return build_report(db_path, data_dir, task_id)
     except ValueError as exc:
@@ -790,7 +791,9 @@ def get_final(
     db_path: Path = Depends(get_db_path),
 ) -> FinalReportResponse:
     """结题固化版：?version 缺省最新版、?version=1 取结题初版（Q-2
-    版本机制）；未结题→409 "task not concluded"；终态无固化版→404。"""
+    版本机制）；未结题→409 "task not concluded"；终态无固化版→404。
+    偏差对照为回放引擎直跑（deviation.contrast_source=replay——与
+    执行核心同构，diff=纯执行环境差）。"""
     try:
         result = get_final_report(db_path, task_id, version)
     except TaskNotConcludedError as exc:
