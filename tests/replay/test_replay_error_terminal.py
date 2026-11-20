@@ -217,6 +217,111 @@ class TestPrepareFailureLandsErrorTerminal:
         assert task["stopped_at"] is not None
 
 
+class TestRejectDetailPreservation:
+    """CARD-02：真实 _reject 路径详因保留——兜底 _finalize 见幂等
+    标志即返，不覆写 _reject 写入的具体详因。
+
+    真差异面构造（无 mock）：装载链只查 validate_symbol 命名格式面
+    （runner.py 装载链 1-5），不查 PAPER_SYMBOL_WHITELIST 平台白名单
+    （prepare 的挂载双白名单第二道——受理层被绕过时的纵深防线）。
+    XRPUSDT 命名合法+数据自造：装载链全过建行（origin=replay）后
+    prepare 拒绝——_reject 写 symbol_not_supported_by_platform 详因
+    并置终态幂等标志；run() 兜底 except 的 _finalize 见标志即返。
+    既有 TestPrepareFailureLandsErrorTerminal 整体 mock prepare（跳过
+    _reject 详因写入）不覆盖本面——正是本卡盲区。
+    """
+
+    def test_reject_reason_survives_backstop_finalize(self, tmp_path):
+        from core.data.storage import save_parquet
+        from core.persistence.repository.strategy import save_strategy
+        from core.replay.runner import ReplayError
+        from tests.helpers.data_factory import make_dna, make_ohlcv
+
+        env = ReplayEnv(tmp_path, n_bars=600)  # 目录/库基建
+        # XRPUSDT：命名格式面合法（装载链过）+纸盘平台白名单外
+        # （{BTCUSDT, ETHUSDT}——prepare 第二道拒）
+        save_parquet(
+            make_ohlcv(n=600, freq="4h", seed=7, base_price=100.0),
+            env.data_dir / "XRPUSDT_4h.parquet")
+        save_strategy(
+            env.db, strategy_id="st_xrp",
+            # leverage=2 异化 gene_signature：签名不含 symbol/条件值
+            # （dna.py gene_signature 构成），与 env 既有策略行同签名
+            # 会被库去重吞插入（同签名=同实体）
+            dna_json=make_dna(symbol="XRPUSDT", leverage=2).to_json(),
+            symbol="XRPUSDT", timeframe="4h")
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=300)
+
+        with pytest.raises(ReplayError) as ei:
+            rr.run(env.db, "st_xrp", start, end, task_id="rj01")
+
+        # 上抛语义零漂移：prepare 拒绝仍走 REPLAY_PREPARE_FAILED
+        # 客户端语义码（422 通道——与 TestPrepareFailure 同锚）
+        assert ei.value.code == "REPLAY_PREPARE_FAILED"
+        task = paper.get_task(env.db, "rj01")
+        # 行落 error 终态：详因=白名单第二道具体拒绝语（保留），
+        # 非兜底笼统文案（CARD-02 修复前 _finalize 覆写于此）
+        assert task["status"] == "error"
+        assert "symbol_not_supported_by_platform" in task["error_detail"]
+        assert "XRPUSDT" in task["error_detail"]
+        assert "执行器装载校验意外未过" not in task["error_detail"], (
+            "_reject 详因被兜底文案覆写——幂等标志未拦截 _finalize")
+        # _reject 不写时点字段（与 _finalize 的 stopped_at 语义分立）
+        assert task["stopped_at"] is None
+
+
+class TestExternalPreemption:
+    """S-2（CARD-01）：置 running CAS 零命中中止——行被外部写者迁出
+    可启动态（人工 SQL 等状态机外写者）时，闷头驱动=状态-数据背离；
+    run() 记日志中止+REPLAY_TASK_PREEMPTED 上抛；行保持外部所写终态
+    （兜底 _finalize 经 update_task 合法迁移守门零命中——不污染外部
+    终态与 error_detail）；分段驱动未开始——四数据表零新增行。
+    REST 出站 422 由既有装载拒绝用例同通道锚定（同 ReplayError 码族
+    同转换面）。
+    """
+
+    def test_external_terminal_row_aborts_with_preempted(
+            self, tmp_path, monkeypatch):
+        from core.paper_trading.runtime import executor as exec_mod
+        from core.replay.runner import ReplayError
+
+        original = exec_mod.PaperTaskExecutor.prepare
+
+        def prepare_with_external_write(self):
+            ok = original(self)
+            if ok:
+                # 外部写者在装载窗口把行直迁 stopped（合法迁移通道
+                # ——模拟人工 SQL 改库：发生在建行后、CAS 置 running 前）
+                paper.update_task(
+                    self.db_path, self.task_id, status="stopped",
+                    stop_reason="manual_sql")
+            return ok
+
+        monkeypatch.setattr(
+            exec_mod.PaperTaskExecutor, "prepare",
+            prepare_with_external_write)
+        env = ReplayEnv(tmp_path, n_bars=600)
+        rr = ReplayRunner(env.data_dir)
+        start, end = env.range(head_bars=300)
+
+        with pytest.raises(ReplayError) as ei:
+            rr.run(env.db, env.strategy_id, start, end, task_id="pr01")
+
+        assert ei.value.code == "REPLAY_TASK_PREEMPTED"
+        task = paper.get_task(env.db, "pr01")
+        # 行保持外部所写终态——兜底 _finalize 未覆写（stopped→error
+        # 非法迁移，update_task 状态机守门零命中拒写）
+        assert task["status"] == "stopped"
+        assert task["stop_reason"] == "manual_sql"
+        assert task["error_detail"] is None, "兜底 error_detail 污染外部终态"
+        # 分段驱动未开始：四数据表零新增行（零 fill/signal/equity/funding）
+        assert paper.list_fills(env.db, "pr01", limit=10) == []
+        assert paper.list_signals(env.db, "pr01", limit=10) == []
+        assert paper.list_equity_snapshots(env.db, "pr01", limit=10) == []
+        assert paper.list_funding_records(env.db, "pr01", limit=10) == []
+
+
 class TestOriginColumnPropagation:
     """建行传参面（任务 2.1）：回放建行 origin=replay；纸盘 REST 建行
     缺省 paper（同库对照——域标记分流实证）。"""
@@ -228,6 +333,24 @@ class TestOriginColumnPropagation:
         res = rr.run(env.db, env.strategy_id, start, end, task_id="et04")
 
         assert paper.get_task(env.db, res.task_id)["origin"] == "replay"
+
+    def test_invalid_origin_rejected_no_orphan_row(self, tmp_path):
+        """CARD-03：origin 值域外取值写入通道当场拒绝——ValueError
+        且零行入库（不产生静默孤儿行）。合法两值面由本类既有两用例
+        承载（replay 建行落 replay/缺省落 paper）。"""
+        env = ReplayEnv(tmp_path, n_bars=600)
+        before = [t["task_id"] for t in paper.list_tasks(
+            env.db, limit=1000)]
+        with pytest.raises(ValueError, match="origin 值域外"):
+            paper.create_task(
+                env.db, strategy_id=env.strategy_id,
+                dna_snapshot_json=env.dna.to_json(),
+                symbol="BTCUSDT", timeframe="4h",
+                research_status_snapshot="unverified",
+                origin="backtest")
+        after = [t["task_id"] for t in paper.list_tasks(
+            env.db, limit=1000)]
+        assert after == before, "拒绝路径产生了孤儿行"
 
     def test_paper_create_defaults_to_paper(self, tmp_path):
         env = ReplayEnv(tmp_path, n_bars=600)

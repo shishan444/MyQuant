@@ -326,6 +326,41 @@ class TestStopDomainRejection:
         assert row["status"] == "running"
         assert row["stopped_at"] is None
 
+    def test_pending_replay_stop_rejected_untouched(self, tmp_path):
+        """spec Scenario「回放 pending 行拒绝 stop」（CARD-01 补锚）：
+        建行后装载/指标计算窗口（回放线程尚未置 running）——不进
+        未拾取撤销分支（origin=paper 专属），行零触碰（status/
+        stopped_at/stop_reason 逐字段），调度器面 domain_forbidden，
+        REST 出站 409 域不符。
+        """
+        h = _DomainHarness(tmp_path)
+        replay_tid = h.create_task(origin="replay")
+
+        assert h.scheduler.stop_task(replay_tid) == "domain_forbidden"
+        row = paper.get_task(h.db, replay_tid)
+        assert row["status"] == "pending", "replay pending 行被改态"
+        assert row["stopped_at"] is None
+        assert row["stop_reason"] is None
+        assert h.recover_calls == []
+
+        # REST 出站面：409 域不符（pending 装载窗口同拒）
+        from fastapi.testclient import TestClient
+
+        from api.app import create_app
+
+        app = create_app(db_path=h.db, data_dir=h.data_dir)
+        app.state.db_path = h.db
+        app.state.data_dir = h.data_dir
+        app.state.paper_scheduler = h.scheduler
+        resp = TestClient(app).post(
+            f"/api/paper-trading/tasks/{replay_tid}/stop")
+        assert resp.status_code == 409
+        assert "replay" in resp.json()["detail"]
+        after = paper.get_task(h.db, replay_tid)
+        assert after["status"] == "pending"
+        assert after["stopped_at"] is None
+        assert after["stop_reason"] is None
+
     def test_rest_stop_replay_running_409(self, tmp_path):
         from fastapi.testclient import TestClient
 
