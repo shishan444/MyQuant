@@ -22,6 +22,7 @@ from api.routes.research.common import (
     require_known_timeframe,
     require_task_cap_params,
 )
+from core.analysis.errors import require_finite_values
 
 
 @router.post("/backtest-sandbox")
@@ -51,6 +52,34 @@ def backtest_sandbox(
                   if payload.leverage is not None else None),
         margin_cap=payload.margin_cap,
         halt_drawdown_pct=payload.halt_drawdown_pct)
+
+
+def _guarded_replay_payload(
+    payload: ReplayBacktestRequest, result: Any, record_id: str,
+) -> Dict[str, Any]:
+    """组 replay 落库 result 载荷并做有限性守卫（CARD-03/D-2）。
+
+    total_return 计算键（fix-replay-list-channel G-2b）：收益类排序
+    的语义正确性——PnL 代理跨 initial_cash 不可比；历史 replay 行
+    无此键，消费面按缺键降级（排序代理回退）。引擎浮点溢出
+    （final_equity 等 inf/nan）经 require_finite_values 结构化拒绝
+    不落坏行——整体报错，指标不照常返回。
+    """
+    replay_payload: Dict[str, Any] = {
+        "replay": {
+            "task_id": result.task_id, "status": result.status,
+            "stop_reason": result.stop_reason,
+            "bars_processed": result.bars_processed,
+            "total_trades": result.total_trades,
+            "total_pnl": result.total_pnl,
+            "final_balance": result.final_balance,
+            "final_equity": result.final_equity,
+            "total_return": (result.final_equity
+                             / payload.initial_cash - 1)}}
+    require_finite_values(
+        replay_payload, source="validation_records.result",
+        detail={"record_id": record_id, "task_id": result.task_id})
+    return replay_payload
 
 
 def _replay_record_and_response(
@@ -93,21 +122,12 @@ def _replay_record_and_response(
         hypothesis_id="adhoc",
         strategy_id=result.strategy_id,
         params=_json.dumps(record_params, ensure_ascii=False),
-        result=_json.dumps({
-            "replay": {
-                "task_id": result.task_id, "status": result.status,
-                "stop_reason": result.stop_reason,
-                "bars_processed": result.bars_processed,
-                "total_trades": result.total_trades,
-                "total_pnl": result.total_pnl,
-                "final_balance": result.final_balance,
-                "final_equity": result.final_equity,
-                # 收益率计算键（fix-replay-list-channel G-2b）：收益类
-                # 排序的语义正确性——PnL 代理跨 initial_cash 不可比；
-                # 历史 replay 行无此键，消费面按缺键降级（排序代理回退）
-                "total_return": (result.final_equity
-                                 / payload.initial_cash - 1)}},
-            ensure_ascii=False),
+        # 引擎浮点溢出守卫（fix-replay-list-channel CARD-03/D-2）：
+        # 非有限数值结构化拒绝不落坏行——Infinity/NaN 字面量落库炸
+        # 列表读取端；params 侧数值已过 schema le 上界恒有限免同守卫
+        result=_json.dumps(
+            _guarded_replay_payload(payload, result, record_id),
+                            ensure_ascii=False),
         range_hash=hashlib.sha256(_json.dumps(
             {**record_params, "record_id": record_id},
             sort_keys=True).encode()).hexdigest(),

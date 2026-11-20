@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from core.analysis.backtest_bridge import run_backtest_on_range
-from core.analysis.errors import ResearchError
+from core.analysis.errors import ResearchError, require_finite_values
 from core.analysis.isolation import judged_ranges_union
 from core.analysis.registry_meta import derive_warmup_full
 from core.analysis.warmup_loader import TF_MINUTES, to_utc
@@ -407,17 +407,23 @@ def run_sandbox_backtest(
         record_params["halt_drawdown_pct"] = halt_drawdown_pct
     # K1 ④：result_json 纯增 mtf_gated_bars 顶层键（null=无门控面与
     # 0=门控全过严格区分——单份直取，不经旧三份聚合函数）
+    # 引擎浮点溢出守卫（fix-replay-list-channel CARD-03/D-2 同构面）：
+    # metrics 数值来自引擎计算（schema le 上界管不到产出面），非有限
+    # 值结构化拒绝不落坏行；params 侧数值已过 schema 上界恒有限免守卫
+    result_payload = {
+        "metrics": metrics, "symbol": symbol, "timeframe": timeframe,
+        "bars_used": bars_used, "warmup_bars": actual_warmup,
+        "mtf_gated_bars": detail.get("mtf_gated_bars")}
+    require_finite_values(
+        result_payload, source="validation_records.result",
+        detail={"record_id": record_id})
     rr.save_sandbox_validation_record(
         db_path,
         record_id=record_id,
         hypothesis_id=hypothesis_id or "adhoc",
         strategy_id=strategy_id,
         params=json.dumps(record_params, ensure_ascii=False),
-        result=json.dumps({
-            "metrics": metrics, "symbol": symbol, "timeframe": timeframe,
-            "bars_used": bars_used, "warmup_bars": actual_warmup,
-            "mtf_gated_bars": detail.get("mtf_gated_bars")},
-            ensure_ascii=False),
+        result=json.dumps(result_payload, ensure_ascii=False),
         range_hash=_range_hash({**record_params, "record_id": record_id}),
         detail=[_build_detail_payload(
             detail, exec_ref="main", exec_index=0,

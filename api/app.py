@@ -11,14 +11,18 @@ research executor 与 socket.io 实时通道，
 from __future__ import annotations
 
 import logging
+import math
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse
 
 from .auth import RestAuthMiddleware, get_cors_origins, warn_if_no_api_key
 
@@ -36,6 +40,25 @@ try:
     APP_VERSION = _pkg_version("MyQuant")
 except Exception:  # 包未安装（非 editable 运行）时回退常量，与 pyproject 同步维护
     APP_VERSION = "0.16.0"
+
+
+def _sanitize_non_finite(node: Any) -> Any:
+    """递归净化非有限 float（422 出站序列化前置——CARD-03/D-1）。
+
+    客户端 json.dumps 默认 allow_nan=True 可发送 Infinity/NaN 字面量
+    （服务端 json.loads 宽容解析回 float），校验正确拒绝后默认
+    handler 把原始值放进 detail.input——JSONResponse.render 的
+    allow_nan=False dumps 抛 ValueError 兜底 500。净化为字符串形
+    （可序列化且排障信息保留：inf/nan/-inf）。jsonable_encoder
+    产物为纯 JSON 兼容树，递归遍历安全。
+    """
+    if isinstance(node, float):
+        return node if math.isfinite(node) else str(node)
+    if isinstance(node, dict):
+        return {k: _sanitize_non_finite(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_sanitize_non_finite(v) for v in node]
+    return node
 
 
 def _default_db_path(project_root: Path) -> Path:
@@ -260,6 +283,20 @@ def create_app(
     @app.exception_handler(ResearchError)
     async def research_error_exception_handler(request: Request, exc: ResearchError):
         raise research_error_to_http(exc) from exc
+
+    # 请求校验 422 出站净化（fix-replay-list-channel CARD-03/D-1）：
+    # 复刻默认 handler 形制（422+detail 数组），出站前净化非有限
+    # input——防 inf/nan 请求值炸出站序列化兜底 500（见
+    # _sanitize_non_finite docstring）
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_exception_handler(
+        request: Request, exc: RequestValidationError,
+    ):
+        return JSONResponse(
+            status_code=422,
+            content={"detail": _sanitize_non_finite(
+                jsonable_encoder(exc.errors()))},
+        )
 
     # A2 准入中间件：Host 白名单（防 DNS rebinding）+ API key（可选启用）。
     # 注册顺序刻意先于 CORS——add_middleware 为 insert(0)，后注册者更外层，

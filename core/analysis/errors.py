@@ -12,6 +12,7 @@ hypothesis_service re-export 同对象（既有全域 import 面零适配）；
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 
@@ -69,3 +70,47 @@ def load_stored_json(
             f"库内持久化数据损坏：{source} 的 JSON 无法解析",
             detail={**(detail or {}), "parse_error": str(exc)},
         ) from exc
+
+
+def require_finite_values(
+    obj: Any, *, source: str,
+    detail: dict[str, Any] | None = None,
+    code: str = "RESEARCH_RESULT_NON_FINITE",
+) -> None:
+    """落库前数值有限性守卫：递归校验待序列化对象内全部 float 有限。
+
+    与 load_stored_json 成对（读侧解析守卫/写侧序列化守卫）：标准
+    json.dumps 默认 allow_nan=True——inf/nan 输出 Infinity/NaN 落库
+    即非法 JSON 字面量（Python 读端宽容解析回 inf，前端标准
+    JSON.parse 抛 SyntaxError，一行坏数据炸整页记录列表——
+    fix-replay-list-channel CARD-03/D-2）。引擎浮点溢出在此结构化
+    拒绝不落坏行（整体报错，指标不照常返回）。
+
+    Args:
+        obj: 待 json.dumps 的对象（dict/list/float/其他标量递归遍历；
+            float 之外类型直通——int 任意大、str/None/bool 无非有限
+            形态）。
+        source: 落库目标标识（表.字段形制，与 load_stored_json 同款）。
+        detail: 附加上下文（record_id 等），与首坏值路径合并进 detail。
+        code: 错误码（缺省研究域结果码）。
+
+    Raises:
+        ResearchError: 422——detail 点名首个非有限值路径与字符串值形。
+    """
+    stack = [("", obj)]
+    while stack:
+        path, node = stack.pop()
+        if isinstance(node, float):
+            if not math.isfinite(node):
+                raise ResearchError(
+                    code,
+                    f"回测结果含非有限数值，拒绝落库：{source} 的 "
+                    f"{path or '<root>'} = {node!r}",
+                    detail={**(detail or {}), "field": path or "<root>",
+                            "value": str(node)})
+        elif isinstance(node, dict):
+            stack.extend((f"{path}.{k}" if path else str(k), v)
+                         for k, v in node.items())
+        elif isinstance(node, (list, tuple)):
+            stack.extend((f"{path}[{i}]" if path else f"[{i}]", v)
+                         for i, v in enumerate(node))
