@@ -605,22 +605,30 @@ class PaperScheduler:
         写被 run() 侧 CAS 拒绝）；零命中=前态已变（并发拾取置
         running）→重读按现态分流。
 
-        回放域拒绝（fix-replay-task-lifecycle 3.7）：origin=replay 的
-        running 行 409 域不符——回放经同步 REST 调用驱动，调用方持有
-        执行线程，外部 stop 无法传达且会制造终态写入竞态。
+        域守卫否定式前移（fix-replay-task-lifecycle 3.7+审查修复
+        CARD-01）：终态判定后、状态分流前，origin!=paper 一律域
+        不符——域判定与状态无关，pending 装载窗口与 pending→running
+        迁移瞬间同拦（原肯定式守卫只点名 running，replay pending 行
+        溜进撤销分支被直写 stopped，回放线程不知情照常驱动全程——
+        状态-数据背离）。
 
         Returns:
             str: "stopped"（CAS 命中，终局已落笔）｜"stopping"（本进程
             执行器协作停已请求——bar 边界收敛 stopped）｜"terminal"
-            （终态拒绝）｜"domain_forbidden"（replay 域 running 拒绝
+            （终态拒绝）｜"domain_forbidden"（replay 域非终态行拒绝
             ——REST 转 409 域不符）｜"not_found"。
         """
         row = paper_repo.get_task(self.db_path, task_id)
         if row is None:
             return "not_found"
-        status = row["status"]
-        if status == "running" and row.get("origin") == "replay":
+        # 终态优先（对外 terminal detail 零漂移）；非终态域守卫否定式
+        # （与 _launch 域守卫同形制——非 paper 一律拒，盖 pending/
+        # running 全态；五态外脏值按终态拒绝兜住）
+        if row["status"] not in paper_repo.PT_STATUS_ACTIVE:
+            return "terminal"
+        if row.get("origin") != "paper":
             return "domain_forbidden"
+        status = row["status"]
         if status == "pending":
             with self._lock:
                 executor = self._executors.get(task_id)
@@ -635,14 +643,13 @@ class PaperScheduler:
             if hit > 0:
                 return "stopped"
             # 零命中=并发拾取已置 running——按现态分流（孤儿 running
-            # 的 CAS 由 _stop_running 收口）
+            # 的 CAS 由 _stop_running 收口；域不变——origin 非终态
+            # 迁移不改写）
             current = paper_repo.get_task(self.db_path, task_id)
             if current is not None and current["status"] == "running":
                 return self._stop_running(task_id)
             return "terminal"
-        if status == "running":
-            return self._stop_running(task_id)
-        return "terminal"
+        return self._stop_running(task_id)
 
     def _stop_running(self, task_id: str) -> str:
         """running 态停：本进程执行器协作停；无执行器（移交中/启动

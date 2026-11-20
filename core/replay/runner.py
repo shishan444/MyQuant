@@ -281,7 +281,22 @@ class ReplayRunner:
                 # dna 双量纲合法形制冲突（任务 2.2 适配）
                 raise ReplayError(
                     "REPLAY_PREPARE_FAILED", "执行器装载校验意外未过")
-            paper_repo.update_task(db_path, tid, status="running")
+            # 置 running CAS 自检（审查修复 CARD-01/S-2——与纸盘 run()
+            # 启动 CAS 零命中放弃同构）：零命中=行已被外部写者迁出可
+            # 启动态（人工 SQL/未来他写者）——数据写入无状态门（状态
+            # 机守门只管 pt_task.status 字段本身），闷头驱动=状态-数据
+            # 背离，记日志中止驱动并上抛结构化 422
+            hit = paper_repo.update_task(
+                db_path, tid, status="running",
+                expected_status={"pending", "running"})
+            if hit == 0:
+                logger.warning(
+                    "回放任务 %s 置 running 零命中（行被外部改写）"
+                    "——中止驱动", tid)
+                raise ReplayError(
+                    "REPLAY_TASK_PREEMPTED",
+                    "回放任务行启动前已被外部改写，放弃驱动",
+                    detail=f"task_id={tid}")
             # ── 分段驱动（前缀切片形制：每段 process_frames 收到「含全
             # 部历史的前缀帧」+from_idx=段起点——信号窗口完整、循环自然
             # 止于段边界〔range(from_idx, len(前缀))〕；段边界刷新辅帧
