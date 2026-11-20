@@ -22,7 +22,7 @@ from api.routes.research.common import (
     require_known_timeframe,
     require_task_cap_params,
 )
-from core.analysis.errors import require_finite_values
+from core.analysis.errors import ResearchError, require_finite_values
 
 
 @router.post("/backtest-sandbox")
@@ -189,8 +189,9 @@ def backtest_replay(
     # 并发组矛盾拒绝：task_id 是单路固定注入面，每路独立 task_id
     # 语义下不可共享（防静默丢参——传了即拒非忽略）
     if payload.strategy_ids and payload.task_id is not None:
-        from core.analysis.errors import ResearchError
-
+        # ResearchError 用模块级 import（顶部）：函数内局部 import 会
+        # 把名字判为局部变量，except ResearchError 子句求值即
+        # UnboundLocalError（异常路径恒裸 500——2.5 用例实证）
         raise ResearchError(
             "RESEARCH_PARAM_INVALID",
             "并发组（strategy_ids）不支持 task_id——每路独立生成",
@@ -232,11 +233,23 @@ def backtest_replay(
         # 经 research_error_to_http 单源转结构化 4xx（code/message/
         # detail）；STRATEGY_NOT_FOUND 语义映射 404（沿 REST 惯例），
         # 其余装载类拒绝 422
-        from core.analysis.errors import ResearchError
-
         status = 404 if exc.code == "STRATEGY_NOT_FOUND" else 422
         raise ResearchError(
             exc.code, str(exc), status=status, detail=exc.detail) from exc
+    except ResearchError:
+        # 执行段异常（fix-replay-task-lifecycle 2.2/2.3）：runner 兜底
+        # 落 error 终态后已按 ResearchError 语义上抛——直通全局
+        # handler 结构化 5xx，不二次包装
+        raise
+    except Exception as exc:
+        # 执行段兜底收敛（fix-replay-task-lifecycle 2.3）：非
+        # ReplayError/ResearchError 的执行异常（未来路径未转面）同样
+        # 收敛为 ResearchError 语义 5xx——禁裸 500 栈穿透
+        logger.exception("回放端点执行异常（收敛结构化 5xx）")
+        raise ResearchError(
+            "REPLAY_EXECUTION_FAILED",
+            f"回放执行异常: {type(exc).__name__}: {exc}",
+            status=500) from exc
     # 单路/并发组每路统一经 _replay_record_and_response（level=replay
     # 记录行+响应 dict 共用——fail-loud 与 adhoc 语义沿单路不变）
     if batch_ids is not None:

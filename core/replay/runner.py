@@ -9,6 +9,7 @@ P1=验证用临时库）。装载链 1-11 全部在 pt_task 行创建之前完�
 """
 from __future__ import annotations
 
+import logging
 import math
 import uuid
 from dataclasses import dataclass
@@ -28,6 +29,8 @@ from core.strategy.validator import (
     validate_dna,
     validate_trading_compatibility,
 )
+
+logger = logging.getLogger("replay")
 
 
 class ReplayError(Exception):
@@ -243,7 +246,8 @@ class ReplayRunner:
             initial_cash=initial_cash, fee=fee, slippage=slippage,
             leverage=leverage, window_bars=window_bars,
             stop_loss_pct=stop_loss_pct,
-            halt_drawdown_pct=halt_drawdown_pct, task_id=tid)
+            halt_drawdown_pct=halt_drawdown_pct, task_id=tid,
+            origin="replay")
         from core.paper_trading.runtime.executor import PaperTaskExecutor
         from core.paper_trading.runtime.feed import FeedRegistry
 
@@ -276,13 +280,29 @@ class ReplayRunner:
         # 止于段边界〔range(from_idx, len(前缀))〕；段边界刷新辅帧
         # 引用即重建可见性，与全帧单段特例同构）──
         main = feeder.main
-        for seg_start, seg_end, aux_frames in feeder.segments():
-            executor._aux_frames.update(aux_frames)
-            prefix = main.iloc[:seg_end + 1]
-            executor.process_frames(
-                prefix, seg_start, throttle_seconds=throttle_seconds)
-            if executor._concluded_status is not None:
-                break
+        try:
+            for seg_start, seg_end, aux_frames in feeder.segments():
+                executor._aux_frames.update(aux_frames)
+                prefix = main.iloc[:seg_end + 1]
+                executor.process_frames(
+                    prefix, seg_start, throttle_seconds=throttle_seconds)
+                if executor._concluded_status is not None:
+                    break
+        except Exception as exc:
+            # 执行段异常兜底（fix-replay-task-lifecycle 2.2——与纸盘
+            # run() 异常面同构）：先落 error 终态再上抛，行不残
+            # running。_finalize 幂等（_finalized 标志）——先行终态
+            # （本段窗口到点/停止条件后清理路径异常）不重复迁移不
+            # 覆盖既有终态与 error_detail。上抛转 ResearchError 语义
+            # 5xx（全局 handler research_error_to_http 结构化出站，
+            # 禁裸 500 栈穿透）。
+            logger.exception("回放任务 %s 执行段异常", tid)
+            executor._finalize(
+                "error", error_detail=f"{type(exc).__name__}: {exc}")
+            raise ResearchError(
+                "REPLAY_EXECUTION_FAILED",
+                f"回放执行段异常: {type(exc).__name__}: {exc}",
+                status=500, detail={"task_id": tid}) from exc
         if executor._concluded_status is None:
             executor._finalize("completed")  # 区间自然耗尽
         return self._collect(db_path, tid, strategy_id, start, end,

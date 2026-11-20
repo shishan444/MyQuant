@@ -205,6 +205,13 @@ def backfill_terminal_funding(
         task = paper_repo.get_task(db_path, tid)
         if task is None:
             continue
+        # origin 域过滤（fix-replay-task-lifecycle 3.6）：回放行的
+        # pending funding 结算点不被实时 registry 费率回补——回放账目
+        # 的费率以历史归档为准，缺口如实留 pending 披露（不以后来
+        # 费率伪造补齐），也不触发报告修订回调错域。逐任务独立判定
+        # （无聚合选取语义，循环内跳过与查询域排除等价）。
+        if task.get("origin") != "paper":
+            continue
         pendings = paper_repo.list_funding_records(
             db_path, task["task_id"], limit=100_000, status="pending")
         if not pendings:
