@@ -427,4 +427,112 @@ describe("Trading page", () => {
 
     expect(mockUseDeleteTradingTask).toHaveBeenCalled();
   });
+
+  // --- 对照源标签（fix-paper-deviation-contrast design §3：diff 呈现带
+  // 对照源标签——两形分形+旧报告无键兼容+降级态同样披露）---
+  /** 报告 fixture（MetricsDashboard 消费 performance 四键+偏差层全键） */
+  function makeReport(deviation: Record<string, unknown>) {
+    return {
+      task_id: "t1",
+      strategy_id: "11111111-2222-3333-4444-555555555555",
+      status: "running",
+      generated_at: "2026-01-02T00:00:00Z",
+      performance: {
+        annual_return: 0.4, win_rate: 0.5, profit_factor: 1.2,
+        max_drawdown: -0.1,
+      },
+      deviation: {
+        backtest: null,
+        diff: { total_return: 0.01, sharpe_ratio: 0.1, max_drawdown: 0.0, win_rate: 0.0 },
+        contrast_source: "legacy_vbt",
+        unavailable_reason: null,
+        attribution_notes: [],
+        ...deviation,
+      },
+      evidence: {},
+    } as any;
+  }
+
+  /** 展开偏差对照折叠面板（antd Collapse 默认折叠，children 懒挂载） */
+  async function openDeviationPanel() {
+    fireEvent.click(screen.getByText("偏差对照层（模拟 vs 同区间回测预期）"));
+  }
+
+  /** 选中指定任务（stopped 任务不自动选中——点击任务卡 title 锚） */
+  function selectTask(strategyId: string) {
+    fireEvent.click(screen.getByTitle(strategyId));
+  }
+
+  it("renders legacy VBT contrast label on rolling report", async () => {
+    const task = makeTask({ task_id: "t1", status: "running" });
+    mockUseTradingTasks.mockReturnValue({
+      data: { tasks: [task], total: 1 },
+      isLoading: false, isError: false, isSuccess: true,
+    } as any);
+    mockUseTradingReport.mockReturnValue(
+      emptyQuery(makeReport({ contrast_source: "legacy_vbt" })) as any);
+
+    render(<Trading />, { wrapper: createWrapper() });
+    await openDeviationPanel();
+    expect(screen.getByText(/对照源：legacy VBT（已知缺陷差计入 diff）/))
+      .toBeInTheDocument();
+  });
+
+  it("renders replay contrast label on final report", async () => {
+    const task = makeTask({ task_id: "t1", status: "stopped" });
+    mockUseTradingTasks.mockReturnValue({
+      data: { tasks: [task], total: 1 },
+      isLoading: false, isError: false, isSuccess: true,
+    } as any);
+    mockUseTradingFinalReport.mockReturnValue(emptyQuery({
+      report_version: 1,
+      generated_at: "2026-01-02T00:00:00Z",
+      as_of: "2026-01-02T00:00:00Z",
+      report: makeReport({
+        contrast_source: "replay",
+        backtest: { total_return: 0.05 },
+      }),
+    }) as any);
+
+    render(<Trading />, { wrapper: createWrapper() });
+    selectTask("11111111-2222-3333-4444-555555555555");
+    await openDeviationPanel();
+    expect(screen.getByText(/对照源：回放引擎（与执行核心同构，diff=纯执行环境差）/))
+      .toBeInTheDocument();
+  });
+
+  it("renders no contrast label for legacy report without key", async () => {
+    const task = makeTask({ task_id: "t1", status: "running" });
+    mockUseTradingTasks.mockReturnValue({
+      data: { tasks: [task], total: 1 },
+      isLoading: false, isError: false, isSuccess: true,
+    } as any);
+    // 旧报告无 contrast_source 键（纯增键向后兼容——types 注释契约）
+    mockUseTradingReport.mockReturnValue(emptyQuery(makeReport({
+      contrast_source: undefined,
+    })) as any);
+
+    render(<Trading />, { wrapper: createWrapper() });
+    await openDeviationPanel();
+    expect(screen.queryByText(/对照源：/)).not.toBeInTheDocument();
+  });
+
+  it("renders contrast label on degraded deviation too", async () => {
+    const task = makeTask({ task_id: "t1", status: "stopped" });
+    mockUseTradingTasks.mockReturnValue({
+      data: { tasks: [task], total: 1 },
+      isLoading: false, isError: false, isSuccess: true,
+    } as any);
+    mockUseTradingReport.mockReturnValue(emptyQuery(makeReport({
+      contrast_source: "replay",
+      unavailable_reason: "RESEARCH_DATA_INSUFFICIENT: 区间数据不足",
+      diff: { total_return: null, sharpe_ratio: null, max_drawdown: null, win_rate: null },
+    })) as any);
+
+    render(<Trading />, { wrapper: createWrapper() });
+    selectTask("11111111-2222-3333-4444-555555555555");
+    await openDeviationPanel();
+    expect(screen.getByText(/对照不可用：/)).toBeInTheDocument();
+    expect(screen.getByText(/对照源：回放引擎/)).toBeInTheDocument();
+  });
 });

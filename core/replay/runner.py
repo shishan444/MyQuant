@@ -373,3 +373,51 @@ class ReplayRunner:
             halt_reason=row.get("halt_reason"),
             first_met_at=row.get("first_met_at"),
         )
+
+
+def run_contrast_replay(
+    data_dir: Path,
+    dna,
+    start: str,
+    end: str,
+    *,
+    fee: float,
+    slippage: float,
+    initial_cash: float,
+    leverage: int,
+    window_bars: Optional[int] = None,
+    stop_loss_pct: Optional[float] = None,
+    halt_drawdown_pct: Optional[float] = None,
+) -> tuple[Dict[str, Any], list, list]:
+    """final 偏差对照直跑（fix-paper-deviation-contrast 1.1）。
+
+    纸盘结题报告的对照源能力：同参数（内存 DNA+费滑/资金/杠杆覆写
+    +任务区间）逐根回放直跑。回放行落临时库（run 建行 origin=replay
+    ——不污染生产任务域），跑毕读回明细三件套（任务行/权益行/成交
+    行——对照成绩由调用方同口径组装），TemporaryDirectory 随段清理。
+    装载/执行失败原样抛 ReplayError/ResearchError（降级翻译归调用方
+    ——本函数是 replay 域的能力出口，不 import 报告语义）。
+
+    域方向（L2-H3：实时域不依赖回放域）：本函数经装配点注入到达
+    core/paper_trading/reporting.py（final 对照计算器参数），报告器
+    不直接 import replay 包。
+    """
+    import tempfile
+
+    from core.persistence.db_ext import init_db_ext
+
+    with tempfile.TemporaryDirectory(prefix="paper_contrast_") as tmp:
+        replay_db = Path(tmp) / "contrast.db"
+        init_db_ext(replay_db)
+        result = ReplayRunner(data_dir).run_from_dna(
+            replay_db, dna, start, end,
+            fee=fee, slippage=slippage, initial_cash=initial_cash,
+            leverage=leverage, window_bars=window_bars,
+            stop_loss_pct=stop_loss_pct,
+            halt_drawdown_pct=halt_drawdown_pct)
+        task_row = paper_repo.get_task(replay_db, result.task_id) or {}
+        equity_rows = paper_repo.list_equity_snapshots(
+            replay_db, result.task_id, limit=10**9)
+        fill_rows = paper_repo.list_fills(
+            replay_db, result.task_id, limit=10**9)
+        return task_row, equity_rows, fill_rows

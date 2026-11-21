@@ -8,11 +8,18 @@
   组装；「出场类」判据=realized_pnl 非 NULL（kernel 对 close/exit_*/reduce
   全部回填 realized_pnl，与回测引擎 vbt trades 含部分出场记录的口径
   对齐——受控等价层 8.1 前置）；
-- 偏差对照层——同策略同任务参数在任务运行区间以回测引擎计算预期成绩
-  （run_backtest_on_range 桥；dna_override=deepcopy 快照后写入
-  task.leverage——bridge 无 leverage 参数，任务覆写经 DNA 副本传入，
-  bridge 零改动）；对照失败（ResearchError）该层标 unavailable 而不使
-  整份报告失败；
+- 偏差对照层——同策略同任务参数在任务运行区间计算预期成绩，按报告
+  形态分形对照源（fix-paper-deviation-contrast）：final（结题固化/
+  修订）走 ReplayRunner 同参数直跑（临时库隔离回放行；与执行核心
+  同构——diff=纯执行环境差，REDUCE 族策略不混入对照引擎缺陷差）；
+  rolling（滚动实时计算）维持 run_backtest_on_range 桥（legacy VBT
+  秒级快算——滚动「随时取」承诺 × replay 分钟级不可行）+第五注记
+  披露缺陷差计入 diff。两形均带 contrast_source 字段（replay/
+  legacy_vbt）。origin=replay 任务行在计算入口判域排除（回放即对照
+  工具无对照轴——语义裁决）。dna_override=deepcopy 快照后写入
+  task.leverage——两通道均无 leverage 参数，任务覆写经 DNA 副本传入
+  （bridge/replay 零改动）；对照计算性失败（ResearchError/ReplayError
+  ）该层标 unavailable 而不使整份报告失败；
 - 证据强度层——60/5 双阈值（constants 单源）+research_status 查询期
   现算（§9.2 四值，build-strategy-lifecycle 5.3：三序解析迁移后随动；
   策略行已删回退任务行快照列=创建时点审计事实兜底）+funding 三态两
@@ -27,6 +34,7 @@ verdict/feasible/recommendation 自动判定字段（考场无观点，D3/D10）
 from __future__ import annotations
 
 import json
+import logging
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -40,6 +48,8 @@ from core.paper_trading.constants import PAPER_MIN_BARS, PAPER_MIN_TRADES
 from core.persistence.repository import paper
 from core.persistence.timestamps import utc_now_iso
 from core.scoring.metrics import compute_metrics
+
+logger = logging.getLogger("paper_runtime")
 
 # 结题终态（固化/修订/取 final 的统一门槛；未结题 → TaskNotConcludedError，
 # REST 层组 5 转 409 "task not concluded"）——paper 单点常量别名
@@ -80,6 +90,9 @@ def build_report(
 ) -> Dict[str, Any]:
     """滚动报告（实时计算不落库；任意状态可取——running 中随时取当前版）。
 
+    偏差对照层为 rolling 形态：legacy VBT 桥秒级快算+第五注记披露
+    （架构约束：滚动「随时取」承诺 × replay 分钟级不可行）。
+
     Args:
         db_path: 工程数据库路径。
         data_dir: 行情数据目录（偏差对照层装载回测区间用）。
@@ -94,17 +107,27 @@ def build_report(
     """
     task = _require_task(db_path, task_id)
     return _assemble_report(
-        db_path, data_dir, task, generated_at or utc_now_iso())
+        db_path, data_dir, task, generated_at or utc_now_iso(),
+        form="rolling")
 
 
 def finalize_report(
     db_path: Path, data_dir: Path, task_id: str, *,
     generated_at: Optional[str] = None,
+    contrast_runner: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """结题固化（version=1）：三终态时生成完整报告落 pt_report。
 
-    调用方=调度器/执行器在终态迁移点（组 3 接线）；error 态保留已产出
+    调用方=app 装配的终态回调（app.py lifespan 注入 on_concluded——
+    executor 三终态经 _finalize→调度器透传触发；不经回调的终态路径
+    〔stop 的 CAS 直写/恢复清场转 error〕不固化）。error 态保留已产出
     数据同样出报告。
+
+    Args:
+        contrast_runner: final 对照计算器（replay 直跑能力——
+            core.replay.runner.run_contrast_replay；域方向 L2-H3：实时
+            域不 import 回放域，经装配点注入到达。缺省 None 时 final
+            对照 unavailable〔原因明示非静默〕）。
 
     Raises:
         ValueError: 任务不存在。
@@ -112,7 +135,9 @@ def finalize_report(
     """
     task = _require_final(_require_task(db_path, task_id))
     ts = generated_at or utc_now_iso()
-    report = _assemble_report(db_path, data_dir, task, ts)
+    report = _assemble_report(
+        db_path, data_dir, task, ts, form="final",
+        contrast_runner=contrast_runner)
     paper.save_report(
         db_path, task_id, report_version=1, generated_at=ts, as_of=ts,
         report_json=json.dumps(report, ensure_ascii=False))
@@ -122,6 +147,7 @@ def finalize_report(
 def regenerate_final_report(
     db_path: Path, data_dir: Path, task_id: str, *,
     generated_at: Optional[str] = None,
+    contrast_runner: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """终态后补记触发的修订版（design §4.5：恒 version=2 重算覆盖）。
 
@@ -131,13 +157,20 @@ def regenerate_final_report(
     None）。终态后补记不改成绩（不动 balance/曲线），v1/v2 的
     performance 层逐键相同——报告由此自解释「为何存在 v2 而数字未变」。
 
+    Args:
+        contrast_runner: final 对照计算器（同 finalize_report——装配点
+            注入；本函数当前生产零调用，终态后补记修订路径接线属既有
+            缺口、不属本 change）。
+
     Raises:
         ValueError: 任务不存在。
         TaskNotConcludedError: 任务未结题。
     """
     task = _require_final(_require_task(db_path, task_id))
     ts = generated_at or utc_now_iso()
-    report = _assemble_report(db_path, data_dir, task, ts)
+    report = _assemble_report(
+        db_path, data_dir, task, ts, form="final",
+        contrast_runner=contrast_runner)
     paper.save_report(
         db_path, task_id, report_version=2, generated_at=ts, as_of=ts,
         report_json=json.dumps(report, ensure_ascii=False))
@@ -151,7 +184,8 @@ def get_final_report(
 
     Returns:
         {task_id, report_version, generated_at, as_of, report}；终态而
-        无固化版返回 None（结题即固化为调度器契约，此处不代偿补算）。
+        无固化版返回 None（固化由终态回调异步落库——不经回调的终态
+        路径可能无固化版，此处不代偿补算）。
 
     Raises:
         ValueError: 任务不存在。
@@ -195,9 +229,17 @@ def _require_final(task: Dict[str, Any]) -> Dict[str, Any]:
 
 def _assemble_report(
     db_path: Path, data_dir: Path, task: Dict[str, Any],
-    generated_at: str,
+    generated_at: str, *, form: str,
+    contrast_runner: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """三层组装（全量读三明细表→三层→顶层 schema）。"""
+    """三层组装（全量读三明细表→三层→顶层 schema）。
+
+    Args:
+        form: 报告形态（"rolling"=build_report 滚动版；"final"=
+            finalize/regenerate 终态固化版——偏差对照层分形依据）。
+        contrast_runner: final 对照计算器（replay 直跑能力，装配点
+            注入；rolling 形态不用）。
+    """
     tid = task["task_id"]
     equity_rows = paper.list_equity_snapshots(db_path, tid, limit=_NO_LIMIT)
     fill_rows = paper.list_fills(db_path, tid, limit=_NO_LIMIT)
@@ -211,7 +253,8 @@ def _assemble_report(
     evidence = _evidence_layer(
         db_path, task, equity_rows, fill_rows, exit_fills, funding_rows)
     deviation = _deviation_layer(
-        db_path, data_dir, task, equity_rows, paper_side, evidence)
+        db_path, data_dir, task, equity_rows, paper_side, evidence,
+        form=form, contrast_runner=contrast_runner)
     # 第四键 qualification（paper-trading-revamp 组 C：三维终判段——
     # 既有三键不动；旧报告无此键合法）
     from core.paper_trading.qualification import build_qualification_section
@@ -289,49 +332,76 @@ def _deviation_layer(
     equity_rows: List[Dict[str, Any]],
     paper_side: Dict[str, Any],
     evidence: Dict[str, Any],
+    *,
+    form: str,
+    contrast_runner: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """偏差对照层（design §6.4）：任务区间回测预期成绩+diff+归因披露。
+    """偏差对照层（design §6.4）：任务区间对照预期成绩+diff+归因披露。
 
-    对照失败（ResearchError——数据不足/warmup 不足）该层标 unavailable
-    （backtest=null+unavailable_reason），整份报告不失败。
+    两形对照源（fix-paper-deviation-contrast）：final（结题固化/修订）
+    走 ReplayRunner 同参数直跑（与执行核心同构——diff=纯执行环境差）；
+    rolling 维持 legacy VBT 桥+第五注记披露缺陷差。对照计算性失败
+    （ResearchError/ReplayError——数据不足/warmup 不足/装载拒绝）该层
+    标 unavailable（backtest=null+unavailable_reason），整份报告不失败。
+
+    Args:
+        form: 报告形态（"final"|"rolling"——对照源分形依据）。
     """
-    notes = _attribution_notes(evidence)
-    empty_diff = {k: None for k in _DIFF_KEYS}
+    contrast_source = "replay" if form == "final" else "legacy_vbt"
+    notes = _attribution_notes(
+        evidence, legacy_contrast=form == "rolling")
+    # 计算入口判域（fix-paper-deviation-contrast 1.0）：origin=replay
+    # 任务行不进 deviation 计算——回放任务本身即对照工具，「预期成绩」
+    # 无定义良好的对照轴（语义裁决）；判据用 origin 域标记单源常量
+    # （C1 落地后形态；此前 started_at is None 代理判据退役——回放行
+    # 走 process_frames 不经 executor.run() 恒 NULL，与域标记恒等）
+    if task.get("origin") == paper.PT_ORIGIN_REPLAY:
+        return _unavailable(
+            "回放任务不适用实时偏差对照（回放无实时对照语义）",
+            notes, contrast_source=None)
     started_at = task["started_at"]
     if started_at is None or not equity_rows:
-        # 降级文案按来源域分形（fix-replay-task-lifecycle 4.1）：回放
-        # 走 process_frames 不经 executor.run()，started_at 恒 NULL——
-        # 已终态回放任务落此分支时「任务尚未开始」是误导表述；回放域
-        # 给准确语（回放本身就是回测口径，无「实时 vs 回测」偏差语义）
-        if task.get("origin") == "replay":
-            reason = "回放任务不适用实时偏差对照（回放无实时对照语义）"
-        else:
-            reason = "任务尚未开始或无权益数据，无对照区间"
-        return {
-            "backtest": None,
-            "diff": empty_diff,
-            "unavailable_reason": reason,
-            "attribution_notes": notes,
-        }
+        return _unavailable(
+            "任务尚未开始或无权益数据，无对照区间", notes,
+            contrast_source=contrast_source)
 
-    # start=任务 started_at 所在 bar（floor 到周期网格——bridge 按
+    # start=任务 started_at 所在 bar（floor 到周期网格——对照按
     # index >= start 切区间，对齐到所在 bar 开盘时刻才包含该 bar）；
     # end=当前最后 bar（滚动）/结题 bar（终态）——同为 pt_equity 末行
     tf_seconds = TF_SECONDS[task["timeframe"]]
     start = pd.Timestamp(started_at).floor(f"{tf_seconds}s").isoformat()
     end = equity_rows[-1]["bar_time"]
 
-    from core.analysis.backtest_bridge import run_backtest_on_range
     from core.strategy.dna import StrategyDNA
 
-    # 杠杆缝隙处理（design §6.4）：bridge 无 leverage 参数，回测引擎读
-    # DNA risk_genes.leverage——deepcopy 快照后写入任务覆写值，bridge 零改动
+    # 对照 DNA 副本：各通道只把自己消费的 DNA 键对齐任务行（写入位
+    # 即文档）。rolling：VBT 桥无 leverage 参数、真读 DNA
+    # risk_genes.leverage——副本写入任务覆写值（通道零改动）；symbol
+    # 经参数位显式传任务行值。final：run() 有 leverage 参数位，任务
+    # 行值经 _final_deviation 直传（executor 以任务行为准）；symbol
+    # 从 DNA execution_genes 派生（runner.run 单源汇聚点）——副本对
+    # 齐任务行 symbol，挂盘 body.symbol 覆写场景下对照轴不混入品种
+    # 差、两通道基准同源
     # TD-02 点位 8：dna_snapshot_json 损坏属工程错误——结构化拒绝使
     # 报告生成显式失败，不走 unavailable 降级（工程错误≠计算性失败）
     dna_override = deepcopy(StrategyDNA.from_dict(load_stored_json(
         task["dna_snapshot_json"], source="pt_task.dna_snapshot_json",
         detail={"task_id": task["task_id"]},
         code="PAPER_STORED_DATA_INVALID")))
+
+    if form == "final":
+        # final 消费 execution_genes.symbol（leverage 经参数位直传）
+        dna_override.execution_genes.symbol = task["symbol"]
+        return _final_deviation(
+            data_dir, task, start, end, dna_override, paper_side, notes,
+            contrast_runner=contrast_runner)
+
+    # rolling：legacy VBT 桥（秒级快算——架构约束：滚动实时计算承诺）
+    from core.analysis.backtest_bridge import run_backtest_on_range
+
+    # 杠杆缝隙处理（design §6.4）：VBT 桥无 leverage 参数，读 DNA
+    # risk_genes.leverage——副本写入任务覆写值（通道零改动）。symbol
+    # 经参数位显式传任务行值
     dna_override.risk_genes.leverage = int(task["leverage"])
 
     try:
@@ -343,12 +413,9 @@ def _deviation_layer(
             slippage=task["slippage"],
         )
     except ResearchError as exc:
-        return {
-            "backtest": None,
-            "diff": empty_diff,
-            "unavailable_reason": f"{exc.code}: {exc.message}",
-            "attribution_notes": notes,
-        }
+        return _unavailable(
+            f"{exc.code}: {exc.message}", notes,
+            contrast_source=contrast_source)
 
     diff = {
         key: (
@@ -359,22 +426,134 @@ def _deviation_layer(
     return {
         "backtest": bt_metrics,
         "diff": diff,
+        "contrast_source": contrast_source,
         "unavailable_reason": None,
         "attribution_notes": notes,
     }
 
 
-def _attribution_notes(evidence: Dict[str, Any]) -> List[str]:
-    """归因披露固定四项（design §6.4：两引擎已知口径差+挂起补记披露）。"""
+def _unavailable(
+    reason: str, notes: List[str], *,
+    contrast_source: Optional[str],
+) -> Dict[str, Any]:
+    """对照降级构造器（backtest=null+diff 全 None+原因）。
+
+    contrast_source 语义：本报告形态的对照引擎（按 form 恒定——
+    rolling=legacy_vbt/final=replay，降级时同样披露「本形态会用哪个
+    引擎」）；仅 replay 判域排除（无对照轴）为 None。
+    """
+    return {
+        "backtest": None,
+        "diff": {k: None for k in _DIFF_KEYS},
+        "contrast_source": contrast_source,
+        "unavailable_reason": reason,
+        "attribution_notes": notes,
+    }
+
+
+def _final_deviation(
+    data_dir: Path,
+    task: Dict[str, Any],
+    start: str,
+    end: str,
+    dna_override: Any,
+    paper_side: Dict[str, Any],
+    notes: List[str],
+    *,
+    contrast_runner: Optional[Any],
+) -> Dict[str, Any]:
+    """final 对照（fix-paper-deviation-contrast 1.1）：replay 直跑
+    经注入到达（DNA 快照+leverage/费滑/资金覆写+任务区间）。
+
+    contrast_runner=core.replay.runner.run_contrast_replay（同参数
+    直跑，回放行落临时库不污染生产任务域，跑毕读回明细三件套——
+    域方向 L2-H3：实时域不 import 回放域，经装配点注入）。对照成绩
+    组装复用 _performance_layer（compute_metrics 单源+区间口径
+    total_return——与纸盘侧同公式同口径，diff=纯执行环境差）。
+    注入函数错误族对报告器不可知——宽 Exception 捕获降级
+    unavailable（计算性失败语义——不炸报告，原因含异常类名）。
+    """
+    if contrast_runner is None:
+        return _unavailable(
+            "final 对照计算器未装配（contrast_runner=None——装配点 "
+            "app.py 终态回调注入）", notes, contrast_source="replay")
+    try:
+        replay_task, replay_equity, replay_fills = contrast_runner(
+            data_dir, dna_override, start, end,
+            fee=task["fee"], slippage=task["slippage"],
+            initial_cash=task["initial_cash"],
+            leverage=int(task["leverage"]),
+            window_bars=task["window_bars"],
+            stop_loss_pct=task["stop_loss_pct"],
+            halt_drawdown_pct=task["halt_drawdown_pct"])
+    except Exception as exc:  # noqa: BLE001——注入边界，错误族不可知
+        # 完整异常本层落日志后丢弃原文（app 回调层只接 finalize_report
+        # 上抛，本分支降级不上抛——留痕须在丢弃前）。reason：受控族
+        # （带 code——构造点全为固定中文文案+参数值）保留「类名: 原
+        # 文」；非受控只记类名——原文可能携临时目录绝对路径/系统用
+        # 户名，将永久固化进报告并经 MCP 透传/导出外泄。code 属性鸭
+        # 子判据——L2-H3 域隔离下 reporting 不 import ReplayError
+        logger.exception("final 对照计算失败（task=%s）",
+                         task.get("task_id"))
+        reason = (f"{type(exc).__name__}: {exc}"
+                  if getattr(exc, "code", None) is not None
+                  else type(exc).__name__)
+        return _unavailable(reason, notes, contrast_source="replay")
+    replay_exits = [f for f in replay_fills
+                    if f["realized_pnl"] is not None]
+    metrics, replay_side = _performance_layer(
+        replay_task, replay_equity, replay_exits)
+
+    diff = {
+        key: (None if paper_side[key] is None or replay_side[key] is None
+              else float(paper_side[key] - replay_side[key]))
+        for key in _DIFF_KEYS
+    }
+    # backtest 键=对照成绩（compute_metrics 输出+区间口径 total_return
+    # 并入——diff 四键与 backtest 键可对拍，与 VBT 形制消费面兼容）
+    backtest = dict(metrics)
+    backtest["total_return"] = replay_side["total_return"]
+    return {
+        "backtest": backtest,
+        "diff": diff,
+        "contrast_source": "replay",
+        "unavailable_reason": None,
+        "attribution_notes": notes,
+    }
+
+
+def _attribution_notes(
+    evidence: Dict[str, Any], *, legacy_contrast: bool,
+) -> List[str]:
+    """归因披露：两侧已知口径差+挂起补记披露（按对照源分形）。
+
+    legacy（rolling）四项+第五项（对照引擎缺陷差计入 diff——spec
+    披露义务）；replay（final）与执行核心同构，清算无已知口径差不
+    列，资金费为数据面差（实时 vs 历史归档）——「如实列明」按形态
+    取实（VBT 时代的「固定 0.001 估算」「无杠杆曲线等效线」对回放
+    对照不成立，照抄即失实陈述）。
+    """
     settled = evidence["funding_settled_points"]
     pending = evidence["funding_pending_points"]
+    backfill_note = (f"资金费挂起补记：{settled} 点已补记、"
+                     f"{pending if pending is not None else 0} 点待补"
+                     "（补记时点前权益略高）")
+    if legacy_contrast:
+        return [
+            "资金费：纸盘按真实资金费率逐点结算，回测按固定 0.001 估算",
+            "清算：纸盘按仓位口径逐 bar 分层判定，回测为无杠杆曲线"
+            "等效线",
+            "对照区间边界：回测按 bar 闭合序列取区间，纸盘按任务起止"
+            " bar",
+            backfill_note,
+            "对照引擎为 legacy VBT——其已知缺陷差（如减仓不终止）"
+            "计入 diff",
+        ]
     return [
-        "资金费：纸盘按真实资金费率逐点结算，回测按固定 0.001 估算",
-        "清算：纸盘按仓位口径逐 bar 分层判定，回测为无杠杆曲线等效线",
-        "对照区间边界：回测按 bar 闭合序列取区间，纸盘按任务起止 bar",
-        (f"资金费挂起补记：{settled} 点已补记、"
-         f"{pending if pending is not None else 0} 点待补"
-         "（补记时点前权益略高）"),
+        "资金费：纸盘按实时资金费率逐点结算，对照回放按历史归档费率"
+        "（缺档挂起不扣）",
+        "对照区间边界：回放按 bar 闭合序列取区间，纸盘按任务起止 bar",
+        backfill_note,
     ]
 
 

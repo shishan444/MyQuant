@@ -727,12 +727,22 @@ function fmtNum(v: number | null | undefined, digits = 4): string {
   return v == null ? "-" : v.toFixed(digits);
 }
 
-/** 偏差对照层：diff 关键四指标差值（模拟−回测）+归因披露 */
+/** 对照源标签文案（fix-paper-deviation-contrast：diff 语义随引擎分形） */
+const CONTRAST_SOURCE_LABELS: Record<string, string> = {
+  replay: "对照源：回放引擎（与执行核心同构，diff=纯执行环境差）",
+  legacy_vbt: "对照源：legacy VBT（已知缺陷差计入 diff）",
+};
+
+/** 偏差对照层：diff 关键四指标差值（模拟−回测）+对照源标签+归因披露 */
 function DeviationLayer({ deviation }: { deviation: NonNullable<Parameters<typeof MetricsDashboard>[0]["report"]>["deviation"] }) {
+  const contrastLabel = deviation.contrast_source
+    ? CONTRAST_SOURCE_LABELS[deviation.contrast_source]
+    : null;
   if (deviation.unavailable_reason) {
     return (
       <div className="text-xs text-text-muted space-y-1">
         <p>对照不可用：{deviation.unavailable_reason}</p>
+        {contrastLabel && <p className="text-text-secondary">{contrastLabel}</p>}
         <ul className="list-disc pl-4 space-y-0.5">
           {deviation.attribution_notes.map((n) => (
             <li key={n}>{n}</li>
@@ -749,6 +759,7 @@ function DeviationLayer({ deviation }: { deviation: NonNullable<Parameters<typeo
   ];
   return (
     <div className="space-y-2">
+      {contrastLabel && <p className="text-[10px] text-text-secondary">{contrastLabel}</p>}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
         {diffs.map((d) => (
           <div key={d.label} className="rounded border border-border-default px-2 py-1.5">
