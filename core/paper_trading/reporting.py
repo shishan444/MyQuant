@@ -383,6 +383,12 @@ def _deviation_layer(
     dna_override.risk_genes.leverage = int(task["leverage"])
 
     if form == "final":
+        # final：replay 直跑 symbol 从 DNA execution_genes 派生（runner.run
+        # 单源汇聚点），任务行 symbol 为 body.symbol 覆写值时对照轴混入
+        # 品种差——副本对齐后 replay 建行/装载/执行全链按任务行品种。
+        # leverage 经 run() 参数位直传任务行值（executor 以任务行为准）
+        # ——无需写入副本。
+        dna_override.execution_genes.symbol = task["symbol"]
         return _final_deviation(
             data_dir, task, start, end, dna_override, paper_side, notes,
             contrast_runner=contrast_runner)
