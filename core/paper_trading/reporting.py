@@ -371,23 +371,23 @@ def _deviation_layer(
 
     from core.strategy.dna import StrategyDNA
 
-    # 杠杆缝隙处理（design §6.4）：两对照通道均无 leverage 参数，
-    # 回测/回放引擎读 DNA risk_genes.leverage——deepcopy 快照后写入
-    # 任务覆写值，通道零改动
+    # 对照 DNA 副本：各通道只把自己消费的 DNA 键对齐任务行（写入位
+    # 即文档）。rolling：VBT 桥无 leverage 参数、真读 DNA
+    # risk_genes.leverage——副本写入任务覆写值（通道零改动）；symbol
+    # 经参数位显式传任务行值。final：run() 有 leverage 参数位，任务
+    # 行值经 _final_deviation 直传（executor 以任务行为准）；symbol
+    # 从 DNA execution_genes 派生（runner.run 单源汇聚点）——副本对
+    # 齐任务行 symbol，挂盘 body.symbol 覆写场景下对照轴不混入品种
+    # 差、两通道基准同源
     # TD-02 点位 8：dna_snapshot_json 损坏属工程错误——结构化拒绝使
     # 报告生成显式失败，不走 unavailable 降级（工程错误≠计算性失败）
     dna_override = deepcopy(StrategyDNA.from_dict(load_stored_json(
         task["dna_snapshot_json"], source="pt_task.dna_snapshot_json",
         detail={"task_id": task["task_id"]},
         code="PAPER_STORED_DATA_INVALID")))
-    dna_override.risk_genes.leverage = int(task["leverage"])
 
     if form == "final":
-        # final：replay 直跑 symbol 从 DNA execution_genes 派生（runner.run
-        # 单源汇聚点），任务行 symbol 为 body.symbol 覆写值时对照轴混入
-        # 品种差——副本对齐后 replay 建行/装载/执行全链按任务行品种。
-        # leverage 经 run() 参数位直传任务行值（executor 以任务行为准）
-        # ——无需写入副本。
+        # final 消费 execution_genes.symbol（leverage 经参数位直传）
         dna_override.execution_genes.symbol = task["symbol"]
         return _final_deviation(
             data_dir, task, start, end, dna_override, paper_side, notes,
@@ -395,6 +395,11 @@ def _deviation_layer(
 
     # rolling：legacy VBT 桥（秒级快算——架构约束：滚动实时计算承诺）
     from core.analysis.backtest_bridge import run_backtest_on_range
+
+    # 杠杆缝隙处理（design §6.4）：VBT 桥无 leverage 参数，读 DNA
+    # risk_genes.leverage——副本写入任务覆写值（通道零改动）。symbol
+    # 经参数位显式传任务行值
+    dna_override.risk_genes.leverage = int(task["leverage"])
 
     try:
         bt_metrics, _returns, _warmup, _bars = run_backtest_on_range(
