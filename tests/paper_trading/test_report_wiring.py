@@ -148,24 +148,54 @@ class TestFinalizationWiring:
             self, tmp_path, monkeypatch):
         """固化失败与终态迁移解耦（任务 0.2）：finalize_report 注入
         抛错 → 终态照常落库（completed 不受影响）+回调不炸（驱动
-        正常返回）+无固化行（失败事实如实——final 路由仍 404）。"""
+        正常返回）+无固化行（失败事实如实——final 路由仍 404）+
+        留痕（design Test Strategy「固化失败留痕」——app 层
+        logger.exception 含 task_id 定位，失败可归因不静默）。
+
+        留痕断言用 logger 本级 handler 而非 caplog：TestClient
+        lifespan 期间 root handlers 被工程 logging 装配清除，pytest
+        预挂 root 的 caplog handler 一并丢失（实测复现）——挂
+        "app"（app.py:29 getLogger("app")）本级不依赖 root 传播。
+        """
+        import logging
         from fastapi.testclient import TestClient
+
+        class _ListHandler(logging.Handler):
+            def __init__(self):
+                super().__init__(level=logging.ERROR)
+                self.records = []
+
+            def emit(self, record):
+                self.records.append(record)
 
         def _boom(*args, **kwargs):
             raise RuntimeError("injected finalize failure")
 
         monkeypatch.setattr(
             "core.paper_trading.reporting.finalize_report", _boom)
-        h = _WiringHarness(tmp_path)
-        with TestClient(h.app) as client:
-            h.drive_to_completed()  # 回调内异常被吞——驱动不炸
+        probe = _ListHandler()
+        app_logger = logging.getLogger("app")
+        app_logger.addHandler(probe)
+        try:
+            h = _WiringHarness(tmp_path)
+            with TestClient(h.app) as client:
+                h.drive_to_completed()  # 回调内异常被吞——驱动不炸
 
-            task = paper.get_task(h.db, h.task_id)
-            assert task["status"] == "completed", "终态不受固化失败影响"
-            assert paper.get_report(h.db, h.task_id, 1) is None
-            resp = client.get(
-                f"/api/paper-trading/tasks/{h.task_id}/report/final")
-            assert resp.status_code == 404  # 无固化版（失败如实可见）
+                task = paper.get_task(h.db, h.task_id)
+                assert task["status"] == "completed", "终态不受固化失败影响"
+                assert paper.get_report(h.db, h.task_id, 1) is None
+                resp = client.get(
+                    f"/api/paper-trading/tasks/{h.task_id}/report/final")
+                assert resp.status_code == 404  # 无固化版（失败如实可见）
+        finally:
+            app_logger.removeHandler(probe)
+        # 留痕：app 装配层 except 收口的 exception 日志（含 task_id
+        # 定位与异常栈——exc_info 级）
+        failures = [r for r in probe.records
+                    if "结题固化失败" in r.getMessage()
+                    and h.task_id in r.getMessage()]
+        assert failures, "固化失败须留痕（logger.exception）"
+        assert any(r.exc_info for r in failures), "留痕含异常栈"
 
 
 class TestFinalContrastPurity:

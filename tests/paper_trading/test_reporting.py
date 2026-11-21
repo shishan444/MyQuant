@@ -40,13 +40,13 @@ def _seed_task(db: Path, task_id: str = "pt_report00001", *,
                timeframe: str = "4h", status: str = "running",
                research_status: str = "unverified",
                leverage: int = 5, started_at: str = BASE_TIME,
-               origin: str = "paper") -> str:
+               origin: str = "paper", symbol: str = "BTCUSDT") -> str:
     """直建任务（测试通道）+按合法迁移链迁到目标态（组 2 缺陷⑤ CAS
     守门后 update_task 拒非法直迁——pending→running→终态）。"""
     from core.persistence.repository import paper
     paper.create_task(
         db, task_id=task_id, strategy_id="strat-1",
-        dna_snapshot_json=DNA_JSON, symbol="BTCUSDT", timeframe=timeframe,
+        dna_snapshot_json=DNA_JSON, symbol=symbol, timeframe=timeframe,
         research_status_snapshot=research_status,
         initial_cash=50_000.0, leverage=leverage, window_bars=180,
         origin=origin)
@@ -305,9 +305,60 @@ class TestDeviationLayer:
         assert any("区间边界" in n for n in notes)
         assert any("挂起补记" in n for n in notes)
         # rolling 成功路径（2.2）：对照源披露+第五注记（legacy 缺陷差
-        # 计入 diff——spec 滚动版义务）
+        # 计入 diff——spec 滚动版义务）；第五项判别子串（spec 精确文本
+        # 「……其已知缺陷差（如减仓不终止）计入 diff」——其余四项
+        # 均不含，锚核心语义非仅引擎名）
         assert report["deviation"]["contrast_source"] == "legacy_vbt"
         assert any("legacy VBT" in n for n in notes)
+        assert any("减仓不终止" in n for n in notes)
+        assert any("计入 diff" in n for n in notes)
+
+    def test_contrast_symbol_follows_task_row(
+            self, tmp_path, monkeypatch):
+        """对照基准 symbol 以任务行为准（CARD-01 特征测试）：body.symbol
+        覆写场景（任务行 symbol≠DNA execution_genes.symbol——白名单挂盘
+        的生产形态）下，两通道对照基准同源——rolling 桥收 task["symbol"]
+        （显式传参）、final replay 收 dna 副本 execution_genes.symbol
+        ==task 行值（副本对齐——对照轴不混入品种差，diff 保持纯执行
+        环境差语义）；DNA 库内快照原文不被污染（副本语义，与杠杆
+        缝隙同款契约）。"""
+        from core.analysis.errors import ResearchError
+        from core.paper_trading.reporting import build_report, finalize_report
+        db = _make_db(tmp_path)
+        # 分叉：DNA 缺省 symbol=BTCUSDT，任务行 body.symbol=ETHUSDT
+        tid = _seed_task(db, status="completed", symbol="ETHUSDT")
+        _seed_equity_bars(db, tid, 10)
+        _seed_exit_fills(db, tid, [100.0])
+
+        # 段一 rolling：桥收到的 symbol=任务行值（非 DNA 值）
+        captured: dict = {}
+        _patch_bridge(monkeypatch, captured, metrics=dict(BT_METRICS))
+        report = build_report(db, tmp_path, tid)
+        assert report["deviation"]["contrast_source"] == "legacy_vbt"
+        assert captured["symbol"] == "ETHUSDT"
+
+        # 段二 final：注入计算器收到的 dna 副本 execution_genes.symbol
+        # =任务行值（捕获后抛错终止——降级翻译不影响参数形态断言）
+        final_captured: dict = {}
+
+        def _capture(data_dir, dna, start, end, **kwargs):
+            final_captured["dna"] = dna
+            raise ResearchError(
+                "RESEARCH_DATA_INSUFFICIENT", "捕获即止")
+
+        report = finalize_report(
+            db, tmp_path, tid, contrast_runner=_capture)
+        assert report["deviation"]["contrast_source"] == "replay"
+        assert (final_captured["dna"].execution_genes.symbol
+                == "ETHUSDT")
+
+        # 段三 DNA 原文不污染（deepcopy 副本——测试通道快照为极简
+        # JSON『{"risk_genes": …}』，execution_genes 走 from_dict 缺省
+        # 填充；若实现漏 deepcopy 直接改写快照，此键会凭空出现且值
+        # 为任务行 symbol——极简形态保持即副本隔离的证据）
+        stored = json.loads(_get_task_dna(db, tid))
+        assert "execution_genes" not in stored
+        assert stored["risk_genes"]["leverage"] == 2
 
 
 class TestFinalContrastInjection:
@@ -340,7 +391,8 @@ class TestFinalContrastInjection:
 
     def test_final_runner_exception_degrades(self, tmp_path):
         """注入计算器抛错（错误族对报告器不可知——宽 Exception 捕获）：
-        降级原因含异常类名与消息，报告其余层正常。"""
+        降级原因含异常类名与消息，报告其余层正常（受控形——
+        ResearchError 带 code 属受控族，CARD-03 后保留原文）。"""
         from core.analysis.errors import ResearchError
 
         def _boom(*args, **kwargs):
@@ -356,6 +408,127 @@ class TestFinalContrastInjection:
         assert dev["contrast_source"] == "replay"
         # performance 层不受对照降级影响
         assert report["performance"]["total_trades"] == 1
+
+    def test_final_replay_error_reason_keeps_message(self, tmp_path):
+        """受控族两成员之 ReplayError（CARD-03 两形之一）：带 code
+        属性——unavailable_reason 含「类名: 原文」（计算性失败可诊断，
+        spec 装载失败同 unavailable+原因）。"""
+
+        def _boom(*args, **kwargs):
+            from core.replay.runner import ReplayError
+            raise ReplayError("STRATEGY_NOT_FOUND", "回放装载拒绝：策略未找到")
+
+        report = self._finalized(tmp_path, contrast_runner=_boom)
+        reason = report["deviation"]["unavailable_reason"]
+        assert "ReplayError" in reason
+        assert "回放装载拒绝：策略未找到" in reason
+
+    def test_final_uncontrolled_exception_reason_redacted(self, tmp_path):
+        """非受控异常原文不进报告（CARD-03 涉安形）：裸 ValueError 无
+        code——unavailable_reason 只含类名；消息原文（模拟临时目录
+        绝对路径/系统用户名——报告经 MCP 透传/导出将永久外泄）任何
+        片段不得出现。"""
+
+        def _boom(*args, **kwargs):
+            raise ValueError(
+                "/var/folders/xx/T/paper_contrast_abc123 系统用户 "
+                "user-ss 的敏感原文")
+
+        report = self._finalized(tmp_path, contrast_runner=_boom)
+        reason = report["deviation"]["unavailable_reason"]
+        assert "ValueError" in reason
+        for leaked in ("/var/folders", "paper_contrast_abc123",
+                       "user-ss", "敏感原文"):
+            assert leaked not in reason, leaked
+
+    def test_final_exception_logged_before_redaction(self, tmp_path):
+        """丢弃原文前本层留痕（CARD-03 配套）：paper_runtime 具名
+        logger exception 含 task_id+完整 traceback（exc_info）——外不
+        泄内留痕。本级 handler 形制（caplog 在 TestClient lifespan
+        场景失效，见 test_report_wiring 注释——此为直调场景但沿同
+        形制稳健）。"""
+        import logging
+
+        class _ListHandler(logging.Handler):
+            def __init__(self):
+                super().__init__(level=logging.ERROR)
+                self.records = []
+
+            def emit(self, record):
+                self.records.append(record)
+
+        def _boom(*args, **kwargs):
+            raise ValueError("redaction 留痕探针原文")
+
+        probe = _ListHandler()
+        lg = logging.getLogger("paper_runtime")
+        lg.addHandler(probe)
+        try:
+            report = self._finalized(tmp_path, contrast_runner=_boom)
+        finally:
+            lg.removeHandler(probe)
+        assert report["deviation"]["unavailable_reason"] == "ValueError"
+        failures = [r for r in probe.records
+                    if "final 对照计算失败" in r.getMessage()
+                    and "pt_report00001" in r.getMessage()]
+        assert failures, "降级留痕须落 paper_runtime logger（含 task_id）"
+        assert any(r.exc_info for r in failures), "留痕含完整 traceback"
+
+    def test_final_notes_content_shape(self, tmp_path):
+        """final 形态注记内容锚（spec 口径差如实列明条款对两形生效）：
+        实际存在的口径差在位（资金费实时 vs 历史归档、区间边界）；
+        不存在的差不编造（replay 与执行核心同构——清算无已知差不列）；
+        VBT 时代失实表述不得照抄（「固定 0.001 估算」「无杠杆曲线
+        等效线」对 replay 对照不成立）；legacy 第五项不出现（Scenario
+        「diff 归因不含对照引擎缺陷维度」的注记面）。"""
+        report = self._finalized(tmp_path)
+        notes = report["deviation"]["attribution_notes"]
+        assert any("资金费" in n and "归档" in n for n in notes)
+        assert any("区间边界" in n for n in notes)
+        assert any("挂起补记" in n for n in notes)
+        assert not any("legacy VBT" in n for n in notes)
+        assert not any("固定 0.001" in n for n in notes)
+        assert not any("等效线" in n for n in notes)
+
+    def test_final_contrast_task_params_passthrough(self, tmp_path):
+        """final 对照任务参数全量透传锚（design「DNA 快照+leverage/
+        费滑/资金覆写+任务区间」直跑契约——与 rolling 侧桥全参捕获
+        断言对称）：注入计算器收到的七参数+区间==任务行值（从库内
+        读回比对——同源断言，不依赖缺省值硬编码）。杠杆分叉判别：
+        任务行 leverage=5 vs DNA 快照原文 2——CARD-02 后 final 杠杆
+        唯一到达路径为 run() 参数位（DNA 副本不再写入），本锚即该
+        路径的行为证据（端到端 diff=0 场景 DNA 缺省杠杆=1 与任务行
+        同值，对此零判别力）。"""
+        from core.analysis.errors import ResearchError
+        from core.persistence.repository import paper
+        from core.paper_trading.reporting import finalize_report
+        db = _make_db(tmp_path)
+        tid = _seed_task(db, status="completed", leverage=5)
+        _seed_equity_bars(db, tid, 10)
+        _seed_exit_fills(db, tid, [100.0])
+        captured: dict = {}
+
+        def _capture(data_dir, dna, start, end, **kwargs):
+            captured.update(kwargs, start=start, end=end)
+            raise ResearchError(
+                "RESEARCH_DATA_INSUFFICIENT", "捕获即止")
+
+        report = finalize_report(
+            db, tmp_path, tid, contrast_runner=_capture)
+        assert report["deviation"]["contrast_source"] == "replay"
+        task = paper.get_task(db, tid)
+        for key in ("fee", "slippage", "initial_cash", "leverage",
+                    "window_bars", "stop_loss_pct", "halt_drawdown_pct"):
+            assert captured[key] == task[key], key
+        # 杠杆分叉判别：到达值=任务行 5（DNA 快照原文 2——参数位而非
+        # DNA 副本到达）
+        assert captured["leverage"] == 5
+        assert json.loads(
+            _get_task_dna(db, tid))["risk_genes"]["leverage"] == 2
+        # 区间语义同 rolling：start=started_at floor 对齐 4h 网格
+        # （BASE_TIME=00:00 已在网格上，floor 不变），end=末权益 bar
+        assert captured["start"] == BASE_TIME
+        assert captured["end"] == _bar_time(9, 240)
 
 
 def _get_task_dna(db: Path, task_id: str) -> str:
