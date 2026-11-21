@@ -34,6 +34,7 @@ verdict/feasible/recommendation 自动判定字段（考场无观点，D3/D10）
 from __future__ import annotations
 
 import json
+import logging
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -47,6 +48,8 @@ from core.paper_trading.constants import PAPER_MIN_BARS, PAPER_MIN_TRADES
 from core.persistence.repository import paper
 from core.persistence.timestamps import utc_now_iso
 from core.scoring.metrics import compute_metrics
+
+logger = logging.getLogger("paper_runtime")
 
 # 结题终态（固化/修订/取 final 的统一门槛；未结题 → TaskNotConcludedError，
 # REST 层组 5 转 409 "task not concluded"）——paper 单点常量别名
@@ -484,9 +487,18 @@ def _final_deviation(
             stop_loss_pct=task["stop_loss_pct"],
             halt_drawdown_pct=task["halt_drawdown_pct"])
     except Exception as exc:  # noqa: BLE001——注入边界，错误族不可知
-        return _unavailable(
-            f"{type(exc).__name__}: {exc}", notes,
-            contrast_source="replay")
+        # 完整异常本层落日志后丢弃原文（app 回调层只接 finalize_report
+        # 上抛，本分支降级不上抛——留痕须在丢弃前）。reason：受控族
+        # （带 code——构造点全为固定中文文案+参数值）保留「类名: 原
+        # 文」；非受控只记类名——原文可能携临时目录绝对路径/系统用
+        # 户名，将永久固化进报告并经 MCP 透传/导出外泄。code 属性鸭
+        # 子判据——L2-H3 域隔离下 reporting 不 import ReplayError
+        logger.exception("final 对照计算失败（task=%s）",
+                         task.get("task_id"))
+        reason = (f"{type(exc).__name__}: {exc}"
+                  if getattr(exc, "code", None) is not None
+                  else type(exc).__name__)
+        return _unavailable(reason, notes, contrast_source="replay")
     replay_exits = [f for f in replay_fills
                     if f["realized_pnl"] is not None]
     metrics, replay_side = _performance_layer(
