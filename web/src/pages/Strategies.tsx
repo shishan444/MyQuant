@@ -12,7 +12,7 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   BookOpen, Play, Pencil, Trash2, Search,
   Dna, FlaskConical, Zap, ArrowUpDown, ArrowUp, ArrowDown, ChevronRight,
-  Copy, Check, X, GitBranch, LineChart, AlertCircle,
+  Copy, Check, X, GitBranch, AlertCircle,
 } from "lucide-react";
 import { StarRating } from "@/components/StarRating";
 import { PageTransition } from "@/components/PageTransition";
@@ -1052,16 +1052,6 @@ export function Strategies() {
               className="flex items-center gap-2 bg-white/[0.03] rounded-lg px-3 py-1"
             >
               <span className="text-sm text-text-secondary">已选 {selectedIds.size} 项</span>
-              <AntButton
-                size="small"
-                className="!text-xs"
-                icon={<LineChart className="h-3 w-3" />}
-                onClick={() => {
-                  navigate("/batch-backtest", { state: { strategy_ids: Array.from(selectedIds) } });
-                }}
-              >
-                批量回测
-              </AntButton>
               <AntButton
                 size="small"
                 danger

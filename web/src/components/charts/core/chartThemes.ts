@@ -11,7 +11,6 @@ import type { ChartOptions } from "lightweight-charts";
  * 价值：图表衍生色（区域填充/虚线族）以 tokens 单源为基底派生，
  * 不再各自维护 rgba 字面第二实现。
  * 服务对象：chartThemes 衍生色常量（CHART_COLORS.overbought/oversold）
- * 与 ScoreTrendChart 装配（累计最佳线 withAlpha(POLARITY.up, 0.5)）；
  * 与 EquityLineChart 装配（权益面积渐变 topColor/bottomColor，lineColor 三态随迁）；
  * 原消费方 equityOption.ts 已随 echarts 退役删除。
  * 边界：只接受 #RRGGBB 形制（七字符），其他形制输出不可预期。

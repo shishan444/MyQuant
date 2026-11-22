@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# 分析工具运行时产物（CRAP/DRY 扫描——本地生成，不入库）
+src/.metrics/
+.metrics/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

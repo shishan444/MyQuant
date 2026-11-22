@@ -3,8 +3,8 @@
 > 本文档是前端消费与后端端点实现的**共同权威**（refactor-myquant-frontend-f1-f7 · G2 契约先行；
 > 后端容器 B8 批照此实现 socket.io 端点）。
 > 字段全部从当前代码实证（实证位置随条目标注）：trading=core/paper_trading/runtime/executor.py+api/realtime.py、
-> 连接层=api/realtime.py、流式=web/src/services/strategies.ts。
-> 当前载体为原生 WebSocket + fetch/SSE；**事件模型按目标态 socket.io 语义表达**，切换由 B8 双端同批完成。
+> 连接层=api/realtime.py。
+> 当前载体为 socket.io（B8.4 起全量切换；native WS 与 SSE 流式端点已退役）。
 
 > **2026-09-15 后端容器方案设计确认（用户裁决）**：四通道**全量切换** socket.io（含 verify/batch 流式通道，
 > 不保留 SSE 长期双载体）；流式子批施工形态=POST 返回 `{session_id}` + socket.io emit（namespace `/streams`、
@@ -16,11 +16,18 @@
 
 | 通道 | 当前载体 | socket.io 目标形态 | 订阅粒度 |
 |---|---|---|---|
-| trading | `WS /ws/trading/{task_id}` | namespace `/trading`，room `task_id` | 每任务 |
-| verify 流 | `POST /api/strategies/verify/stream`（SSE 响应） | 同端点改 emit `verify:{session}` 事件族 | 每请求 |
-| batch 流 | `POST /api/strategies/batch-backtest/stream`（SSE 响应） | 同端点改 emit `batch:{session}` 事件族 | 每请求 |
+| trading | socket.io namespace `/trading` | namespace `/trading`，room `task_id` | 每任务 |
+
+<!-- verify/batch 流式通道两行（POST /api/strategies/verify/stream 与
+     /api/strategies/batch-backtest/stream，SSE 响应）已随流式端点退役删除
+     （fix-replay-gap-alignment——2026-11-22）；404 护栏见
+     tests/api/test_retire_verify_sessions.py -->
 
 ## 连接层协议消息（适配层消费，禁止进入业务缓存）
+
+> 现状注记：socket.io 形态下协议消息由其内建机制承接（见文末 B8.4 落档）；
+> 下表实证列的 ws.py 已随 native WS 端点退役删除，消化语义仍由前端
+> native 逃生口（realtime/connection.ts）实现。
 
 | 消息 | payload | 方向 | 实证 |
 |---|---|---|---|
@@ -82,22 +89,9 @@ kind=Intent 九值（open/close/add/reduce/exit_sl/exit_tp/exit_max_hold/exit_ti
 { "type": "task_error", "task_id": string, "error_detail": string }
 ```
 
-## 流式通道事件（verify/batch 共用形制，SSE `event:` 帧）
-
-### progress
-```json
-{ "current": number, "total": number, "group": string,
-  "range_start": string, "range_end": string, "batch_results": Record<string, unknown>[] }
-```
-
-### complete
-- verify：`{ "session_id": string, "summary": SummaryItem[], "results": ResultItem[] }`
-- batch：`{ "summary": SummaryItem[], "results": ResultItem[] }`
-
-### error
-```json
-{ "message": string }
-```
+<!-- 流式通道事件契约段（verify/batch 共用形制，SSE event: 帧
+     progress/complete/error）已随流式端点退役删除
+     （fix-replay-gap-alignment——2026-11-22，同上文通道表去向注） -->
 
 ## 消费纪律（ws-message-consumption spec 的实现约束）
 
@@ -111,6 +105,5 @@ kind=Intent 九值（open/close/add/reduce/exit_sl/exit_tp/exit_max_hold/exit_ti
 > 端点（/ws/evolution /ws/trading）与 SSE 流式响应体退役删除；连接即下发
 > task_snapshot（重连恢复快照语义迁移至 /evolution /trading connect）；
 > 连接层协议消息（subscribed/ping/pong）由 socket.io 内建机制承接；
-> 流式取消=C→S cancel（/streams，payload {session_id}，步粒度协作）；
 > 前端默认 transport=socketio（VITE_REALTIME_TRANSPORT=native 为无服务端
 > 支持的本地逃生口）。

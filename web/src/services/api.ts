@@ -3,7 +3,7 @@
  *
  * 拦截器契约见 design.md G16.0：网络/422/409/4xx/5xx 分层判定，
  * 全部转换为 ApiError（中文化 message + kind），不透出内部细节。
- * SSE（realtime/sse）与 WS 不经本层。
+ * WS 不经本层。
  */
 import ky from "ky";
 
