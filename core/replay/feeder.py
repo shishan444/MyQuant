@@ -22,6 +22,7 @@ from core.analysis.registry_meta import derive_warmup, derive_warmup_full
 from core.analysis.validation_service import (
     dna_indicator_names,
     gene_tf_axis_refs,
+    required_aux_timeframes,
 )
 from core.analysis.warmup_loader import TF_MINUTES, load_with_warmup
 from core.data.mtf_loader import find_parquet
@@ -96,9 +97,10 @@ class ReplayFeeder:
         # 9. atr 档补列（沿 executor.prepare 形制）
         self._main = self._ensure_atr(self._main)
         # 7. 辅周期各自前扩+指标（轴引用指标集独立折算，含 200 floor）
-        for tf in self.dna.timeframes:
-            if tf == self.timeframe:
-                continue
+        # 轴清单换源单点 required_aux_timeframes（fix-replay-gap-
+        # alignment 2.1：顶层清单→轴集单点，基因级标注形制的基因轴
+        # 并入装载；缺档沿 load_with_warmup 显式拒绝——fail-loud）
+        for tf in required_aux_timeframes(self.dna):
             aux_names = sorted({name for name, _ in axis_refs.get(tf, [])})
             aux_df, _ = load_with_warmup(
                 self.data_dir, self.symbol, tf,

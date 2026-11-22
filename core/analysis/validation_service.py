@@ -121,6 +121,24 @@ def gene_tf_axis_refs(dna) -> Dict[str, List[tuple]]:
     return axis_map
 
 
+def required_aux_timeframes(dna) -> List[str]:
+    """装载辅周期轴集单点（fix-replay-gap-alignment 2.1）。
+
+    所需辅轴 = (dna.timeframes ∪ gene_tf_axis_refs(dna) 键集) − 执行
+    周期——层级形制（显式 layers 周期）与基因级标注形制（信号基因
+    timeframe 标注）统一覆盖，装载能力与求值能力一致（求值层会消费
+    的每个辅周期轴装载层都装载）。返回**有序清单**（非 set）：
+    dna.timeframes 原序优先（层级遍历序逐字节不变——回归判据），
+    新增基因轴 sorted 追加保确定性。五处装载循环（回放 feeder+纸盘
+    executor 四处）与三处 is_mtf 门（或语义扩门）同源消费本单点。"""
+    exec_tf = dna.execution_genes.timeframe
+    ordered = [tf for tf in (dna.timeframes or []) if tf != exec_tf]
+    extra = sorted(
+        tf for tf in gene_tf_axis_refs(dna)
+        if tf != exec_tf and tf not in ordered)
+    return ordered + extra
+
+
 def _derive_dna_warmup(db_path: Path, dna, base_tf: str) -> Tuple[int, List[str]]:
     """DNA warmup 推导薄壳：提取引用 → derive_warmup_full 两维同式。
 

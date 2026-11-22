@@ -33,6 +33,39 @@ from core.strategy.validator import (
 logger = logging.getLogger("replay")
 
 
+def sweep_orphaned_replay_tasks(db_path: Path) -> int:
+    """启动期回放残行清扫（fix-replay-gap-alignment 2.3，裁决②）。
+
+    origin=replay 且 status ∈ {running, pending} 的任务行逐行置
+    error（error_detail 前缀 orphaned_by_restart——与人工授权清理
+    的 worker_crashed 前缀区分成因，可追溯）。正当性：回放是调用
+    方同步驱动，进程重启后绝无驱动者（与 stop 409 domain_forbidden
+    同一语义根据）；同步驱动模型下合法 pending 只存在于请求处理
+    进程内的建行-拾取窗口，应用启动瞬间无在途请求则现存 pending
+    必为孤儿（零误杀根据）。CAS 双态守门天然幂等（已终态行不命中
+    、二次启动零变化）；成交/信号/权益数据行全部保留（只动
+    pt_task.status/error_detail 域）。三写者边界：调度器管纸盘域
+    恢复（origin='paper' 过滤不动）、本清扫管回放孤儿行、runner
+    执行段 try 兜底管进程内终态——各域不重叠。
+
+    Returns:
+        本轮实际置 error 的行数（幂等复跑恒 0）。
+    """
+    rows = paper_repo.list_tasks(
+        db_path, status_in=("running", "pending"), origin="replay",
+        limit=10_000)
+    swept = 0
+    for row in rows:
+        hit = paper_repo.update_task(
+            db_path, row["task_id"], status="error",
+            expected_status={"running", "pending"},
+            error_detail=(
+                "orphaned_by_restart: 进程重启遗留，无驱动者（启动期清扫）"))
+        if hit:
+            swept += 1
+    return swept
+
+
 class ReplayError(Exception):
     """回放装载失败（载入即拒——pt_task 行不建）。
 
@@ -46,6 +79,16 @@ class ReplayError(Exception):
         self.code = code
         self.message = message
         self.detail = detail
+
+    def __reduce__(self):
+        """跨进程可序列化（fix-replay-gap-alignment 2.2）。
+
+        三元位置参全量重建（detail 第三位置参有缺省，None 也显式传）
+        ——unpickle 调 ReplayError(code, message, detail)。进程内
+        raise/except/str/日志零变化（__reduce__ 仅影响 pickle 路径
+        ——并发组 worker 经进程池回传；现状 args 单元素重建缺参
+        TypeError 崩池管理线程致整池连坐）。"""
+        return (ReplayError, (self.code, self.message, self.detail))
 
 
 @dataclass(frozen=True)

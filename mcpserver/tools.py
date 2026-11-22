@@ -707,7 +707,8 @@ def register_research_tools(mcp, api: QuantApiClient) -> None:
 
     @mcp.tool()
     @tool_safe
-    def run_replay_backtest(strategy_id: Optional[str], start: str, end: str,
+    def run_replay_backtest(start: str, end: str,
+                            strategy_id: Optional[str] = None,
                             fee: float = 0.001, slippage: float = 0.0005,
                             initial_cash: float = 100000.0, leverage: int = 1,
                             window_bars: Optional[int] = None,
