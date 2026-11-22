@@ -93,6 +93,22 @@ class TestNavigation:
         _wait_react(page)
         assert "/workbench" in page.url, f"Expected redirect to /workbench, got {page.url}"
 
+    def test_retired_routes_redirect_to_workbench(self, page: Page):
+        """退役路由重定向到 /workbench（乱路径守恒——catch-all 兜底无死链接白屏）.
+
+        fix-replay-gap-alignment U10 catch-all（App.tsx path="*" →
+        Navigate to="/workbench" replace）。三旧路径为退役域真实路由拼写
+        （main 5708104e：/evolution 进化域、/batch-backtest 批量回测域、
+        /live 实盘域——LiveTrading 组件挂 /live 而非 /live-trading）。
+        tasks 2.6 声称的乱路径守恒断言原全域零覆盖（FR-002），本用例补落地。
+        """
+        for route in ["/evolution", "/batch-backtest", "/live"]:
+            page.goto(BASE + route, timeout=10000)
+            page.wait_for_load_state("domcontentloaded", timeout=10000)
+            _wait_react(page)
+            assert "/workbench" in page.url, \
+                f"Expected retired route {route} to redirect to /workbench, got {page.url}"
+
     def test_direct_url_access(self, page: Page):
         for route in ["/data", "/lab", "/strategies", "/settings"]:
             page.goto(BASE + route, timeout=10000)
