@@ -60,6 +60,29 @@ def _save_exec_strategy(env, strategy_id: str, dna) -> str:
     return strategy_id
 
 
+def make_deterministic_ramp_aux(n: int = 320, flat_bars: int = 272):
+    """确定性 4h 辅轴（BT-01 补强）：前 flat_bars 根严格锯齿交替
+    （+0.1%/−0.1% 等幅——RSI 稳定≈50 零触发），随后 +2%/根连续拉升
+    （拉升首根 RSI 上穿 60——触发点=第 flat_bars+1 根，确定无随机）。
+
+    seed=11 随机形制实测首个触发 bar 早于回放区间起点约 37 天（投影
+    状态窗预开，时点断言对前视变异无判别力——BT-01）；本工厂使触发
+    bar 确定性落在回放区间内（head_bars=300 形制下=区间中后段）。
+    """
+    import numpy as np
+
+    rng = np.random.default_rng(3)
+    zig = np.where(np.arange(flat_bars) % 2 == 0, 1.001, 1 / 1.001)
+    flat = 100.0 * np.cumprod(zig)
+    ramp = flat[-1] * np.cumprod(np.full(n - flat_bars, 1.02))
+    close = np.concatenate([flat, ramp])
+    idx = pd.date_range("2024-01-01", periods=n, freq="4h", tz="UTC")
+    return pd.DataFrame(
+        {"open": close * (1 + rng.standard_normal(n) * 0.0002),
+         "high": close * 1.001, "low": close * 0.999, "close": close,
+         "volume": np.full(n, 1000.0)}, index=idx)
+
+
 class TestT1aGeneTfReplayRun:
     """T1-a：基因级标注回放装载运行+投影时点断言。"""
 
@@ -80,9 +103,11 @@ class TestT1aGeneTfReplayRun:
     def test_projection_timing_close_anchor(self, tmp_path):
         """投影时点语义：4h 条件触发的成交时点落在 4h 收盘所在 1h bar
         （掩码投影状态窗——首根可见收盘即 True，与 pulse 脉冲在对齐
-        网格下首触发同 bar）。阈值型条件（RSI>60 于 4h 轴）使触发点
-        落在区间中段——时点断言有判别力（恒真构造触发点恒在区间首
-        bar，对投影语义无判别力）。"""
+        网格下首触发同 bar）。判别力（BT-01 补强后与实测一致）：辅轴
+        为 make_deterministic_ramp_aux 确定性形制——锯齿横盘段零触发、
+        第 273 根起拉升触发，触发 bar 落在回放区间中后段（实测区间
+        第 193/300 根）；前视退化（投影只提前 4h 开窗）下首笔成交
+        相应提前、first_fill_bar >= expect_from 必红。"""
         from tests.helpers.data_factory import make_signal_gene
         from core.strategy.dna import SignalRole
 
@@ -106,13 +131,17 @@ class TestT1aGeneTfReplayRun:
                 stop_loss=0.05, take_profit=0.2, position_size=0.1,
                 leverage=2, direction="long"))
         env = _gene_tf_env(tmp_path, dna=dna)
+        # BT-01：确定性辅轴覆盖（seed=11 随机形制触发点在区间外——
+        # 投影窗预开致时点断言无判别力；见 make_deterministic_ramp_aux）
+        save_parquet(make_deterministic_ramp_aux(),
+                     env.data_dir / "BTCUSDT_4h.parquet")
         sid = _save_exec_strategy(env, "st_gene_tf_proj", dna)
         start, end = env.range(head_bars=300)
         res = ReplayRunner(env.data_dir).run(env.db, sid, start, end,
                                              task_id="gtfproj")
         assert res.status == "completed"
         fills = paper.list_fills(env.db, "gtfproj", limit=100)
-        assert fills, "4h RSI>60 于 seed=11 数据至少一次触发（实质面）"
+        assert fills, "4h RSI>60 于确定性拉升段触发（实质面）"
 
         # 期望投影时点（独立于 feeder 段实现，契约手写；指标值取生产
         # 实现同源——断言对象是投影契约而非指标口径）：4h 轴 RSI(14)
@@ -123,6 +152,11 @@ class TestT1aGeneTfReplayRun:
         rsi = compute_all_indicators(aux_df)["rsi_14"]
         hot = aux_df.index[rsi.fillna(0) > 60]
         assert len(hot) > 0
+        # 触发点在回放区间内（判别力前提——触发在区间外则投影窗预开、
+        # 时点断言恒过；BT-01 补强锚）
+        assert pd.Timestamp(start) < hot[0] < pd.Timestamp(end), (
+            f"首个触发 bar {hot[0]} 须落在回放区间 ({start}, {end}) 内"
+            "——否则时点断言无判别力（BT-01）")
         main_idx = pd.date_range(
             start=pd.Timestamp(start), end=pd.Timestamp(end),
             freq="1h", tz="UTC")
