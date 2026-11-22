@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -162,7 +163,7 @@ class TestT5bRoutesConsumedOrRetained:
             if e["retention_type"] == "pending-handover":
                 assert e.get("deadline"), (
                     f"pending-handover 型 deadline 必填: {e}")
-                assert e["deadline"] >= "2026-11-21", (
+                assert e["deadline"] >= date.today().isoformat(), (
                     f"deadline 已过期（承接逾期未销项）: {e}")
             else:
                 # mcp-consumed 不校验 deadline；deliberate 可空——
@@ -234,3 +235,29 @@ class TestT5BaselineEvidence:
                   f"{len(front)}｜死调用差集 {len(dead)}（预期 25）")
             for d in dead:
                 print(f"  {d}")
+
+
+class TestT5fBaselineFreshness:
+    """T5-f：磁盘 openapi.json == 运行时路由面（基准源新鲜度守护，
+    BR-04——team3-v3 审查批次 5）。
+
+    T5-a/b/e 以磁盘 web/openapi.json 为权威基准源，但再生成是独立
+    步骤——本守护防「改路由忘再生成」失真：运行时路由面经 TestClient
+    GET /openapi.json 提取（方法级+模板归一与 _route_surface 同源），
+    与磁盘生成物双向比对，任何一侧差异即红（磁盘多余=删路由未再
+    生成；运行时多出=新路由未再生成）。
+    """
+
+    def test_disk_openapi_matches_runtime_routes(self, api_client):
+        disk = _route_surface()
+        spec = api_client.get("/openapi.json").json()
+        runtime = set()
+        for p, methods in spec["paths"].items():
+            for m in methods:
+                if m in ("get", "post", "put", "patch", "delete"):
+                    runtime.add(f"{m.upper()} {_norm(p)}")
+        stale = sorted(disk - runtime)
+        missing = sorted(runtime - disk)
+        assert not stale and not missing, (
+            f"磁盘 openapi.json 与运行时路由面不一致（改路由后未再生成？）"
+            f"——磁盘多余: {stale}；运行时新增: {missing}")
