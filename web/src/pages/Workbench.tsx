@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { AlertTriangle, Database, HeartPulse, Inbox, TrendingUp } from "lucide-react";
+import { AlertTriangle, HeartPulse, Inbox, TrendingUp } from "lucide-react";
 import { GlassCard } from "@/components/GlassCard";
 import { IntegrityMatrix } from "@/components/data/IntegrityPanels";
 import { formatTimestamp } from "@/lib/utils";
@@ -11,7 +11,6 @@ import {
   type PendingEventsAvailability,
 } from "@/services/workbench";
 import {
-  ActiveHypothesesPanel,
   AnalysisTasksPanel,
   MarketSnapshotCard,
   ResearchLogPanel,
@@ -159,7 +158,6 @@ function PageSections(props: {
           <span className="ml-auto text-[10px] text-text-muted">只读观察——操作归 MCP</span>
         </h2>
         <MarketSnapshotCard />
-        <ActiveHypothesesPanel />
         {/* B2-3 最近验证结论（3 条——fe-workbench-wiring limit 8→3） */}
         <div className="mb-2">
           <p className="mb-1 text-[10px] uppercase tracking-wide text-text-muted">最近验证结论</p>
@@ -190,17 +188,13 @@ function PageSections(props: {
         <ResearchLogPanel />
       </GlassCard>
 
-      {/* C 列模拟任务区（fe-workbench-wiring：调度器行真值+舰队底注）+B4 */}
+      {/* C 列模拟任务区（fe-workbench-wiring：调度器行真值）+B4 */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <GlassCard className="p-3">
           <h2 className="mb-2 flex items-center gap-2 text-xs font-medium text-text-secondary">
             <TrendingUp className="h-3.5 w-3.5" /> 模拟任务
           </h2>
           <SchedulerStatusLine />
-          <p className="rounded border border-border-faint bg-bg-base/40 px-2 py-1 text-[10px] text-text-muted">
-            舰队汇总/任务卡/最近终态端点待建（be-workbench-support D11）——合计权益·今日
-            增量·三维达标卡随端点落地接线
-          </p>
         </GlassCard>
         <GlassCard className="p-3">
           <h2 className="mb-2 flex items-center gap-2 text-xs font-medium text-text-secondary">
@@ -208,20 +202,9 @@ function PageSections(props: {
           </h2>
           {/* 月矩阵缩略消费（fe-workbench-wiring）：复用 09 页
               IntegrityMatrix 组件（固定 BTCUSDT+5 月只读——01 观察面零
-              操作，详情/切档归 09 页导航）；api/mcp 进程状态为原型文案
-              照排+D1 底注（be-workbench-support 归档后接真值） */}
-          <div className="flex items-center gap-3 text-xs">
-            <Database className="h-3.5 w-3.5 text-text-muted" />
-            <span className="text-text-muted">
-              api :8000 在线 · mcp :8800 在线
-            </span>
-          </div>
-          <p className="mt-1 rounded border border-border-faint bg-bg-base/40 px-2 py-1 text-[10px] text-text-muted">
-            进程状态端点待建（be-workbench-support D1）——当前为原型文案照排
-          </p>
-          <div className="mt-2">
-            <IntegrityMatrix symbol="BTCUSDT" monthsBack={5} />
-          </div>
+              操作，详情/切档归 09 页导航）。（api/mcp 进程状态原型文案
+              随 U7 清理退场——be-workbench-support D1 端点落地后再接真值） */}
+          <IntegrityMatrix symbol="BTCUSDT" monthsBack={5} />
         </GlassCard>
       </div>
     </div>

@@ -1,6 +1,8 @@
 /**
  * Tests for services/strategies.ts: strategy API service functions.
  * Validates request construction, response mapping, and contract alignment.
+ * （runBacktest/compareStrategies 用例随死端点退役删除——
+ *  fix-replay-gap-alignment U4）
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -19,8 +21,6 @@ import {
   getStrategy,
   createStrategy,
   deleteStrategy,
-  runBacktest,
-  compareStrategies,
 } from "@/services/strategies";
 
 const mockedGet = vi.mocked(api.get);
@@ -64,41 +64,5 @@ describe("strategies service", () => {
     mockedDelete.mockResolvedValueOnce(null);
     await deleteStrategy("s1");
     expect(mockedDelete).toHaveBeenCalledWith("/api/strategies/s1");
-  });
-
-  it("runBacktest includes dataset_id and fee/slippage", async () => {
-    const payload = {
-      dna: {},
-      symbol: "BTCUSDT",
-      timeframe: "4h",
-      dataset_id: "BTCUSDT_4h",
-      init_cash: 100000,
-      fee: 0.001,
-      slippage: 0.0005,
-    };
-    const mockResult = {
-      result_id: "r1",
-      fee: 0.001,
-      slippage: 0.0005,
-      run_source: "lab",
-      fitness: 0.68,
-      qualified: true,
-    };
-    mockedPost.mockResolvedValueOnce(mockResult);
-    const result = await runBacktest(payload);
-    expect(mockedPost).toHaveBeenCalledWith("/api/strategies/backtest", { json: payload, timeout: 60000 });
-    expect(result.fee).toBe(0.001);
-    expect(result.run_source).toBe("lab");
-  });
-
-  it("compareStrategies posts strategy_ids", async () => {
-    const payload = {
-      strategy_ids: ["s1", "s2"],
-      dataset_id: "BTCUSDT_4h",
-      score_template: "profit_first",
-    };
-    mockedPost.mockResolvedValueOnce({ results: [] });
-    await compareStrategies(payload);
-    expect(mockedPost).toHaveBeenCalledWith("/api/strategies/compare", { json: payload });
   });
 });

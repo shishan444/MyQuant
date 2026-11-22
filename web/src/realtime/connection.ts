@@ -5,14 +5,15 @@
  * 协议消息（subscribed/pong/ping）在本层消化，业务 handler 只收到业务事件帧。
  *
  * 实现选择（特性开关）：
- * - 实现一 · 原生 WebSocket（当前启用，现有后端端点 /ws/{channel}/{taskId}）
- * - 实现二 · socket.io-client（就位未启用——后端容器 B8 批实现端点后，
- *   设 VITE_REALTIME_TRANSPORT=socketio 并与后端同批切换）
+ * - 默认 · socket.io-client（B8.4 起——native WS 后端端点已删，服务端
+ *   注册面见 api/realtime.py @sio.on）
+ * - 逃生口 · 原生 WebSocket（VITE_REALTIME_TRANSPORT=native——仅前端
+ *   实现保留，无服务端对端；本地调试用）
  */
 import { io, type Socket } from "socket.io-client";
 import { ProtocolMessage } from "./schemas";
 
-type RealtimeChannel = "evolution" | "trading";
+type RealtimeChannel = "trading";
 
 export interface RealtimeConnection {
   /** 注册业务消息处理器（协议消息已被本层消化，不会到达 handler） */
@@ -37,7 +38,7 @@ function resolveHost(): string {
 }
 
 // ---------------------------------------------------------------------------
-// 实现一：原生 WebSocket（启用中）
+// 实现一：原生 WebSocket（逃生口——后端 /ws 端点已删，仅本地实现保留）
 // ---------------------------------------------------------------------------
 
 function createNativeWsConnection({ channel, taskId }: RealtimeConnectionOptions): RealtimeConnection {
@@ -112,14 +113,14 @@ function createNativeWsConnection({ channel, taskId }: RealtimeConnectionOptions
 }
 
 // ---------------------------------------------------------------------------
-// 实现二：socket.io-client（就位未启用——B8 批与后端端点同批切换）
+// 实现二：socket.io-client（默认形态——B8.4 起随服务端 @sio.on 注册面接线）
 // ---------------------------------------------------------------------------
 
 function createSocketIoConnection({ channel, taskId }: RealtimeConnectionOptions): RealtimeConnection {
   // 契约目标形态：namespace /{channel}，room=taskId 由服务端按连接参数定位
   const socket: Socket = io(`/${channel}`, {
     transports: ["websocket"],
-    // 服务端尚未实现（B8），此处仅就位：不自动重试风暴
+    // 重连退避 3s——防断线重试风暴
     reconnection: true,
     reconnectionDelay: 3000,
     query: { task_id: taskId },
@@ -142,7 +143,7 @@ function createSocketIoConnection({ channel, taskId }: RealtimeConnectionOptions
 export function createRealtimeConnection(
   opts: RealtimeConnectionOptions,
 ): RealtimeConnection {
-  // B8.4 退役批：socket.io 为默认形态（native WS 后端端点已删）；
+  // B8.4 起：socket.io 为默认形态（native WS 后端端点已删）；
   // VITE_REALTIME_TRANSPORT=native 保留本地逃生口（仅前端实现，无服务端）
   const transport = import.meta.env.VITE_REALTIME_TRANSPORT as string | undefined;
   if (transport === "native") {

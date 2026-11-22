@@ -24,94 +24,6 @@ const PongMessage = z.object({
 export const ProtocolMessage = z.discriminatedUnion("type", [SubscribedMessage, PongMessage]);
 
 // ---------------------------------------------------------------------------
-// evolution 通道业务事件（payload 实证：api/runner.py、api/routes/ws.py）
-// ---------------------------------------------------------------------------
-
-const dnaLike = z.record(z.string(), z.unknown()).nullable().optional();
-
-const EvolutionTaskStarted = z.object({
-  type: z.literal("task_started"),
-  task_id: z.string(),
-  status: z.string(),
-  target_score: z.number(),
-  max_generations: z.number(),
-});
-
-const EvolutionTaskSnapshot = z.object({
-  type: z.literal("task_snapshot"),
-  task_id: z.string(),
-  status: z.string(),
-  current_generation: z.number(),
-  best_score: z.number().nullable(),
-  target_score: z.number().nullable(),
-  max_generations: z.number().nullable(),
-  current_phase: z.string().nullable(),
-});
-
-const PhaseChanged = z.object({
-  type: z.literal("phase_changed"),
-  task_id: z.string(),
-  phase: z.string(),
-});
-
-const PopulationStarted = z.object({
-  type: z.literal("population_started"),
-  task_id: z.string(),
-  population_count: z.number(),
-  best_score_ever: z.number(),
-  total_generations_so_far: z.number(),
-});
-
-const StrategyDiscovered = z.object({
-  type: z.literal("strategy_discovered"),
-  task_id: z.string(),
-  strategy_id: z.string(),
-  score: z.number(),
-  fitness: z.number(),
-  qualified: z.boolean(),
-  name: z.string().nullable(),
-  generation: z.number(),
-});
-
-const GenerationComplete = z.object({
-  type: z.literal("generation_complete"),
-  task_id: z.string(),
-  generation: z.number(),
-  best_score: z.number(),
-  best_fitness: z.number(),
-  avg_score: z.number(),
-  target_score: z.number(),
-  max_generations: z.number(),
-  qualified_count: z.number().optional(),
-  champion_dna: dnaLike,
-});
-
-const EvolutionComplete = z.object({
-  type: z.literal("evolution_complete"),
-  task_id: z.string(),
-  stop_reason: z.string(),
-  total_generations: z.number(),
-  champion_score: z.number(),
-  generation: z.number(),
-  best_score: z.number(),
-  best_fitness: z.number(),
-  target_score: z.number(),
-  max_generations: z.number(),
-});
-
-export const EvolutionEvent = z.discriminatedUnion("type", [
-  EvolutionTaskStarted,
-  EvolutionTaskSnapshot,
-  PhaseChanged,
-  PopulationStarted,
-  StrategyDiscovered,
-  GenerationComplete,
-  EvolutionComplete,
-]);
-
-export type EvolutionEvent = z.infer<typeof EvolutionEvent>;
-
-// ---------------------------------------------------------------------------
 // trading 通道业务事件（模拟交易域七事件——payload 实证：core/paper_trading/
 // runtime/executor.py _push 构造点 + api/realtime.py _emit_task_snapshot）
 // ---------------------------------------------------------------------------
@@ -216,10 +128,6 @@ function validate<T>(channel: string, schema: z.ZodType<T>, raw: unknown): Valid
     issues: parsed.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}: ${i.message}`),
   });
   return { kind: "invalid" };
-}
-
-export function validateEvolutionMessage(raw: unknown): ValidatedMessage<EvolutionEvent> {
-  return validate("evolution", EvolutionEvent, raw);
 }
 
 export function validateTradingMessage(raw: unknown): ValidatedMessage<TradingEvent> {

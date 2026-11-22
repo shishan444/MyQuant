@@ -1,16 +1,16 @@
 {
   "py_native": {
-    "total_return": "-0.004119327843981391",
-    "sharpe_ratio": "-0.2994134600974649",
-    "max_drawdown": "-0.0323203793285228",
-    "win_rate": "0.5",
+    "total_return": "0.07457632176898676",
+    "sharpe_ratio": "8.614108375406325",
+    "max_drawdown": "-0.03450899098130966",
+    "win_rate": "1.0",
     "total_trades": 2
   },
   "json_roundtrip": {
-    "total_return": -0.004119327843981391,
-    "sharpe_ratio": -0.2994134600974649,
-    "max_drawdown": -0.0323203793285228,
-    "win_rate": 0.5,
+    "total_return": 0.07457632176898676,
+    "sharpe_ratio": 8.614108375406325,
+    "max_drawdown": -0.03450899098130966,
+    "win_rate": 1.0,
     "total_trades": 2
   }
 }

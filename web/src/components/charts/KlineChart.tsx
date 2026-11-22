@@ -3,10 +3,9 @@
  *
  * 职能：统一承担 K 线、指标线、标记与多 pane 副图的可视化渲染，并对消费方
  * 暴露命令式句柄 KlineChartHandle（视口操作与观测序列挂线）。
- * 价值与服务对象：六消费方三条链共用一套渲染形制——策略研究链（Lab
- * hypothesis 模式主图、BacktestModePanel 回测结果图、SceneModePanel 场景
- * 模式图）、实盘呈现链（TradingChart 实盘 K 线与 trail 线、LiveTrading
- * 直播页精简形态）、验证复核链（RecordDetail 验证记录 D2 复核图）。
+ * 价值与服务对象：多消费方三条链共用一套渲染形制——策略研究链（Lab
+ * hypothesis 模式主图）、模拟交易呈现链（TradingChart K 线与 trail 线）、
+ * 验证复核链（RecordDetail 验证记录 D2 复核图）。
  * 职责边界：只管渲染与视口命令——数据全经 props 进入（本组件不取数、
  * 不做业务判定）；主题色单源于 chartThemes 与 theme/tokens，指标开关
  * 状态经 stores/chart-settings，标记与观测序列原语经 charts/primitives。

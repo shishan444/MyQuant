@@ -3,7 +3,7 @@
  * 能力锚的前端镜像，与后端 tests/api/test_endpoint_parity.py 互为独立
  * 证据；npm test 全量绿隐含「前端调用面 ⊆ 路由面」）。
  *
- * - T5-a：src 全部 API 调用点（api.* 与 streamSse 记 POST 两形态）
+ * - T5-a：src 全部 API 调用点（api.* 形态）
  *   ⊆ web/openapi.json 路由面（再生成权威基准源）；模板参数段归一
  *   （含 ${...} 与 encodeURIComponent(...) 形制）。
  * - T5-WS：前端 WS channel 字面量集 ⊆ 后端 socket.io @sio.on 注册面
@@ -12,8 +12,8 @@
  *
  * 挂载时点（F0）预期红：调用面差集=25 对象死调用（26−1：union-
  * balance 经后端薄壳恢复变活调用）+evolution channel（两端皆死）。
- * U1-U10 清理完成后差集清零转绿（F6）；U1/U4 批次 sse.ts 随删后
- * streamSse 特判提取规则随批次移除（零死规则残留）。
+ * U1-U10 清理完成后差集清零转绿（F6）；sse.ts 随 U8 批次删除后
+ * streamSse 特判提取规则已同步移除（零死规则残留）。
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -23,7 +23,7 @@ const SRC_ROOT = join(__dirname, "../..");
 const OPENAPI_PATH = join(__dirname, "../../../openapi.json");
 const REALTIME_SERVER_PATH = join(
   __dirname,
-  "../../../../../api/realtime.py",
+  "../../../../api/realtime.py",
 );
 
 /** 路径模板段归一：${expr} 与 {name} 两形制 → {} */
@@ -74,7 +74,6 @@ function collectSourceFiles(dir: string): string[] {
 
 const CALL_RE =
   /(?:api|apiFetch)\.(get|post|put|patch|delete)(?:<[^<>]*>)?\(\s*([`"'])(\/api\/[^`"']*)\2/g;
-const SSE_RE = /streamSse\(\s*[`"'](\/api\/[^`"']*)[`"']/g;
 
 function frontendSurface(): Set<string> {
   const out = new Set<string>();
@@ -83,15 +82,12 @@ function frontendSurface(): Set<string> {
     for (const match of text.matchAll(CALL_RE)) {
       out.add(`${match[1].toUpperCase()} ${normPath(match[3])}`);
     }
-    for (const match of text.matchAll(SSE_RE)) {
-      out.add(`POST ${normPath(match[1])}`);
-    }
   }
   return out;
 }
 
 describe("T5-a 前端调用面 ⊆ 路由面", () => {
-  it("api.* 与 streamSse 两形态的每条调用都有后端路由在", () => {
+  it("api.* 的每条调用都有后端路由在", () => {
     const routes = routeSurface();
     const front = frontendSurface();
     expect(front.size).toBeGreaterThan(0);

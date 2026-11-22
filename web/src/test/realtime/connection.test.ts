@@ -69,7 +69,7 @@ function withMockWs<T>(fn: () => T): T {
   }
 }
 
-const opts = { channel: "evolution" as const, taskId: "t1" };
+const opts = { channel: "trading" as const, taskId: "t1" };
 
 describe("实现一 · 原生 WS 连接", () => {
   beforeEach(() => {
@@ -84,7 +84,7 @@ describe("实现一 · 原生 WS 连接", () => {
   it("连接到契约 URL（/ws/{channel}/{taskId}）", () => {
     withMockWs(() => {
       createRealtimeConnection(opts);
-      expect(MockWebSocket.getLast().url).toContain("/ws/evolution/t1");
+      expect(MockWebSocket.getLast().url).toContain("/ws/trading/t1");
     });
   });
 
@@ -158,7 +158,7 @@ describe("实现二 · socket.io 连接（就位未启用）", () => {
   it("开关开启时走 socket.io 分支并连接契约 namespace", () => {
     vi.stubEnv("VITE_REALTIME_TRANSPORT", "socketio");
     const conn: RealtimeConnection = createRealtimeConnection(opts);
-    expect(ioMock).toHaveBeenCalledWith("/evolution", expect.objectContaining({ query: { task_id: "t1" } }));
+    expect(ioMock).toHaveBeenCalledWith("/trading", expect.objectContaining({ query: { task_id: "t1" } }));
     conn.close();
     expect(lastSocket().disconnect).toHaveBeenCalled();
     vi.unstubAllEnvs();
@@ -187,7 +187,7 @@ describe("实现二 · socket.io 连接（就位未启用）", () => {
 
   it("默认（无开关）走 socket.io 分支（B8.4 退役批后默认反转）", () => {
     vi.unstubAllEnvs();
-    const c = createRealtimeConnection({ channel: "evolution", taskId: "t1" });
+    const c = createRealtimeConnection({ channel: "trading", taskId: "t1" });
     expect(ioMock).toHaveBeenCalled();
     c.close();
   });

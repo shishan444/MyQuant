@@ -1,0 +1,254 @@
+{:candidates [
+ {:score 1.0
+  :language "typescript"
+  :left {:file "components/charts/primitives/positionBand.ts", :start-line 97, :end-line 100}
+  :right {:file "components/charts/primitives/segmentBand.ts", :start-line 112, :end-line 115}
+  :left-nodes 37
+  :right-nodes 37}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "components/validationRecords/RecordDetail.tsx", :start-line 54, :end-line 57}
+  :right {:file "components/validationRecords/fullRangeData.ts", :start-line 41, :end-line 44}
+  :left-nodes 60
+  :right-nodes 60}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "hooks/useDatasets.ts", :start-line 41, :end-line 51}
+  :right {:file "hooks/useDatasets.ts", :start-line 53, :end-line 63}
+  :left-nodes 110
+  :right-nodes 110}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "hooks/useDatasets.ts", :start-line 41, :end-line 51}
+  :right {:file "hooks/useDatasets.ts", :start-line 65, :end-line 75}
+  :left-nodes 110
+  :right-nodes 110}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "hooks/useDatasets.ts", :start-line 41, :end-line 51}
+  :right {:file "hooks/useStrategies.ts", :start-line 43, :end-line 53}
+  :left-nodes 110
+  :right-nodes 110}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "hooks/useDatasets.ts", :start-line 41, :end-line 51}
+  :right {:file "hooks/useStrategies.ts", :start-line 55, :end-line 65}
+  :left-nodes 110
+  :right-nodes 110}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "hooks/useDatasets.ts", :start-line 53, :end-line 63}
+  :right {:file "hooks/useDatasets.ts", :start-line 65, :end-line 75}
+  :left-nodes 110
+  :right-nodes 110}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "hooks/useDatasets.ts", :start-line 53, :end-line 63}
+  :right {:file "hooks/useStrategies.ts", :start-line 43, :end-line 53}
+  :left-nodes 110
+  :right-nodes 110}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "hooks/useDatasets.ts", :start-line 53, :end-line 63}
+  :right {:file "hooks/useStrategies.ts", :start-line 55, :end-line 65}
+  :left-nodes 110
+  :right-nodes 110}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "hooks/useDatasets.ts", :start-line 65, :end-line 75}
+  :right {:file "hooks/useStrategies.ts", :start-line 43, :end-line 53}
+  :left-nodes 110
+  :right-nodes 110}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "hooks/useDatasets.ts", :start-line 65, :end-line 75}
+  :right {:file "hooks/useStrategies.ts", :start-line 55, :end-line 65}
+  :left-nodes 110
+  :right-nodes 110}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "hooks/useEvolution.ts", :start-line 86, :end-line 97}
+  :right {:file "hooks/useEvolution.ts", :start-line 112, :end-line 123}
+  :left-nodes 144
+  :right-nodes 144}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "hooks/useStrategies.ts", :start-line 43, :end-line 53}
+  :right {:file "hooks/useStrategies.ts", :start-line 55, :end-line 65}
+  :left-nodes 110
+  :right-nodes 110}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "hooks/useValidation.ts", :start-line 5, :end-line 13}
+  :right {:file "hooks/useValidation.ts", :start-line 15, :end-line 23}
+  :left-nodes 74
+  :right-nodes 74}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "lib/utils.ts", :start-line 27, :end-line 30}
+  :right {:file "lib/utils.ts", :start-line 40, :end-line 43}
+  :left-nodes 43
+  :right-nodes 43}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "lib/utils.ts", :start-line 27, :end-line 30}
+  :right {:file "pages/BatchBacktest.tsx", :start-line 52, :end-line 55}
+  :left-nodes 43
+  :right-nodes 43}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "lib/utils.ts", :start-line 27, :end-line 30}
+  :right {:file "pages/Verify.tsx", :start-line 49, :end-line 52}
+  :left-nodes 43
+  :right-nodes 43}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "lib/utils.ts", :start-line 40, :end-line 43}
+  :right {:file "pages/BatchBacktest.tsx", :start-line 52, :end-line 55}
+  :left-nodes 43
+  :right-nodes 43}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "lib/utils.ts", :start-line 40, :end-line 43}
+  :right {:file "pages/Verify.tsx", :start-line 49, :end-line 52}
+  :left-nodes 43
+  :right-nodes 43}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "pages/BatchBacktest.tsx", :start-line 52, :end-line 55}
+  :right {:file "pages/Verify.tsx", :start-line 49, :end-line 52}
+  :left-nodes 43
+  :right-nodes 43}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "pages/Strategies.tsx", :start-line 42, :end-line 45}
+  :right {:file "pages/Strategies.tsx", :start-line 47, :end-line 50}
+  :left-nodes 49
+  :right-nodes 49}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/datasets.ts", :start-line 10, :end-line 14}
+  :right {:file "services/strategies.ts", :start-line 98, :end-line 103}
+  :left-nodes 67
+  :right-nodes 67}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/evolution.ts", :start-line 12, :end-line 18}
+  :right {:file "services/trading.ts", :start-line 46, :end-line 52}
+  :left-nodes 77
+  :right-nodes 77}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/scene.ts", :start-line 13, :end-line 17}
+  :right {:file "services/trading.ts", :start-line 58, :end-line 62}
+  :left-nodes 46
+  :right-nodes 46}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/scene.ts", :start-line 13, :end-line 17}
+  :right {:file "services/validation.ts", :start-line 4, :end-line 8}
+  :left-nodes 46
+  :right-nodes 46}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/scene.ts", :start-line 13, :end-line 17}
+  :right {:file "services/validation.ts", :start-line 10, :end-line 14}
+  :left-nodes 46
+  :right-nodes 46}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/strategies.ts", :start-line 118, :end-line 131}
+  :right {:file "services/strategies.ts", :start-line 133, :end-line 146}
+  :left-nodes 127
+  :right-nodes 127}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/trading.ts", :start-line 58, :end-line 62}
+  :right {:file "services/validation.ts", :start-line 4, :end-line 8}
+  :left-nodes 46
+  :right-nodes 46}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/trading.ts", :start-line 58, :end-line 62}
+  :right {:file "services/validation.ts", :start-line 10, :end-line 14}
+  :left-nodes 46
+  :right-nodes 46}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/trading.ts", :start-line 81, :end-line 88}
+  :right {:file "services/trading.ts", :start-line 92, :end-line 99}
+  :left-nodes 81
+  :right-nodes 81}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/trading.ts", :start-line 81, :end-line 88}
+  :right {:file "services/trading.ts", :start-line 101, :end-line 108}
+  :left-nodes 81
+  :right-nodes 81}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/trading.ts", :start-line 81, :end-line 88}
+  :right {:file "services/trading.ts", :start-line 110, :end-line 117}
+  :left-nodes 81
+  :right-nodes 81}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/trading.ts", :start-line 92, :end-line 99}
+  :right {:file "services/trading.ts", :start-line 101, :end-line 108}
+  :left-nodes 81
+  :right-nodes 81}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/trading.ts", :start-line 92, :end-line 99}
+  :right {:file "services/trading.ts", :start-line 110, :end-line 117}
+  :left-nodes 81
+  :right-nodes 81}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/trading.ts", :start-line 101, :end-line 108}
+  :right {:file "services/trading.ts", :start-line 110, :end-line 117}
+  :left-nodes 81
+  :right-nodes 81}
+ {:score 1.0
+  :language "typescript"
+  :left {:file "services/validation.ts", :start-line 4, :end-line 8}
+  :right {:file "services/validation.ts", :start-line 10, :end-line 14}
+  :left-nodes 46
+  :right-nodes 46}
+ {:score 0.913043478261
+  :language "typescript"
+  :left {:file "services/datasets.ts", :start-line 43, :end-line 48}
+  :right {:file "services/datasets.ts", :start-line 61, :end-line 67}
+  :left-nodes 84
+  :right-nodes 91}
+ {:score 0.875
+  :language "typescript"
+  :left {:file "services/evolution.ts", :start-line 82, :end-line 87}
+  :right {:file "services/evolution.ts", :start-line 89, :end-line 93}
+  :left-nodes 76
+  :right-nodes 69}
+ {:score 0.869565217391
+  :language "typescript"
+  :left {:file "services/datasets.ts", :start-line 43, :end-line 48}
+  :right {:file "services/evolution.ts", :start-line 12, :end-line 18}
+  :left-nodes 84
+  :right-nodes 77}
+ {:score 0.869565217391
+  :language "typescript"
+  :left {:file "services/datasets.ts", :start-line 43, :end-line 48}
+  :right {:file "services/trading.ts", :start-line 46, :end-line 52}
+  :left-nodes 84
+  :right-nodes 77}
+ {:score 0.869565217391
+  :language "typescript"
+  :left {:file "services/datasets.ts", :start-line 61, :end-line 67}
+  :right {:file "services/evolution.ts", :start-line 12, :end-line 18}
+  :left-nodes 91
+  :right-nodes 77}
+ {:score 0.869565217391
+  :language "typescript"
+  :left {:file "services/datasets.ts", :start-line 61, :end-line 67}
+  :right {:file "services/trading.ts", :start-line 46, :end-line 52}
+  :left-nodes 91
+  :right-nodes 77}
+]}

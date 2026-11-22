@@ -95,13 +95,8 @@ export const CHART_INDICATOR_SERIES_COLORS = {
   boll: "#F59E0B",
 };
 
-/** ScoreTrendChart 系列区分色族（fe-chart-single-lib 组 4.1 自 ScoreTrendChart
- *  组件内局部常量迁入——avgLine/targetLine/axisLabel/grid 四字面为图表系列
- *  区分语义色，tokens 无对应族；字面值原样迁不改值，集中白名单单源） */
-export const SCORE_TREND_AVG_LINE_COLOR = "rgba(168,85,247,0.4)";
-export const SCORE_TREND_TARGET_LINE_COLOR = "#94A3B8";
-export const SCORE_TREND_AXIS_LABEL_COLOR = "#64748B";
-export const SCORE_TREND_GRID_LINE_COLOR = "rgba(100,116,139,0.15)";
+// （ScoreTrendChart 四区分色〔avg/target/axis/grid〕随 Evolution 域退役
+//  删除——fix-replay-gap-alignment U1 批次收口）
 
 export const CHART_COLORS = {
   /** 阳线实体/影线颜色 */

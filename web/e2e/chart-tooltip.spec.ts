@@ -4,8 +4,9 @@
  * 数据真实性终审层：真实服务+真实数据+真实 canvas+真实鼠标移动（零 mock）——
  * G-1 Equity 悬停金额值域锁正则+浮层 boundingBox 完整含于图表容器（R-F
  * 「不出容器边界」行为终审；真布局下 measure 非 0，宽高传反/返回值未用于
- * style 类 jsdom 不可判别缺陷在此可拦）；G-2 时间行形态；G-3 离图消失；
- * G-4 ScoreTrend 悬停头部在场。web/e2e 首例 mouse.move 悬停用例。
+ * style 类 jsdom 不可判别缺陷在此可拦）；G-2 时间行形态；G-3 离图消失。
+ * web/e2e 首例 mouse.move 悬停用例（G-4 ScoreTrend 用例随 evolution 域
+ * 退役删除——fix-replay-gap-alignment U1）。
  *
  * 金额验收正则（change 工件 tasks.md 组 5 唯一持久权威副本，三方定稿）：
  * /^\$-?(\d+\.\d{2}M|\d+\.\dK|1000|\d{1,3})$/
@@ -79,31 +80,5 @@ test.describe("图表悬停浮层（CARD-01 方向 A）", () => {
     // G-3：mouse.move 移出图表容器 → 浮层不可见
     await page.mouse.move(box!.x - 20, box!.y - 20);
     await expect(tooltip).toBeHidden({ timeout: 5_000 });
-  });
-
-  test("G-4 ScoreTrend：进化曲线悬停头部在场（第 N 代）", async ({ page }) => {
-    test.setTimeout(120_000);
-    // main-paths 04 同链路：历史任务列表 → 行展开 → 进化曲线
-    await page.goto("/evolution");
-    await expect(page.getByText("历史任务")).toBeVisible();
-    await page.waitForFunction(
-      () => document.querySelectorAll("table tbody tr").length > 0,
-      { timeout: 15_000 },
-    );
-    await page.locator("table tbody tr").first().locator("button").first().click();
-    const curveBtn = page.getByRole("button", { name: "进化曲线" });
-    await expect(curveBtn).toBeVisible();
-    await curveBtn.click();
-
-    // 悬停图表区中心 → 浮层头部「第 N 代」在场（真实代记录反查）
-    const container = page.getByTestId("score-chart-container");
-    await expect(container).toBeVisible({ timeout: 15_000 });
-    await container.scrollIntoViewIfNeeded();
-    const box = await container.boundingBox();
-    expect(box).not.toBeNull();
-    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
-    const tooltip = page.getByTestId("score-tooltip");
-    await expect(tooltip).toBeVisible({ timeout: 5_000 });
-    await expect(tooltip.getByText(/^第 \d+ 代$/)).toBeVisible();
   });
 });

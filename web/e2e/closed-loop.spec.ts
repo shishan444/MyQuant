@@ -4,9 +4,10 @@
  * 前后端真实服务（webServer 拉起，dev 库 data/quant.db）：
  * - 4.3 页面驱动 L2：页面渲染数字 = API 数字 = 裁判判定数字
  *   （裁判期望值由 tests/reference/ 参照实现预生成 __fixtures__/closed-loop-expected.json）
- * - 4.1 闭环主链路：种子 → 进化小种群真跑（<60s）→ 冠军 → verify 复验 → 模拟盘 → 停止
- * - 4.2 流式序列：socket 序列语义已在后端锚定（3.4 processor 步序/total +
- *   B8 socket 层）；页面层锚定批量页真实加载无错、终态收敛
+ * - 4.1 闭环主链路：种子 → 白名单挂盘契约 → 挂盘全链 → R-10 幂等复验
+ *   （原进化 REST 段随 evolution 域退役删除——fix-replay-gap-alignment U1）
+ * - 4.2 批量页加载锚随 batch-backtest 页退役删除（U4）——socket 序列
+ *   语义已在后端锚定（3.4 processor 步序/total + B8 socket 层）
  * 隔离：dataset E2ECL_4h 测试后清理；任务 natural-terminal。
  */
 import { test, expect, type APIRequestContext } from '@playwright/test'
@@ -84,50 +85,15 @@ test('4.3 页面数字 = API 数字 = 裁判判定数字', async ({ page, reques
   expect([200, 204]).toContain(del.status())
 })
 
-test('4.1 闭环主链路：种子→进化→冠军→verify 复验→模拟盘', async ({ request }) => {
+test('4.1 闭环主链路：种子→白名单挂盘契约→挂盘全链→R-10 幂等复验', async ({ request }) => {
   await seedDataset(request)
   const deadline = Date.now() + 90_000
-
-  // ── 进化小种群真跑（pop 4 × 1 代，continuous=False 有限语义）
-  const evo = await request.post(`${API}/api/evolution/tasks`, {
-    data: { initial_dna: DNA, symbol: 'E2ECL', timeframe: '4h',
-            target_score: 80, score_template: 'profit_first',
-            population_size: 4, max_generations: 1, continuous: false },
-  })
-  expect(evo.status()).toBe(201)
-  const taskId = (await evo.json()).task_id
-
-  let task: Record<string, unknown> = {}
-  while (Date.now() < deadline) {
-    task = await (await request.get(`${API}/api/evolution/tasks/${taskId}`)).json()
-    if (['completed', 'stopped', 'failed'].includes(String(task.status))) break
-    await page_wait(1000)
-  }
-  // T-D4 复验位：真服务进化终态 completed-only（fallback ValueError 根因
-  // 已由 3c833753 消除；本断言红=复验捕获残留→按 proposal 升级条款转为
-  // 修复任务）
-  expect(task.status).toBe('completed')
-
-  // ── 冠军产出（终态后可取）
-  const eff = await (await request.get(`${API}/api/evolution/tasks/${taskId}/strategies`)).json()
-  expect(Array.isArray(eff.strategies)).toBe(true)
 
   // ── R-10 复验段（T-R10 复验位）：两次 POST 同 payload 断言（下方实现）
 
   // ── 模拟盘（纸盘新域）：库内策略上盘 → 停止（状态机收敛）。
   // 旧域 dna_json 直传已退役（frontend-switch-and-retire R.1）——新域
   // 创建只收 strategy_id（DNA 由后端从策略库流转快照）
-  // 冠军直查（判别式第 1 行「库中可查」的 e2e 面）：首跑（干净库）时
-  // champion 内嵌 id 即入库行 GET 200；重复跑时同签名幂等保留既有行
-  // （save_strategy 不新建），内嵌 id 与库行 id 分叉 → 404 是 spec 保持
-  // 项「跨任务边角由签名口径注记句承接」的如实表达（内嵌 id 200 义务
-  // 的主锚在 pytest M1 不变式族）
-  const evolved = Array.isArray(eff.strategies) ? eff.strategies : []
-  expect(evolved.length, '冠军产出非空（终态冠军入库已修复）').toBeGreaterThan(0)
-  const championId = (evolved[0] as Record<string, unknown>).strategy_id as string
-  const chk = await request.get(`${API}/api/strategies/${championId}`)
-  expect([200, 404]).toContain(chk.status())
-
   // 挂盘契约断言（fix/closed-loop-whitelist-contract）：库内 E2ECL 策略
   // 挂盘必拒 422——2026-10-28 纸盘品种白名单用户裁决（固定订阅制，白
   // 名单外零数据接入不订阅不装载）在 e2e 面锚定。载体用「确保在库」的
@@ -179,16 +145,6 @@ test('4.1 闭环主链路：种子→进化→冠军→verify 复验→模拟盘
 
   const del = await request.delete(`${API}/api/data/datasets/E2ECL_4h`)
   expect([200, 204]).toContain(del.status())
-})
-
-test('4.2 批量页真实加载（流式终态的页面锚）', async ({ page }) => {
-  const errors: string[] = []
-  page.on('pageerror', (e) => errors.push(String(e)))
-  await page.goto('/batch-backtest')
-  await expect(
-    page.getByText(/批量回测|策略数/).first(),
-  ).toBeVisible({ timeout: 15_000 })
-  expect(errors, '页面 JS 错误').toEqual([])
 })
 
 function page_wait(ms: number) {

@@ -1,7 +1,8 @@
 /**
  * 06 策略库对齐批单测（alignment-batch D4）。
  * name=NULL 兜底（完整 strategy_id）/六态 chips（计数+筛选+draft 补拉合并）/
- * 四段履历聚合（诞生/验证/模拟/审计）/DNA 五段呈现。
+ * 三段履历聚合（诞生/模拟/审计——验证段随 verify 会话体系退役删除
+ * fix-replay-gap-alignment U8）/DNA 五段呈现。
  * 服务层全 mock（零外网红线）。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -12,7 +13,6 @@ import { MemoryRouter } from "react-router";
 vi.mock("@/services/strategies", () => ({
   getStrategies: vi.fn(),
   getStrategiesByStatus: vi.fn(),
-  getVerifyHistory: vi.fn(),
   deleteStrategy: vi.fn(),
   updateStrategy: vi.fn(),
 }));
@@ -52,18 +52,6 @@ const ACTIVE = mkStrategy("st-active-0001-full-id", null, "active");
 const PAPER = mkStrategy("st-paper-0002", "模拟策略A", "paper");
 const DRAFT = mkStrategy("st-draft-0003", "草稿策略B", "draft");
 
-const VERIFY_HISTORY = {
-  items: [
-    {
-      result_id: "r1", strategy_id: "st-active-0001-full-id", strategy_name: null,
-      symbol: "BTCUSDT", timeframe: "4h", data_start: "2026-01-01", data_end: "2026-02-01",
-      total_return: 0.12, sharpe_ratio: 1.5, max_drawdown: -0.1, total_trades: 30,
-      fitness: 1.2, qualified: 1, thresholds: null, star: 2, created_at: "2026-10-05T00:00:00Z",
-    },
-  ],
-  total: 1,
-};
-
 const PAPER_TASKS = {
   tasks: [
     { task_id: "pt1", strategy_id: "st-active-0001-full-id", status: "completed", created_at: "2026-10-06T00:00:00Z" },
@@ -87,7 +75,6 @@ beforeEach(() => {
   // 主视图（status 缺省排除 draft）+draft 补拉——模拟两次请求合并语义
   vi.mocked(strat.getStrategies).mockResolvedValue({ items: [ACTIVE, PAPER], total: 2 } as never);
   vi.mocked(strat.getStrategiesByStatus).mockResolvedValue({ items: [DRAFT], total: 1 } as never);
-  vi.mocked(strat.getVerifyHistory).mockResolvedValue(VERIFY_HISTORY as never);
   vi.mocked(trading.listTradingTasks).mockResolvedValue(PAPER_TASKS as never);
 });
 
@@ -160,17 +147,15 @@ describe("Strategies（06 策略库·对齐批）", () => {
     expect(screen.getByTestId("strategy-status-draft")).toHaveTextContent("草稿");
   });
 
-  it("四段履历聚合：展开行呈现诞生/验证/模拟/审计四段（审计如实披露无端点）", async () => {
+  it("三段履历聚合：展开行呈现诞生/模拟/审计三段（审计如实披露无端点；验证段随 U8 退役）", async () => {
     setup();
     await screen.findByText("草稿策略B");
     fireEvent.click(screen.getAllByTestId("strategy-name")[0]);
     expect(await screen.findByTestId("career-record")).toBeInTheDocument();
     // 诞生段：日期+来源
     expect(screen.getByTestId("career-segment-birth")).toBeInTheDocument();
-    // 验证段：1 条记录+最近日期+星级
-    const verifySeg = screen.getByTestId("career-segment-verify");
-    expect(verifySeg).toHaveTextContent("1 条");
-    expect(verifySeg).toHaveTextContent("★2");
+    // 验证段已退役：不渲染
+    expect(screen.queryByTestId("career-segment-verify")).not.toBeInTheDocument();
     // 模拟段：1 个任务+最近状态（completed→已完结）
     expect(screen.getByTestId("career-segment-paper")).toHaveTextContent("1 个任务");
     expect(screen.getByTestId("career-segment-paper")).toHaveTextContent("已完结");

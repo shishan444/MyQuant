@@ -7,15 +7,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Lab } from "@/pages/Lab";
-import { Evolution } from "@/pages/Evolution";
 import { Strategies } from "@/pages/Strategies";
 import { Verify } from "@/pages/Verify";
 import { Trading } from "@/pages/Trading";
 import { DataManagement } from "@/pages/DataManagement";
 import { Settings } from "@/pages/Settings";
-import { BatchBacktest } from "@/pages/BatchBacktest";
 import { Plugins } from "@/pages/Plugins";
-import { LiveTrading } from "@/pages/LiveTrading";
 import { Workbench } from "@/pages/Workbench";
 
 const queryClient = new QueryClient({
@@ -30,16 +27,16 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/workbench" replace /> },
       { path: "/lab", element: <ErrorBoundary><Lab /></ErrorBoundary> },
-      { path: "/evolution", element: <ErrorBoundary><Evolution /></ErrorBoundary> },
       { path: "/strategies", element: <ErrorBoundary><Strategies /></ErrorBoundary> },
       { path: "/verify", element: <ErrorBoundary><Verify /></ErrorBoundary> },
-      { path: "/batch-backtest", element: <ErrorBoundary><BatchBacktest /></ErrorBoundary> },
       { path: "/trading", element: <ErrorBoundary><Trading /></ErrorBoundary> },
       { path: "/data", element: <ErrorBoundary><DataManagement /></ErrorBoundary> },
       { path: "/settings", element: <ErrorBoundary><Settings /></ErrorBoundary> },
       { path: "/workbench", element: <ErrorBoundary><Workbench /></ErrorBoundary> },
-      { path: "/live", element: <ErrorBoundary><LiveTrading /></ErrorBoundary> },
       { path: "/plugins", element: <ErrorBoundary><Plugins /></ErrorBoundary> },
+      // catch-all：退役路由（/evolution /batch-backtest /live 等）与未知
+      // 路径统一重定向工作台（U10——无死链接白屏）
+      { path: "*", element: <Navigate to="/workbench" replace /> },
     ],
   },
 ]);

@@ -190,10 +190,6 @@ describe("Workbench（01 观察工作台）", () => {
       expect.objectContaining({ symbol: "BTCUSDT", months_back: 5 }));
   });
 
-  it("CARD-03 api/mcp 原型文案照排+D1 底注（fe-workbench-wiring 形制）", async () => {
-    setup();
-    // fe-workbench-wiring：D1 前原型文案照排+底注（真状态面归 be-workbench-support D1 接线）
-    expect(await screen.findByText(/api :8000 在线 · mcp :8800 在线/)).toBeInTheDocument();
-    expect(await screen.findByText(/进程状态端点待建/)).toBeInTheDocument();
-  });
+  // CARD-03 api/mcp 原型文案用例随 B4 进程状态原型区退役删除
+  // （fix-replay-gap-alignment U7——D1 端点落地后再接真值）
 });

@@ -19,16 +19,8 @@ export const SYMBOL_OPTIONS = [
 
 export const TIMEFRAME_POOL_OPTIONS = ["1d", "4h", "1h", "30m", "15m", "5m", "1m", "3d"] as const;
 
-export const TIMEFRAME_LABELS: Record<string, string> = {
-  "1d": "1D",
-  "4h": "4H",
-  "1h": "1H",
-  "30m": "30M",
-  "15m": "15M",
-  "5m": "5M",
-  "1m": "1M",
-  "3d": "3D",
-};
+// （TIMEFRAME_LABELS 短标签表随 Evolution 任务详情域退役零消费删除——
+//  fix-replay-gap-alignment U1 批次收口；全量中文标签见 TIMEFRAME_SELECT_OPTIONS）
 
 // 下拉全量选项（中文标签、更全集）
 export const TIMEFRAME_SELECT_OPTIONS = [
@@ -219,19 +211,8 @@ export const CONDITION_OPTIONS = [
   { value: "wick_touch", label: "影线触及" },
 ];
 
-// ---------------------------------------------------------------------------
-// 评分模板标签（任务详情展示用）
-// ---------------------------------------------------------------------------
-
-export const SCORE_TEMPLATE_LABELS: Record<string, string> = {
-  explorer: "收益探索",
-  optimizer: "稳健收益",
-  max_return: "极致收益",
-  // 历史别名
-  profit_first: "收益优先",
-  steady: "稳健优先",
-  risk_first: "风控优先",
-};
+// （SCORE_TEMPLATE_LABELS 评分模板标签随 Evolution 任务详情域退役零消费
+//  删除——fix-replay-gap-alignment U1 批次收口）
 
 // ---------------------------------------------------------------------------
 // 适应度评估的缺省需求
@@ -257,24 +238,6 @@ export const FITNESS_COLOR_THRESHOLDS: Record<string, { good: number; mid: numbe
   calmar: { good: 2.0, mid: 1.0 },
   annual_return: { good: 0.15, mid: 0.08 },
 };
-
-// ---------------------------------------------------------------------------
-// Task status
-// ---------------------------------------------------------------------------
-
-import type { EvolutionTaskStatus } from "@/types/api";
-
-export const STATUS_LABELS: Record<EvolutionTaskStatus, string> = {
-  pending: "等待中",
-  running: "探索中",
-  paused: "已暂停",
-  stopped: "已停止",
-  completed: "已完成",
-};
-
-export function isActiveStatus(status: EvolutionTaskStatus): boolean {
-  return status === "running" || status === "pending";
-}
 
 // ---------------------------------------------------------------------------
 // MTF (Multi-Timeframe) colors
@@ -306,37 +269,9 @@ export const CHART_INDICATOR_DEFAULTS: import("@/types/api").ChartIndicatorConfi
   vol: { enabled: true, position: "overlay" },
 };
 
-// ---------------------------------------------------------------------------
-// Leverage & Direction
-// ---------------------------------------------------------------------------
-
-export const LEVERAGE_OPTIONS = [
-  { value: 1, label: "1x" },
-  { value: 2, label: "2x" },
-  { value: 3, label: "3x" },
-  { value: 5, label: "5x" },
-  { value: 10, label: "10x" },
-] as const;
-
-export const DIRECTION_OPTIONS = [
-  { value: "long", label: "做多" },
-  { value: "short", label: "做空" },
-  { value: "mixed", label: "混合探索" },
-] as const;
-
-// ---------------------------------------------------------------------------
-// 停止原因标签
-// ---------------------------------------------------------------------------
-
-export const STOP_REASON_LABELS: Record<string, string> = {
-  target_reached: "达到目标分数",
-  stagnation: "长期无改善(停滞)",
-  decline: "分数持续下降",
-  max_generations: "达到最大代数",
-  user_stop: "用户手动停止",
-  error: "运行异常",
-  invalid_dna: "无效种子DNA",
-};
+// （LEVERAGE_OPTIONS/DIRECTION_OPTIONS〔Lab 保存表单用〕随 Lab 验证保存
+//  动作链退役删除——fix-replay-gap-alignment U5 批次收口；STOP_REASON_LABELS
+//  任务详情标签随 U1 批次收口）
 
 // ---------------------------------------------------------------------------
 // SL 档位标签

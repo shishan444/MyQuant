@@ -112,14 +112,14 @@ export const CHART_VC = {
 
 /**
  * 图表三色板页面变体映射（单一权威——各页 change 按表消费不得各自发明）：
- * 05 进化图表+07 交易图列=CHART_VA；08 深空图列+B6r=CHART_VB；03 K线复核=CHART_VC；
+ * 07 交易图列=CHART_VA；B6r 决策快照=CHART_VB；03 K线复核=CHART_VC；
  * 02 实验室中列=主体系紫底不消费（取色实证）；01/04/06/09/设置/插件不消费。
  * 蜡烛恒等规则：三色板只管底/面板/辅线/浮层/文字色，K 线涨跌色一律 POLARITY。
+ * （05-evolution 键随 evolution 域退役删除——fix-replay-gap-alignment U1；
+ *  08-live 键随 LiveTrading 页退役删除——U6）
  */
 export const CHART_VARIANT_MAP = {
-  "05-evolution": "va",
   "07-trading": "va",
-  "08-live": "vb",
   "08-b6r-decisions": "vb",
   "03-validation-review": "vc",
 } as const;
