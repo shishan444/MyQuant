@@ -169,6 +169,22 @@ class TestT1aGeneTfReplayRun:
             f"{expect_from}（前视）")
         assert first_fill_bar in main_idx, "成交时点落在区间内 1h bar 上"
 
+        # 投影序列直证（BT-01 补强第二层——判别力不依赖数据分布）：
+        # 期望序列按契约手写——触发 4h bar 收盘时刻（expect_from）前的
+        # 全部基准索引上投影恒 False、其后持续 True（确定性拉升段
+        # RSI 保持 >60，状态窗持续开）。投影单破（挂载去 +tf）在此段
+        # 直接红，不依赖回放链 feeder 切片防线兜底（端到端时点断言的
+        # 判别对象=双防线联合语义——单破不红属纵深设计，两层互补）。
+        from core.data.mtf_alignment import project_completed_bool
+
+        proj = project_completed_bool(rsi.fillna(0) > 60, main_idx, "4h")
+        before = proj.loc[: expect_from - pd.Timedelta(hours=1)]
+        after = proj.loc[expect_from:]
+        assert len(before) > 0 and not before.any(), (
+            f"收盘可见点前出现 True（前视）：{before[before].index[:3]}")
+        assert len(after) > 0 and after.all(), (
+            "收盘可见点起状态窗应持续开（拉升段 RSI 维持 >60）")
+
 
 class TestT1bGeneTfPaperMount:
     """T1-b：基因级标注纸盘装载（prepare 通过+三处分支进入证据面）。"""
