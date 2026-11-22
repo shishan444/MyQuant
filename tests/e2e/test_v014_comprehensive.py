@@ -2,7 +2,9 @@
 
 职能：console error 守护+导航+布局与页面内容三类断言，覆盖全部路由页。
 口径已对齐当前前端：i18n 中文化+路由重构（/library→/strategies，新增
-/verify /batch-backtest /trading）+settings 分区重组（通用/指标参数/数据
+/verify /trading；/batch-backtest 已随 fix-replay-gap-alignment U4
+批量回测域退役删条目——FT-01：适配停留工作区被 checkout 吞掉，本次
+补落地）+settings 分区重组（通用/指标参数/数据
 管理/关于，移除 Evolution Config/API Keys）+lab 转型假设验证工具。
 服务对象：前端各页验收（v010-v016 冒烟网一员，自管 fixture 零前置、
 零外网）。
@@ -58,12 +60,13 @@ class TestConsoleErrors:
 
 
 class TestNavigation:
-    """Test client-side navigation between pages (当前 9 个路由)."""
+    """Test client-side navigation between pages (当前 8 个路由——/batch-backtest 已随 U4 退役)."""
 
     # nav 链接对齐 Sidebar 实际清单（d9a6a0b 前端重构后：/lab 仍在路由表
     # 但已不在 nav；/verify 前端链接待 F4 联动退役——retire-verify-sessions
-    # 后端面已 404，纯前端 nav 断言暂保留）
-    ROUTES = ["/workbench", "/verify", "/batch-backtest", "/plugins", "/strategies", "/trading", "/data", "/settings"]
+    # 后端面已 404，纯前端 nav 断言暂保留；/batch-backtest 已随 U4 批量
+    # 回测域退役删除）
+    ROUTES = ["/workbench", "/verify", "/plugins", "/strategies", "/trading", "/data", "/settings"]
 
     def test_sidebar_navigation_links_work(self, page: Page):
         page.goto(BASE, timeout=10000)
