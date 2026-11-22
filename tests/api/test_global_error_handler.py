@@ -131,7 +131,10 @@ _EXPECTED_CATCHES = {
     # 回放端点宽窄双通道窄通道（fix-replay-task-lifecycle 2.3）：bare
     # re-raise 防吞——删则上游 ResearchError（数据/参数语义）掉进宽
     # 通道被转 REPLAY_EXECUTION_FAILED 500 丢原语义
-    "api/routes/research/validation.py": ("except ResearchError:",),
+    # union-balance 薄壳恢复（fix-replay-gap-alignment 2.5）加第二
+    # catch（as exc 转结构化出站）——两形态并册
+    "api/routes/research/validation.py": (
+        "except ResearchError:", "except ResearchError as exc:"),
 }
 
 # research_error_to_http 消费点（文件 + 语句语义）：hypothesis_cards 为
@@ -140,6 +143,9 @@ _EXPECTED_CONSUMERS = {
     "api/app.py": ("import", "call"),  # 模块级 import + 全局 handler 调用
     "api/routes/research/common.py": ("def",),  # 唯一定义
     "api/routes/research/plugins.py": ("import", "call"),  # 模块级 import + 保留块调用
+    # union-balance 薄壳恢复（fix-replay-gap-alignment 2.5）：import+
+    # except 转结构化出站
+    "api/routes/research/validation.py": ("import", "call"),
     # hypothesis_cards.py 消费点随 cards 端点族退役移除（retire-legacy）
 }
 

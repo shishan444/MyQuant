@@ -553,10 +553,10 @@ class TestResearchStatusLiveReadout:
                 " '2026-10-18T00:00:00')"))
         got = client.get(f"/api/paper-trading/tasks/{tid}")
         assert got.json()["research_status"] == "verified"  # 迁移后 B
-        # 反向：经真实 revalidate 端点回 draft（archived→draft 合法边）
-        _force_strategy_status(db, "st-1", "archived")
-        resp = client.post("/api/strategies/st-1/revalidate")
-        assert resp.status_code == 200, resp.text
+        # 反向：策略状态回 draft（revalidate 端点已随孤儿清理退役
+        # ——fix-replay-gap-alignment 2.5；状态构造轨直改，断言对象
+        # 仍是 research_status 随策略状态的重推导序）
+        _force_strategy_status(db, "st-1", "draft")
         got2 = client.get(f"/api/paper-trading/tasks/{tid}")
         assert got2.json()["research_status"] == "draft"  # 序①赢
         assert paper.get_task(db, tid)["research_status_snapshot"] == \

@@ -72,7 +72,6 @@ SIBLING_MODULES = (
 SIBLING_MOUNTED_PATHS = (
     "/api/strategies",                        # crud 列表/创建
     "/api/strategies/{strategy_id}",          # crud 详情/更新/删除
-    "/api/strategies/{strategy_id}/revalidate",
 )
 
 # ── 退役完整性三形制（tasks.md 任务 1 分拣形制 B/C）──

@@ -17,19 +17,21 @@ STRATEGY_STATUSES: frozenset = frozenset({
     "draft", "active", "paper", "candidate", "live", "archived",
 })
 
-# 迁移矩阵封闭集（8 对逐对清单；同态对不入矩阵=not_migrated 域）：
-# 四条执行链边+四条归档边。len 计数锚：len(TRANSITION_MATRIX)==8
+# 迁移矩阵封闭集（7 对逐对清单；同态对不入矩阵=not_migrated 域）：
+# 四条执行链边+三条归档边。len 计数锚：len(TRANSITION_MATRIX)==7
 # 断言入测试（多写/漏写/重复必红）。
 # 晋级三边（paper→candidate/candidate→live/live→archived）与
 # qualify/manual_promote/retire 三 trigger 已随实盘晋级链退役删除
 # （retire-legacy-subsystems Q2=A 瘦身，2026-11-16）——candidate/live
 # 成为休眠态：六态值域不收缩（存量行照常可读），存量 candidate 行经
 # manual_archive 可归档，live 行无出边（SUCCESSORS[live]=∅，冻结只读）。
+# archived→draft 重启重验边随本 change 退役（fix-replay-gap-alignment
+# 2.5：边唯一触发器为人工 REST 端点且零使用——PM 裁决 a 2026-11-21，
+# archived 转纯终态，复活走删除留档重评估）。
 _TRANSITION_PAIRS: Tuple[Tuple[str, str], ...] = (
     ("draft", "active"),        # 转正（研究链 promote）
     ("active", "paper"),        # 上盘
     ("paper", "active"),        # 纸盘任务结束回流
-    ("archived", "draft"),      # 重启重验
     ("draft", "archived"),      # 归档（证伪自动+人工）
     ("active", "archived"),     # 归档（人工）
     ("paper", "archived"),      # 归档（人工）
@@ -37,11 +39,11 @@ _TRANSITION_PAIRS: Tuple[Tuple[str, str], ...] = (
 )
 TRANSITION_MATRIX: FrozenSet[Tuple[str, str]] = frozenset(_TRANSITION_PAIRS)
 
-# 触发枚举（六值；与矩阵边的挂钩见 TRIGGER_EDGES——映射完备性断言
+# 触发枚举（五值；与矩阵边的挂钩见 TRIGGER_EDGES——映射完备性断言
 # 入测试：矩阵每边至少被一个 trigger 覆盖）
 TRIGGERS: frozenset = frozenset({
     "credential", "mount", "task_end",
-    "manual_archive", "revalidate", "refute",
+    "manual_archive", "refute",
 })
 
 # trigger → 合法边集。refute 边集只有 (draft, archived)：refuted 时
@@ -56,15 +58,14 @@ TRIGGER_EDGES: Dict[str, frozenset] = {
         ("draft", "archived"), ("active", "archived"), ("paper", "archived"),
         ("candidate", "archived"),
     }),
-    "revalidate": frozenset({("archived", "draft")}),
     "refute": frozenset({("draft", "archived")}),
 }
 
-# 人工 trigger 封闭集+人工边封闭集（REQ-1-02 人工点封闭列举：
-# 人工归档/archived→draft 全部走 transit——集合外的状态变更点不存在；
-# manual_promote/retire 已随晋级链退役）
+# 人工 trigger 封闭集+人工边封闭集（人工点封闭列举：人工归档——
+# 集合外的状态变更点不存在；manual_promote/retire 已随晋级链退役，
+# revalidate 已随 archived→draft 边退役删除）
 MANUAL_TRIGGERS: frozenset = frozenset({
-    "manual_archive", "revalidate",
+    "manual_archive",
 })
 MANUAL_EDGES: frozenset = frozenset().union(
     *(TRIGGER_EDGES[t] for t in MANUAL_TRIGGERS))

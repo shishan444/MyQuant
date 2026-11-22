@@ -13,18 +13,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 
-from core.persistence.orm.engine import engine_for
 from core.persistence.repository.strategy import (
-    batch_delete_by_source_task,
     count_strategies,
     delete_strategy,
     find_by_gene_signature,
     get_strategy,
     list_strategies,
-    list_transition_events,
     save_strategy,
     update_strategy,
 )
@@ -38,7 +34,7 @@ from api.schemas import (
     StrategyUpdate,
 )
 from core.strategy.lifecycle import transit
-from core.strategy.lifecycle.machine import LifecycleError, SUCCESSORS
+from core.strategy.lifecycle.machine import LifecycleError
 
 logger = logging.getLogger(__name__)
 
@@ -342,154 +338,3 @@ def delete_strategy_endpoint(
                       "note": "非 draft 删除请求转归档（DELETE 端点）"})
     except LifecycleError as exc:
         raise _lifecycle_error_to_http(exc) from exc
-
-
-@router.get("/{strategy_id}/transitions")
-def list_strategy_transitions(
-    strategy_id: str, db_path: Path = Depends(get_db_path),
-):
-    """策略状态迁移事件史（be-strategy-transitions D7）：created_at 升序
-    审计时序；evidence_json 解析嵌入（NULL→None）；零事件 200 空集。"""
-    if get_strategy(db_path, strategy_id) is None:
-        raise HTTPException(404, detail="Strategy not found")
-    events = list_transition_events(db_path, strategy_id)
-    for e in events:
-        raw = e.pop("evidence_json", None)
-        try:
-            # t3r9 A1 修正：坏 JSON→None 不炸行（spec Scenario 三基准
-            # 一致；原 500 形态系实施漏看 spec——通道外手改面生产不可达，
-            # 降级语义以 spec 为准）
-            e["evidence"] = json.loads(raw) if raw else None
-        except (json.JSONDecodeError, TypeError):
-            e["evidence"] = None
-    return {"items": events, "total": len(events)}
-
-
-@router.post("/{strategy_id}/revalidate")
-def revalidate_strategy_endpoint(
-    strategy_id: str,
-    db_path: Path = Depends(get_db_path),
-) -> StrategyResponse:
-    """归档重启重验（build-strategy-lifecycle 3.4，沿 stop/clone 动作
-    端点形制）：archived→draft+旧验证统计作废重置（五列：verify_count
-    置 0，verify_avg_score/verify_best_score/verify_star/last_verified_at
-    置 NULL——models.py verify 组列）+validation_records 不删不改（审计
-    事实）+迁移事件 evidence 记作废明细（重置前快照——重置步骤中断时
-    旧值可自事件追溯）+水位不归零（事件 append-only）。非
-    archived→409 STRATEGY_ILLEGAL_TRANSITION。迁移+重置两步同事务
-    （CARD-03）：重置失败则迁移一并回滚，不留「已 draft 但旧统计
-    未作废」中间态。"""
-    existing = get_strategy(db_path, strategy_id)
-    if existing is None:
-        raise HTTPException(status_code=404, detail="Strategy not found")
-    if existing.get("status") != "archived":
-        raise _lifecycle_error_to_http(LifecycleError(
-            code="STRATEGY_ILLEGAL_TRANSITION",
-            message="仅 archived 策略可重启重验",
-            status=409,
-            detail={"strategy_id": strategy_id,
-                    "from_status": existing.get("status"),
-                    "to_status": "draft",
-                    "allowed_successors": sorted(SUCCESSORS["archived"])}))
-    invalidated = {
-        "verify_count": existing.get("verify_count"),
-        "verify_avg_score": existing.get("verify_avg_score"),
-        "verify_best_score": existing.get("verify_best_score"),
-        "verify_star": existing.get("verify_star"),
-        "last_verified_at": existing.get("last_verified_at"),
-    }
-    engine = engine_for(db_path)
-    try:
-        with engine.begin() as conn:
-            transit(db_path, strategy_id, target="draft",
-                    trigger="revalidate",
-                    evidence={"invalidated_stats": invalidated}, conn=conn)
-            update_strategy(
-                db_path, strategy_id=strategy_id, conn=conn,
-                verify_count=0, verify_avg_score=None,
-                verify_best_score=None, verify_star=None,
-                last_verified_at=None)
-    except LifecycleError as exc:
-        raise _lifecycle_error_to_http(exc) from exc
-    row = get_strategy(db_path, strategy_id)
-    return _strategy_row_to_response(row)
-
-
-# ── 批量管理（research-tooling-data-quality 卡 D：按任务圈定的常设
-#    管理通道——一次性全量清理由 change-2 任务 2.9 执行，本端点与其
-#    正交并存；source_task_id 必填=无圈定的全库批量删除不提供）──
-
-
-class BatchDeleteRequest(BaseModel):
-    """批量删除请求体（confirm 契约=删除不可无声执行）。"""
-    source_task_id: str
-    generation_gt: Optional[int] = None
-    best_score_lt: Optional[float] = None
-    confirm: bool = False
-
-
-@router.post("/batch")
-def batch_delete_strategies(
-    payload: BatchDeleteRequest,
-    db_path: Path = Depends(get_db_path),
-) -> Dict[str, Any]:
-    """按进化任务批量物理删除其产物策略（不可逆——与单策略 DELETE
-    的归档语义不同，端点分离承载语义差异）。
-
-    确认契约：confirm≠true（含缺省）→ 422 结构化拒绝，detail 附
-    matched_count 预览数+criteria 回显+score_summary（best_score
-    分布摘要 {count,min,p25,median,p75,max,null_count}——count 为
-    非 NULL 参与分布数、null_count 单独披露；1 行退化五数全同值、
-    ≥2 行 inclusive 插值、空集五数全 None）；confirm=true → 单事务
-    批量 DELETE（先查后删同事务），返回 {deleted_count, criteria,
-    matched_before}；幂等：重复调用 matched 0→deleted_count=0。
-    generation_gt/best_score_lt 可选收紧（预览与执行同判据）。
-
-    挂盘预检（预览与执行共用、先于 confirm 分支；执行分支在 DELETE
-    前同事务完成——防预览到执行间的状态变化）：删除域含受保护策略
-    （status ∈ {paper, candidate, live}——纸盘在验/达标候选/实盘在役）
-    或被非终态纸盘任务（pending/running）引用 → 422
-    BATCH_DELETE_PAPER_REFERENCED（detail 附 protected_count/
-    pt_active_count 与处置提示——先撤盘/归档后再清理）。
-    """
-    criteria: Dict[str, Any] = {"source_task_id": payload.source_task_id}
-    if payload.generation_gt is not None:
-        criteria["generation_gt"] = payload.generation_gt
-    if payload.best_score_lt is not None:
-        criteria["best_score_lt"] = payload.best_score_lt
-
-    try:
-        result = batch_delete_by_source_task(
-            db_path,
-            source_task_id=payload.source_task_id,
-            generation_gt=payload.generation_gt,
-            best_score_lt=payload.best_score_lt,
-            confirm=payload.confirm,
-        )
-    except LifecycleError as exc:
-        raise _lifecycle_error_to_http(exc) from exc
-
-    if not payload.confirm:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "BATCH_DELETE_CONFIRM_REQUIRED",
-                    "message": "批量删除不可无声执行——确认请显式携带 "
-                               "confirm=true",
-                    "detail": {"matched_count": result.matched_count,
-                               "criteria": criteria,
-                               "score_summary": result.score_summary,
-                               "hint": "删除不可逆，确认请显式携带 "
-                                       "confirm=true（预览数见 "
-                                       "matched_count，分数分布见 "
-                                       "score_summary）"}})
-
-    # 审计留痕（不可逆物理删除：何时按什么条件删了多少——事后审计
-    # 五要素 source_task_id/criteria 全键/deleted_count/matched_before）
-    logger.warning(
-        "批量删除执行：source_task_id=%s, criteria=%s, "
-        "deleted_count=%s, matched_before=%d",
-        payload.source_task_id, criteria, result.deleted_count,
-        result.matched_count)
-
-    return {"deleted_count": result.deleted_count, "criteria": criteria,
-            "matched_before": result.matched_count}
