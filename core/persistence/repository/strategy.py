@@ -277,7 +277,8 @@ def update_strategy(
     状态变更唯一合法通道=生命周期迁移服务（写面收敛，行为变化点）。
 
     conn 可选透传（CARD-03，形制同 paper.create_task）：传入则更新走
-    外层事务（如 revalidate 的迁移+统计重置两步同事务）；缺省自开
+    外层事务（同事务复合写——原例证 revalidate 已随 archived→draft
+    边退役）；缺省自开
     单事务（既有直更行为不变）。
     """
     if "status" in fields:

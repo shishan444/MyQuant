@@ -130,8 +130,8 @@ def resolve_research_status(db_path: Path, strategy_row: Dict[str, Any]) -> str:
     审计事实，两者是不同名事实。
 
     三序（序①命中即返回，不评估②③）：
-    ① status="draft" → "draft"（revalidate 回 draft=作废重置的正确
-       表达——历史转正事件不再抬值）；
+    ① status="draft" → "draft"（历史转正事件不再抬值；archived→draft
+       回流边已随 revalidate 退役，draft 仅来自新建）；
     ② ≠draft 且事件表存在该策略 (draft→active) 事件 → "verified"
        （trigger 不限定——该边唯一 trigger=credential，存在性判定；
        序②是新世界首次让 verified 有生产行为的通道）；
