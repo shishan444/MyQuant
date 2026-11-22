@@ -12,7 +12,7 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   BookOpen, Play, Pencil, Trash2, Search,
   Dna, FlaskConical, Zap, ArrowUpDown, ArrowUp, ArrowDown, ChevronRight,
-  Copy, Check, X, GitBranch, AlertCircle,
+  Copy, Check, X, AlertCircle,
 } from "lucide-react";
 import { StarRating } from "@/components/StarRating";
 import { PageTransition } from "@/components/PageTransition";
@@ -382,12 +382,11 @@ function CareerRecord({ strategy, paperTasks }: {
   );
 }
 
-function ExpandPanel({ strategy, paperTasks, onRun, onPaperTrade, onSeedEvolve }: {
+function ExpandPanel({ strategy, paperTasks, onRun, onPaperTrade }: {
   strategy: Strategy;
   paperTasks: TradingTask[];
   onRun: () => void;
   onPaperTrade: () => void;
-  onSeedEvolve: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const m = strategy.metrics;
@@ -471,9 +470,6 @@ function ExpandPanel({ strategy, paperTasks, onRun, onPaperTrade, onSeedEvolve }
               <AntButton type="text" size="small" className="!text-xs text-profit" onClick={onPaperTrade}>
                 <Zap className="h-3 w-3" /> 模拟交易
               </AntButton>
-              <AntButton type="text" size="small" className="!text-xs text-domain-paper" onClick={onSeedEvolve}>
-                <GitBranch className="h-3 w-3" /> 继续进化
-              </AntButton>
               <AntButton type="text" size="small" className="!text-xs !text-text-muted" onClick={handleCopy}>
                 {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
                 {copied ? "已复制" : "复制DNA"}
@@ -539,12 +535,11 @@ interface StrategyRowProps {
   onEdit: () => void;
   onRun: () => void;
   onPaperTrade: () => void;
-  onSeedEvolve: () => void;
 }
 
 function StrategyCardRow({
   strategy, index, paperTasks, selected, expanded,
-  onToggleSelect, onToggleExpand, onDelete, onEdit, onRun, onPaperTrade, onSeedEvolve,
+  onToggleSelect, onToggleExpand, onDelete, onEdit, onRun, onPaperTrade,
 }: StrategyRowProps) {
   const m = strategy.metrics;
   const annualReturn = m?.annual_return;
@@ -688,7 +683,6 @@ function StrategyCardRow({
                 paperTasks={paperTasks}
                 onRun={onRun}
                 onPaperTrade={onPaperTrade}
-                onSeedEvolve={onSeedEvolve}
               />
             </td>
           </tr>
@@ -988,13 +982,6 @@ export function Strategies() {
     navigate("/trading", { state: { strategyId: strategy.strategy_id } });
   };
 
-  const handleSeedEvolve = (strategy: Strategy) => {
-    if (!strategy.dna) return;
-    navigate("/evolution", {
-      state: { seedDna: strategy.dna, symbol: strategy.symbol, timeframe: strategy.timeframe },
-    });
-  };
-
   // --- 加载中 ---
   if (isLoading) return <LoadingSkeleton />;
 
@@ -1227,7 +1214,6 @@ export function Strategies() {
                       onEdit={() => setEditTarget(strategy)}
                       onRun={() => handleRun(strategy)}
                       onPaperTrade={() => handlePaperTrade(strategy)}
-                      onSeedEvolve={() => handleSeedEvolve(strategy)}
                     />
                   ))
                 )}
