@@ -30,6 +30,17 @@ class ResearchError(Exception):
         self.status = status
         self.detail = detail
 
+    def __reduce__(self):
+        """跨进程可序列化（fix-replay-gap-alignment 2.2）。
+
+        status/detail 为 keyword-only 参——3-元组 state 形制：先按
+        位置参重建实例（__init__ 重跑，code/message 恢复、args=
+        (message,) 不变），再经 pickle 默认 state 恢复（obj.__dict__
+        .update）覆写 status/detail。进程内 raise/except/str 零变化
+        （__reduce__ 仅影响 pickle 路径——回放进程池 worker 回传）。"""
+        return (ResearchError, (self.code, self.message),
+                {"status": self.status, "detail": self.detail})
+
 
 def load_stored_json(
     raw: str, *, source: str,

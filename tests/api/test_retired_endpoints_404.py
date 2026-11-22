@@ -50,11 +50,11 @@ RETIRED_ENDPOINTS = [
     ("GET", "/api/research/hypotheses/hyp-x"),
     ("POST", "/api/research/hypotheses/hyp-x/transition"),
     ("GET", "/api/research/hypothesis-cards"),
-    # ── 旧验证（6）──
+    # ── 旧验证（6；union-balance 已薄壳恢复——fix-replay-gap-alignment
+    #    2.5 裁决③主案 a，移出退役清单）──
     ("POST", "/api/research/validate-backtest"),
     ("POST", "/api/research/staged-validation"),
     ("POST", "/api/research/random-window-test"),
-    ("GET", "/api/research/union-balance"),
     ("GET", "/api/research/validation/st-x/report"),
     ("POST", "/api/research/translate/hyp-x"),
     # ── 场景/规则校验（4）──
@@ -67,6 +67,15 @@ RETIRED_ENDPOINTS = [
     ("POST", "/api/research/feature-requests"),
     ("GET", "/api/research/feature-requests"),
     ("PATCH", "/api/research/feature-requests/fr-x"),
+    # ── 孤儿六条（fix-replay-gap-alignment 2.5 裁决③：策略域 3 纯删
+    #    +workbench 3 删+登记重评估——运行时 404 证明，与 T5-e openapi
+    #    逐条点名断言互补）──
+    ("GET", "/api/strategies/st-x/transitions"),
+    ("POST", "/api/strategies/st-x/revalidate"),
+    ("POST", "/api/strategies/batch"),
+    ("GET", "/api/workbench/fleet-summary"),
+    ("GET", "/api/workbench/process-status"),
+    ("GET", "/api/workbench/hypothesis-union-remains"),
 ]
 
 
@@ -83,8 +92,11 @@ class TestRetiredEndpointsUnreachable:
             resp = api_client.delete(path)
         else:
             resp = api_client.get(path)
-        assert resp.status_code == 404, (
+        assert resp.status_code in (404, 405), (
             f"{method} {path} 退役端点意外可达: {resp.status_code}")
+        # 404=路径未注册；405=路径被其他方法占用（如 POST /api/
+        # strategies/batch 撞 GET /{{strategy_id}} 形参路径）——两种
+        # 形态都证明该 (method, path) 路由未注册
 
     def test_openapi_free_of_retired_prefixes(self, api_client) -> None:
         """OpenAPI 路由表静态证明：退役前缀与退役子路径零注册。"""
@@ -92,9 +104,13 @@ class TestRetiredEndpointsUnreachable:
         banned = ("/api/evolution/", "/api/live-trading/",
                   "/hypotheses", "/hypothesis-cards",
                   "/validate-backtest", "/staged-validation",
-                  "/random-window-test", "/union-balance",
+                  "/random-window-test",
                   "/translate/", "/scene/types", "/validate/scene",
-                  "/api/validate", "/plugins/pools", "/feature-requests")
+                  "/api/validate", "/plugins/pools", "/feature-requests",
+                  # 孤儿六条（fix-replay-gap-alignment 2.5——静态面）
+                  "/transitions", "/revalidate", "/strategies/batch",
+                  "/fleet-summary", "/process-status",
+                  "/hypothesis-union-remains")
         hit = [p for p in paths if any(p.startswith(b) or b in p
                                        for b in banned)]
         assert not hit, f"OpenAPI 残留退役路径: {hit}"

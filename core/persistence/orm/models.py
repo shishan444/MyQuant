@@ -315,8 +315,9 @@ class Strategy(Base):
     verify_best_score: Mapped[Optional[float]] = mapped_column(REAL)
     last_verified_at: Mapped[Optional[str]] = mapped_column(Text)
     # verify_star 值域锚定 0-5（be-strategy-transitions rider·doc 形）：
-    # 五槽星级制；唯一写点=revalidate 作废重置（恒置 NULL——统计累计
-    # 写者随五端点退役）；PATCH 无此字段（extra=forbid）——非受控入面
+    # 五槽星级制；统计累计写者随五端点退役、revalidate 作废重置随
+    # archived→draft 边退役——恒 NULL 零写入只读；PATCH 无此字段
+    # （extra=forbid）——非受控入面
     verify_star: Mapped[Optional[int]] = mapped_column(Integer, server_default=text('NULL'))
 
 class VerifySession(Base):

@@ -1,6 +1,6 @@
 /**
  * 权益曲线共享组件（lightweight-charts 单库形态，fe-chart-single-lib 组 2）。
- * Trading/Lab/BatchBacktest 共用；resolveEquityColor 随迁本文件。
+ * Trading/Lab 共用；resolveEquityColor 随迁本文件。
  * jsdom 降级：内建 canvas 可用性检测，jsdom 下跳过初始化保留容器与空态。
  * 悬停浮层（fix-chart-tooltip-restore F1）：subscribeCrosshairMove 订阅，
  * 浮层只消费事件回调与 props 两源数据（R-A），全 JSX 渲染零 HTML 注入面（R-D）。

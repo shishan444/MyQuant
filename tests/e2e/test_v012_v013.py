@@ -52,7 +52,7 @@ class TestV013Settings:
         root = page.locator("#root")
         assert len(root.inner_html()) > 200
 
-    def test_settings_has_evolution_config(self, page: Page):
+    def test_settings_has_general_sections(self, page: Page):
         page.goto(BASE + "/settings", timeout=10000)
         page.wait_for_load_state("domcontentloaded")
         _wait_react(page)

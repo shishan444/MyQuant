@@ -52,15 +52,15 @@ class TestValueDomain:
 class TestTransitionMatrix:
     """矩阵 8 对逐对清单与计数锚。"""
 
-    def test_matrix_len_anchor_8(self):
-        """计数锚：len==8（多写/漏写/重复必红）。"""
-        assert len(TRANSITION_MATRIX) == 8
+    def test_matrix_len_anchor_7(self):
+        """计数锚：len==7（多写/漏写/重复必红；archived→draft 已随
+        revalidate 端点退役删除——fix-replay-gap-alignment 2.5）。"""
+        assert len(TRANSITION_MATRIX) == 7
 
     def test_matrix_pairwise_listing(self):
-        """逐对清单：四条执行链边+四条归档边。"""
+        """逐对清单：三条执行链边+四条归档边。"""
         expected = {
             ("draft", "active"), ("active", "paper"), ("paper", "active"),
-            ("archived", "draft"),
             ("draft", "archived"), ("active", "archived"),
             ("paper", "archived"), ("candidate", "archived"),
         }
@@ -68,7 +68,7 @@ class TestTransitionMatrix:
 
     def test_source_tuple_no_duplicates(self):
         """声明元组逐行互异（frozenset 吞重复——计数锚的声明面防线）。"""
-        assert len(_TRANSITION_PAIRS) == len(set(_TRANSITION_PAIRS)) == 8
+        assert len(_TRANSITION_PAIRS) == len(set(_TRANSITION_PAIRS)) == 7
         assert frozenset(_TRANSITION_PAIRS) == TRANSITION_MATRIX
 
     def test_matrix_edges_within_domain(self):
@@ -88,11 +88,12 @@ class TestTransitionMatrix:
 class TestTriggers:
     """trigger 六枚举与边映射完备性。"""
 
-    def test_triggers_six_values(self):
-        """六枚举封闭（qualify/manual_promote/retire 随晋级链退役）。"""
+    def test_triggers_five_values(self):
+        """五枚举封闭（qualify/manual_promote/retire 随晋级链退役；
+        revalidate 随 archived→draft 边退役删除）。"""
         assert TRIGGERS == frozenset({
             "credential", "mount", "task_end",
-            "manual_archive", "revalidate", "refute"})
+            "manual_archive", "refute"})
 
     def test_trigger_edges_cover_matrix_exactly(self):
         """映射完备：trigger 边并集 == 矩阵（每边至少一个 trigger 覆盖，
@@ -102,15 +103,13 @@ class TestTriggers:
         assert covered == TRANSITION_MATRIX
 
     def test_manual_edge_closed_set(self):
-        """人工边封闭集（REQ-1-02 人工点封闭列举）：四 from 人工归档+
-        archived→draft，共 5 对。"""
+        """人工边封闭集（人工点封闭列举=人工归档）：四 from 人工归档
+        共 4 对（archived→draft 已随 revalidate 退役删除）。"""
         assert MANUAL_EDGES == frozenset({
             ("draft", "archived"), ("active", "archived"),
-            ("paper", "archived"), ("candidate", "archived"),
-            ("archived", "draft")})
+            ("paper", "archived"), ("candidate", "archived")})
         assert MANUAL_EDGES <= TRANSITION_MATRIX
-        assert MANUAL_TRIGGERS == frozenset({
-            "manual_archive", "revalidate"})
+        assert MANUAL_TRIGGERS == frozenset({"manual_archive"})
 
     def test_refute_edge_pinned_to_draft(self):
         """证伪边 from 恒 draft（refuted 时谱系恒 draft 或不存在）。"""
@@ -134,15 +133,15 @@ class TestGrid36ClosedClassification:
         return f != t and pair in TRANSITION_MATRIX
 
     def test_grid_completeness_36(self):
-        """网格完整性：36==8 合法+22 异态非法+6 同态。"""
+        """网格完整性：36==7 合法+23 异态非法+6 同态。"""
         grid = _grid_36()
         legal = [p for p in grid if self._expected_legal(p)]
         same = [p for p in grid if p[0] == p[1]]
         illegal = [p for p in grid
                    if p[0] != p[1] and p not in TRANSITION_MATRIX]
         assert len(grid) == 36
-        assert len(legal) == 8
-        assert len(illegal) == 22
+        assert len(legal) == 7
+        assert len(illegal) == 23
         assert len(same) == 6
 
     @pytest.mark.parametrize("pair", _grid_36())

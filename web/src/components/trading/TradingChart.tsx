@@ -61,7 +61,7 @@ export function TradingChart({ symbol, timeframe, fills, height = 470, isActive,
   // trail 序列经 KlineChartHandle.setObservationSeries 命令式通道挂线
   // （hypothesis-workbench 审查 CARD-04：切 attachObservationSeries 原语——
   // 30s 轮询 refetch 新 trail 数据后获得挂/重挂通道，原 onChartReady 单次
-  // 挂线在数据更新后恒 stale）；形参类型化沿 CARD-13（SceneModePanel 先例）
+  // 挂线在数据更新后恒 stale）；形参类型化沿 CARD-13 先例
   const handleChartReady = useCallback((_chart: IChartApi, candleSeries: ISeriesApi<"Candlestick">) => {
     if (stopLossPrice != null) {
       candleSeries.createPriceLine({

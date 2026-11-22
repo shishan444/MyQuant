@@ -11,11 +11,9 @@ import { fileURLToPath } from "node:url";
 import { CHART_VARIANT_MAP } from "@/theme/tokens";
 
 describe("CHART_VARIANT_MAP 表值锚（G2：单一权威映射表）", () => {
-  it("五键五值精确快照（表值改错/键增删必红）", () => {
+  it("三键三值精确快照（表值改错/键增删必红；05-evolution 随 U1、08-live 随 U6 退役删除）", () => {
     expect(CHART_VARIANT_MAP).toEqual({
-      "05-evolution": "va",
       "07-trading": "va",
-      "08-live": "vb",
       "08-b6r-decisions": "vb",
       "03-validation-review": "vc",
     });
@@ -26,9 +24,7 @@ describe("消费面追溯（G2：各页按表消费）", () => {
   // MAP 键 → 消费组件文件（相对 web/src 根）；import 断言形：
   // import { …CHART_V<x>… } from "@/theme/tokens"
   const consumers: Array<[keyof typeof CHART_VARIANT_MAP, string[]]> = [
-    ["05-evolution", ["components/evolution/ScoreTrendChart.tsx"]],
     ["07-trading", ["components/trading/ChartHud.tsx"]],
-    ["08-live", ["pages/LiveTrading.tsx"]],
     ["08-b6r-decisions", ["components/validationRecords/traceSemantics.ts"]],
     ["03-validation-review", ["components/validationRecords/RecordDetail.tsx"]],
   ];

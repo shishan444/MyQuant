@@ -531,8 +531,10 @@ class TestResearchStatusLiveReadout:
 
     def test_rest_readout_follows_migration(self, paper_api) -> None:
         """正反向夹迁移：挂盘时 unverified（无事件序③）→策略侧出现
-        draft→active 事件→GET 现算 verified→revalidate 回 draft→GET
-        draft（序①赢）——同一任务行快照列全程冻结（现算非列值防回潮）。"""
+        draft→active 事件→GET 现算 verified→构造轨直改回 draft→GET
+        draft（序①赢；revalidate 端点已随孤儿清理退役，状态构造走
+        _force_strategy_status 直改）——同一任务行快照列全程冻结
+        （现算非列值防回潮）。"""
         from sqlalchemy import text
 
         from core.persistence.orm.engine import engine_for
@@ -553,10 +555,10 @@ class TestResearchStatusLiveReadout:
                 " '2026-10-18T00:00:00')"))
         got = client.get(f"/api/paper-trading/tasks/{tid}")
         assert got.json()["research_status"] == "verified"  # 迁移后 B
-        # 反向：经真实 revalidate 端点回 draft（archived→draft 合法边）
-        _force_strategy_status(db, "st-1", "archived")
-        resp = client.post("/api/strategies/st-1/revalidate")
-        assert resp.status_code == 200, resp.text
+        # 反向：策略状态回 draft（revalidate 端点已随孤儿清理退役
+        # ——fix-replay-gap-alignment 2.5；状态构造轨直改，断言对象
+        # 仍是 research_status 随策略状态的重推导序）
+        _force_strategy_status(db, "st-1", "draft")
         got2 = client.get(f"/api/paper-trading/tasks/{tid}")
         assert got2.json()["research_status"] == "draft"  # 序①赢
         assert paper.get_task(db, tid)["research_status_snapshot"] == \

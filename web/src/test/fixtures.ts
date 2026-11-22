@@ -1,7 +1,5 @@
 import type {
-  BacktestResult,
   ChartIndicatorsResponse,
-  DNA,
   PaperFill,
   TradingReport,
   TradingTask,
@@ -134,69 +132,6 @@ export const mockChartSettings = {
   boll: { enabled: true, period: 20, std: 2.0, color: "#F59E0B" },
   rsi: { enabled: true, period: 14, overbought: 70, oversold: 30 },
   vol: { enabled: true, position: "overlay" as const },
-};
-
-// ---------------------------------------------------------------------------
-// Mock: DNA
-// ---------------------------------------------------------------------------
-
-export const mockDNA: DNA = {
-  signal_genes: [
-    {
-      indicator: "ema",
-      params: { period: 10 },
-      role: "entry_trigger",
-      condition: { type: "cross_above", threshold: 20 },
-    },
-  ],
-  logic_genes: { entry_logic: "AND", exit_logic: "OR" },
-  execution_genes: { timeframe: "4h", symbol: "BTCUSDT" },
-  risk_genes: { stop_loss: 0.05, take_profit: 0.1, position_size: 0.3, leverage: 1, direction: "long" },
-  generation: 0,
-  parent_ids: [],
-  mutation_ops: [],
-};
-
-// ---------------------------------------------------------------------------
-// Mock: BacktestResult
-// ---------------------------------------------------------------------------
-
-export const mockBacktestResult: BacktestResult = {
-  result_id: "test-result-001",
-  strategy_id: "test-strategy-001",
-  symbol: "BTCUSDT",
-  timeframe: "4h",
-  data_start: "2025-01-01T00:00:00Z",
-  data_end: "2025-03-01T00:00:00Z",
-  init_cash: 100000,
-  fee: 0.001,
-  slippage: 0.0005,
-  total_return: 0.255,
-  sharpe_ratio: 1.5,
-  max_drawdown: -0.083,
-  win_rate: 0.6,
-  total_trades: 10,
-  total_score: 72,
-  fitness: 0.68,
-  qualified: true,
-  template_name: "default",
-  run_source: "lab",
-  total_funding_cost: 0,
-  liquidated: false,
-  // 基准对照（improve-backtest-benchmark-disclosure 4.2）：excess 自洽 =
-  // total_return - benchmark_return；负超额示例对齐强牛段成色叙事
-  benchmark_return: 0.42,
-  excess_return: -0.165,
-  alpha: -0.21,
-  signals: [
-    { type: "buy" as const, timestamp: "2025-01-05T08:00:00Z", price: 100, reason: "entry" },
-    { type: "sell" as const, timestamp: "2025-01-10T12:00:00Z", price: 110, reason: "exit" },
-  ],
-  equity_curve: [
-    { timestamp: "2025-01-01T00:00:00Z", value: 100000 },
-    { timestamp: "2025-01-10T00:00:00Z", value: 105000 },
-    { timestamp: "2025-02-01T00:00:00Z", value: 125500 },
-  ],
 };
 
 // ---------------------------------------------------------------------------

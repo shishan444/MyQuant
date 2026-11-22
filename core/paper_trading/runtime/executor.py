@@ -40,6 +40,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
 
+from core.analysis.validation_service import required_aux_timeframes
 from core.concurrency.task_control import (
     TaskController,
     TaskStopRequested,
@@ -265,6 +266,9 @@ class PaperTaskExecutor:
         )
         self.dna = dna
         self.params = params
+        # 装载辅周期轴集（fix-replay-gap-alignment 2.1）：__init__ 预计算
+        # 存实例属性——三处门与四处循环同源消费，避免逐 bar 重复求值
+        self._required_aux = required_aux_timeframes(dna)
         self.fill_model = MarketFill(
             float(task_row["fee"]), float(task_row["slippage"]))
         self.interpreter = SignalInterpreter()
@@ -618,14 +622,18 @@ class PaperTaskExecutor:
         # 试算传真实组装（试算传 None 会被 dna_to_signal_set 的 MTF
         # 防御恒拒——8.2 实测缺陷）
         dfs_by_timeframe = None
-        if self.dna.is_mtf:
+        # 或语义扩门（fix-replay-gap-alignment 2.1）：「显式多层级 OR
+        # 轴需求非空」进多周期装载路径——两类老形制（层级/无跨周期引用
+        # 单周期）分支路由逐字节不变（纯增量扩门），基因级标注形制从
+        # 装载即拒变正确装载组装
+        if self.dna.is_mtf or self._required_aux:
             dfs_by_timeframe = self._assemble_prepare_frames(enhanced)
             if dfs_by_timeframe is None:
-                aux = [tf for tf in self.dna.timeframes
-                       if tf != self._timeframe]
+                aux = list(self._required_aux)
                 return self._reject(
                     f"mtf_data_missing: {','.join(sorted(aux))}"
-                    f"（所需周期 {sorted(self.dna.timeframes)}）")
+                    f"（所需周期 "
+                    f"{sorted(set(self.dna.timeframes) | set(self._required_aux))}）")
 
         # 指标可算=DNA 声明指标可产出且信号可评估（装载期信号试算——
         # 残缺数据下指标列缺失，试算即失败，不待运行期炸）
@@ -671,9 +679,7 @@ class PaperTaskExecutor:
         frames: Dict[str, pd.DataFrame] = {self._timeframe: enhanced}
         temp_subs: list[tuple[str, FeedSubscription]] = []
         try:
-            for tf in self.dna.timeframes:
-                if tf == self._timeframe:
-                    continue
+            for tf in self._required_aux:
                 # 快速拒绝面：parquet 缺失直接拒（不触发全量回拉）
                 from core.data.validation import validate_symbol
 
@@ -825,10 +831,10 @@ class PaperTaskExecutor:
             on_funding_arrived=on_funding,
             atr_periods=self._atr_need)
         self.registry.acquire(symbol, self._timeframe, self._main_sub)
-        if self.dna.is_mtf:
-            for tf in self.dna.timeframes:
-                if tf == self._timeframe:
-                    continue
+        # 或语义扩门+循环换源（同 prepare 域单点——订阅面轴集与装载/
+        # 快照三面一致，不漏轴）
+        if self.dna.is_mtf or self._required_aux:
+            for tf in self._required_aux:
                 sub = FeedSubscription(
                     on_frames=self._make_aux_handler(tf),
                     on_funding_arrived=on_funding)
@@ -922,13 +928,12 @@ class PaperTaskExecutor:
         self, main_df: pd.DataFrame,
     ) -> Optional[Dict[str, pd.DataFrame]]:
         """MTF 帧组装（辅周期引用快照；单周期 None——dna_to_signal_set
-        单周期路径不消费该参数）。"""
-        if not self.dna.is_mtf:
+        单周期路径不消费该参数；基因级标注形制经或语义扩门同入组装
+        路径——dfs 含基因轴，求值单点 _evaluate_gene_signal 消费）。"""
+        if not (self.dna.is_mtf or self._required_aux):
             return None
         frames: Dict[str, pd.DataFrame] = {self._timeframe: main_df}
-        for tf in self.dna.timeframes:
-            if tf == self._timeframe:
-                continue
+        for tf in self._required_aux:
             aux = self._aux_frames.get(tf)
             if aux is None:
                 continue

@@ -1,9 +1,8 @@
 {
   "$schema": "https://unpkg.com/knip@6.35.1/schema.json",
   "ignore": [
-    "src/components/evolution/BacktestDrawer.tsx",
-    "src/hooks/useScene.ts",
-    "src/types/strategy.ts",
+    // （evolution/scene/strategy 三条死 ignore 随 U1/U2/U10 清理删除——
+    //  对应文件已删，knip 不再需要豁免）
     "src/types/generated/**"
   ],
   "ignoreDependencies": [

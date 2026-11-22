@@ -6,7 +6,7 @@
 守卫（fixture 两活跃任务场景）；休眠态负向锚（晋级三边 409+存量
 candidate 行 manual_archive 放行——retire-legacy Q2=A 瘦身）；自动
 触发边真实链路（3.1 研究链转正/3.2 证伪/3.3 DELETE 归档/3.4
-revalidate）。
+revalidate——已随 archived→draft 边退役删除，fix-replay-gap-alignment 2.5）。
 
 先行窗中间态声明：active→paper/paper→active 生产触发方（挂盘端点/
 任务终态回调）延后窗接入——本文件经接口级注入触发（trigger 直调
@@ -68,7 +68,6 @@ _LEGAL_EDGE_TABLE = [
     ("active", "paper", "mount", {"task_id": "tk_m"}),
     ("paper", "active", "task_end",
      {"task_id": "tk_m2", "final_status": "completed"}),
-    ("archived", "draft", "revalidate", None),
     ("draft", "archived", "manual_archive", None),
     ("active", "archived", "manual_archive", None),
     ("paper", "archived", "manual_archive", None),
@@ -204,16 +203,16 @@ class TestCountAnchorsFiveWay:
         same = {(s, s) for s in STRATEGY_STATUSES}
         illegal = grid - TRANSITION_MATRIX - same
         table_edges = {(f, t) for f, t, _, _ in _LEGAL_EDGE_TABLE}
-        # ①矩阵 len==8
-        assert len(TRANSITION_MATRIX) == 8
-        # ②B1 合法正向用例==8 且边集与矩阵互锁（漏边/多边/重复都红）
-        assert len(_LEGAL_EDGE_TABLE) == 8
+        # ①矩阵 len==7
+        assert len(TRANSITION_MATRIX) == 7
+        # ②B1 合法正向用例==7 且边集与矩阵互锁（漏边/多边/重复都红）
+        assert len(_LEGAL_EDGE_TABLE) == 7
         assert table_edges == TRANSITION_MATRIX
-        # ③B2 异态非法==22（30−8）
-        assert len(illegal) == 22
+        # ③B2 异态非法==23（30−7）
+        assert len(illegal) == 23
         # ④同态 not_migrated==6
         assert len(same) == 6
-        # ⑤网格==36==8+22+6 完整性
+        # ⑤网格==36==7+23+6 完整性
         assert len(grid) == 36
         assert len(grid) == (len(TRANSITION_MATRIX) + len(illegal)
                              + len(same))
@@ -362,21 +361,3 @@ class TestRealTriggerPaths:
         delete_strategy_endpoint(sid, db_path=db)
         assert get_strategy(db, sid)["status"] == "archived"
         assert _events(db, sid) == [("active", "archived", "manual_archive")]
-
-    def test_archived_to_draft_via_revalidate_endpoint(self, db):
-        """3.4 真实链路：revalidate 端点 archived→draft（事件
-        trigger=revalidate，evidence 含作废统计快照）。"""
-        from api.routes.strategies.crud import revalidate_strategy_endpoint
-        sid = "st_rev"
-        _add(db, sid)
-        _set_status(db, sid, "archived")
-        resp = revalidate_strategy_endpoint(sid, db_path=db)
-        assert resp.status == "draft"
-        assert get_strategy(db, sid)["status"] == "draft"
-        assert _events(db, sid) == [("archived", "draft", "revalidate")]
-        from sqlalchemy import text
-        with engine_for(db).connect() as conn:
-            ev = conn.execute(text(
-                "SELECT evidence_json FROM strategy_transition_event"
-                " WHERE strategy_id=:i"), {"i": sid}).scalar_one()
-        assert "invalidated_stats" in json.loads(ev)

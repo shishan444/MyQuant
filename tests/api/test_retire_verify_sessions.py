@@ -61,7 +61,7 @@ STAR_COLUMNS = (
     "verify_star", "verify_avg_score", "verify_best_score",
     "last_verified_at", "verify_count",
 )
-# 种子非空星级值（与 lifecycle revalidate 测试的种子形制同源）
+# 种子非空星级值（形制沿袭已退役的 lifecycle revalidate 测试——该域随 verify 五端点删除）
 _SEED_STAR_ROW = (4, 71.5, 88.25, "2026-10-01T00:00:00", 3)
 
 # ── C1-4 存活路由（retire-legacy 后 backtest/compare/batch 三核算
@@ -72,7 +72,6 @@ SIBLING_MODULES = (
 SIBLING_MOUNTED_PATHS = (
     "/api/strategies",                        # crud 列表/创建
     "/api/strategies/{strategy_id}",          # crud 详情/更新/删除
-    "/api/strategies/{strategy_id}/revalidate",
 )
 
 # ── 退役完整性三形制（tasks.md 任务 1 分拣形制 B/C）──
@@ -138,8 +137,9 @@ class TestStarColumnsFrozen:
     """C1-2：星级五列存量值冻结快照（Q1 选项 A，完成标准②）。
 
     退役前唯一写入者=verify 端点链路（compute_verify_star 回写）；
-    退役后除 revalidate 生命周期重置（lifecycle 语义，另由
-    TestStrategyRevalidate 承载）外全工程无写入者——本锚用普通
+    退役后全工程零写入者（原 revalidate 生命周期重置亦已随
+    archived→draft 边退役，fix-replay-gap-alignment 2.5——原承载
+    类 TestStrategyRevalidate 随域删除）——本锚用普通
     操作族（读/更新/回测/批回测）验证运行时零触碰。
     """
 

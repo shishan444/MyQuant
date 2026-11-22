@@ -1,7 +1,9 @@
 """沙盒回测端点（retire-legacy-subsystems 任务 5.2——旧验证六端点退役：
 validate-backtest/staged-validation/random-window-test/validation report/
-translate/union-balance 随旧编排与假设链退役，唯 backtest-sandbox 保留
-——快速试错统一流，验证记录唯一生产写入通道）。"""
+translate 随旧编排与假设链退役，唯 backtest-sandbox 保留——快速试错
+统一流，验证记录唯一生产写入通道。union-balance 薄壳恢复
+（fix-replay-gap-alignment 2.5 裁决③主案 a）：query_union_balance
+现役只缺 REST 入口，三参单假设精确查询契约与前端逐键对齐）。"""
 from __future__ import annotations
 
 import logging
@@ -21,6 +23,7 @@ from api.routes.research.common import (
     require_halt_drawdown_pct,
     require_known_timeframe,
     require_task_cap_params,
+    research_error_to_http,
 )
 from core.analysis.errors import ResearchError, require_finite_values
 
@@ -257,3 +260,30 @@ def backtest_replay(
             _replay_record_and_response(db_path, payload, r)
             for r in results]}
     return _replay_record_and_response(db_path, payload, results[0])
+
+
+@router.get("/union-balance")
+def union_balance(
+    symbol: str,
+    timeframe: str,
+    hypothesis_id: str,
+    db_path: Path = Depends(get_db_path),
+    data_dir: Path = Depends(get_data_dir),
+) -> Dict[str, Any]:
+    """判定并集余量查询（0.4.1 R4；fix-replay-gap-alignment 2.5 裁决③
+    主案 a 薄壳恢复——REST 装配约 15 行三依赖现役，前端零改动）。
+
+    三参数必填（账本为假设级——单假设精确查询，与无参全量聚合的
+    hypothesis-union-remains 语义不同，非镜像改名关系）；只读零副作用
+    （不落日志不写库——查询不是研究决策证据）；假设不存在 404 前置
+    判定（不以空清单伪装成功）；数据范围按 parquet 首尾 bar 完整
+    时间戳直读（半开 [首 bar, 尾 bar+1×TF)）。与隔离验证的重叠拦截
+    同一账本两出口——查询 remaining 段发起隔离验证不被拒。
+    """
+    try:
+        require_known_timeframe(timeframe, "timeframe")
+        return vs.query_union_balance(
+            db_path, data_dir,
+            symbol=symbol, timeframe=timeframe, hypothesis_id=hypothesis_id)
+    except ResearchError as exc:
+        raise research_error_to_http(exc) from exc

@@ -1,7 +1,8 @@
 /**
  * 观察台 B 列/C 列观察数据服务（fe-workbench-wiring）：
- * market-snapshot 五维/hypotheses active/log 流——全只读。
- * D8/D9/D11 端点未落地（be-workbench-support 未归档），对应区按底注形制交付。
+ * market-snapshot 五维/log 流——全只读。
+ * D8/D11 端点未落地（be-workbench-support 未归档），对应区按底注形制交付。
+ * （hypotheses active 卡组随死端点退役删除——fix-replay-gap-alignment U7）
  * market-snapshot 缺省四档含 1d——BTCUSDT 1d 现存数据不满足 1d 轴 warmup
  * （2026-11-03 实测 422 RESEARCH_WARMUP_INSUFFICIENT），观察面固定取 4h 主档
  * （与原型「·1h·」示例同为单档主读数语义；as_of/warmup 不足时按 W0 错误态呈现）。
@@ -52,31 +53,6 @@ export async function getMarketSnapshot(
 ): Promise<MarketSnapshotResponse> {
   return api.get("/api/research/market-snapshot", {
     params: { symbol, timeframes },
-  });
-}
-
-/** 在途假设卡组（GET /api/research/hypotheses?status=active&page_size=50——items 形制实测） */
-export interface ActiveHypothesisRow {
-  hypothesis_id: string;
-  statement?: string;
-  status: string;
-  conditions?: {
-    when_conditions?: Array<{
-      subject?: { indicator?: string };
-      action?: string;
-      target?: number;
-    }>;
-  };
-  data_ranges?: Array<{ symbol: string; timeframe: string }>;
-  created_at: string;
-}
-export interface HypothesesResponse {
-  items: ActiveHypothesisRow[];
-  total: number;
-}
-export async function getActiveHypotheses(): Promise<HypothesesResponse> {
-  return api.get("/api/research/hypotheses", {
-    params: { status: "active", page_size: 50 },
   });
 }
 

@@ -216,3 +216,99 @@ def make_mtf_threshold_dna_main4h(
             stop_loss=0.05, take_profit=0.2, position_size=0.1,
             leverage=2, direction="long"),
         layers=layers)
+
+
+def make_gene_tf_dna(
+    *, exec_tf: str = "1h", gene_tf: str = "4h",
+    position_size: float = 0.1, leverage: int = 2,
+) -> StrategyDNA:
+    """基因级标注形制 dna（fix-replay-gap-alignment T1 夹具——缺陷 A
+    生产形制：无 layers、is_mtf=False、执行 1h+entry 基因 timeframe=
+    "4h"，dna.timeframes 退化为 [执行周期] 单元素）。
+
+    entry 双基因 AND：4h 轴 RSI>0 恒真（掩码投影状态窗）×基准轴
+    RSI>0 恒真；exit 永假（RSI>200 恒假）——单次进场后持有到区间
+    末，T1-a 投影时点断言与 T1-c 装载等价对账的稳定面。"""
+    entry_hi = make_signal_gene(
+        indicator="RSI", role=SignalRole.ENTRY_TRIGGER,
+        condition_type="gt", condition_value=0, timeframe=gene_tf)
+    entry_base = make_signal_gene(
+        indicator="RSI", role=SignalRole.ENTRY_TRIGGER,
+        condition_type="gt", condition_value=0)
+    gene_exit = make_signal_gene(
+        indicator="RSI", role=SignalRole.EXIT_TRIGGER,
+        condition_type="gt", condition_value=200)
+    return StrategyDNA(
+        signal_genes=[entry_hi, entry_base, gene_exit],
+        logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
+        execution_genes=ExecutionGenes(timeframe=exec_tf, symbol="BTCUSDT"),
+        risk_genes=RiskGenes(
+            stop_loss=0.05, take_profit=0.2, position_size=position_size,
+            leverage=leverage, direction="long"))
+
+
+def make_layer_equiv_dna(
+    *, exec_tf: str = "1h", hi_tf: str = "4h",
+    position_size: float = 0.1, leverage: int = 2,
+) -> StrategyDNA:
+    """层级形制等价 dna（T1-c 对照轴）：与 make_gene_tf_dna 同语义
+    条件的层级表达——基准层 entry RSI>0 恒真×高周期层 entry RSI>0
+    恒真（层间 cross_layer_logic 缺省 AND），双侧 exit 永假。
+
+    等价性边界（T1-c 注释同款）：4h 侧投影两路语义不同（层路=
+    pulse 脉冲单 bar/基因路=掩码状态窗），恒真条件+对齐网格下两路
+    首触发同 bar（pulse 落位 bar=状态窗起始 bar）——逐位一致断言
+    仅在该条件形制下成立。"""
+    from core.strategy.dna import ExecutionGenes, TimeframeLayer
+    from tests.helpers.data_factory import make_signal_gene
+
+    layers = []
+    for tf in (exec_tf, hi_tf):
+        entry = make_signal_gene(
+            indicator="RSI", role=SignalRole.ENTRY_TRIGGER,
+            condition_type="gt", condition_value=0)
+        exit_gene = make_signal_gene(
+            indicator="RSI", role=SignalRole.EXIT_TRIGGER,
+            condition_type="gt", condition_value=200)
+        layers.append(TimeframeLayer(
+            timeframe=tf,
+            signal_genes=[entry, exit_gene],
+            logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND")))
+    return StrategyDNA(
+        signal_genes=[],
+        logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
+        execution_genes=ExecutionGenes(timeframe=exec_tf, symbol="BTCUSDT"),
+        risk_genes=RiskGenes(
+            stop_loss=0.05, take_profit=0.2, position_size=position_size,
+            leverage=leverage, direction="long"),
+        layers=layers)
+
+
+def make_single_layer_dna(*, exec_tf: str = "4h") -> StrategyDNA:
+    """单层层级形制 dna（T1-h 回归锚）：layers=[执行周期单层]，
+    is_mtf=True 而 required_aux_timeframes=空集——或语义扩门的回归
+    陷阱形制（纯判空换源会使它改道单周期分支路由，L917「等同」是
+    语义宣称非逐字节保证）。
+
+    现状基准（扩门前实测）：_assemble_mtf_frames 返回 {执行周期:
+    main_df} 非 None（MTF 分支路由）；扩门后同形制同结果。"""
+    from core.strategy.dna import ExecutionGenes, TimeframeLayer
+    from tests.helpers.data_factory import make_signal_gene
+
+    entry = make_signal_gene(
+        indicator="RSI", role=SignalRole.ENTRY_TRIGGER,
+        condition_type="gt", condition_value=0)
+    exit_gene = make_signal_gene(
+        indicator="RSI", role=SignalRole.EXIT_TRIGGER,
+        condition_type="gt", condition_value=200)
+    return StrategyDNA(
+        signal_genes=[],
+        logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
+        execution_genes=ExecutionGenes(timeframe=exec_tf, symbol="BTCUSDT"),
+        risk_genes=RiskGenes(
+            stop_loss=0.05, take_profit=0.2, position_size=0.1,
+            leverage=2, direction="long"),
+        layers=[TimeframeLayer(
+            timeframe=exec_tf,
+            signal_genes=[entry, exit_gene],
+            logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"))])

@@ -15,13 +15,6 @@
  * 后端未声明 response_model 的端点响应、纯前端本地类型。
  */
 import type { components } from "./generated/api";
-// 旧验证会话体系类型冻结（retire-verify-sessions F4 联动债务——2026-11-02
-// 退役后端会话端点时未同批再生成 openapi，B1 生成物再生成
-// 〔upgrade-validation-records-list 3.1②〕正确移除退役 schema 后，
-// 旧消费方〔Verify.tsx 会话列表/VerifyThresholds 历史〕的类型引用
-// 由本冻结文件承载（形状自退役前 main 生成物逐字提取）；F4 前端
-// hooks 退役时一并删除本文件与全部引用）
-import type { components as VS } from "./generated-verify-frozen";
 
 type S = components["schemas"];
 
@@ -109,82 +102,6 @@ export type Strategy = Omit<S["StrategyResponse"], "dna" | "metrics"> & {
   metrics?: StrategyMetrics | null;
 };
 
-/** 回测结果 ← 后端 BacktestResponse；equity_curve/signals/dimension_scores 为 dict 洞补形 */
-export type BacktestResult = Omit<
-  S["BacktestResponse"],
-  "equity_curve" | "signals" | "dimension_scores" | "sl_series"
-> & {
-  dimension_scores?: Record<string, number>;
-  equity_curve?: Array<{ timestamp: string; value: number }> | null;
-  signals?: TradeSignal[] | null;
-  /** series 档止损价序列（hypothesis-workbench 组 2 透传；非 series 档 null；
-   * value 可 null=NaN 翻译（REST/bridge NaN→null 传输，SL 未定义期——原语层过滤） */
-  sl_series?: Array<{ time: string; value: number | null }> | null;
-};
-
-/** 交易信号 ← 后端 BacktestResponse.signals 元素（dict 洞补形） */
-export interface TradeSignal {
-  type: "buy" | "sell";
-  timestamp: string;
-  price: number;
-  confidence?: number;
-  reason: string;
-}
-
-/** 任务状态 ← 后端 string（EvolutionTaskResponse.status），消费端判别联合收窄 */
-export type EvolutionTaskStatus = "pending" | "running" | "paused" | "stopped" | "completed";
-
-/**
- * 进化任务 ← 后端 EvolutionTaskResponse。
- * - status/mode/direction 枚举收窄；
- * - champion_metrics/champion_dimension_scores 为 dict 洞补形；
- * - n_workers/elite_ratio/min_annual_return 等为后端字段（后端容器裁决移除中）。
- */
-export type EvolutionTask = Omit<
-  S["EvolutionTaskResponse"],
-  | "status"
-  | "mode"
-  | "direction"
-  | "initial_dna"
-  | "champion_dna"
-  | "champion_metrics"
-  | "champion_dimension_scores"
-  | "champion_satisfaction"
-  | "progress_json"
-> & {
-  status: EvolutionTaskStatus;
-  mode?: "auto" | "seed";
-  direction: "long" | "short" | "mixed";
-  initial_dna?: DNA;
-  champion_dna?: DNA;
-  champion_metrics?: {
-    annual_return: number;
-    sharpe_ratio: number;
-    max_drawdown: number;
-    win_rate: number | null; // 零交易缺失语义
-    calmar_ratio: number;
-    total_trades: number;
-  };
-  champion_dimension_scores?: Record<string, number>;
-  champion_satisfaction?: Record<string, unknown>;
-  progress_json?: Record<string, unknown>;
-};
-
-/** 历史记录 ← 后端 EvolutionHistoryRecord；best_fitness 等后端含 null，前端收窄为可选 */
-export type EvolutionHistoryRecord = Omit<
-  S["EvolutionHistoryRecord"],
-  "best_fitness" | "avg_fitness" | "top3_summary"
-> & {
-  best_fitness?: number;
-  avg_fitness?: number;
-  top3_summary?: string;
-};
-
-/** 达标要求 ← 后端 RequirementsConfigModel；objective 后端必填（default sharpe），前端可选 */
-export type RequirementsConfig = Omit<S["RequirementsConfigModel"], "objective"> & {
-  objective?: string;
-};
-
 /** 数据集 ← 后端 DatasetResponse；quality_status 枚举收窄 */
 export type Dataset = Omit<S["DatasetResponse"], "quality_status"> & {
   quality_status: "complete" | "warning" | "error" | "unknown";
@@ -215,30 +132,10 @@ export type StrategyListResponse = Omit<S["StrategyListResponse"], "items"> & {
   items: Strategy[];
 };
 
-/** 任务列表 ← 后端 EvolutionTaskListResponse；items 收窄为域类型；page/page_size 后端必填（default 1/20），消费端保持可选 */
-export type EvolutionTaskListResponse = Omit<
-  S["EvolutionTaskListResponse"],
-  "items" | "page" | "page_size"
-> & {
-  items: EvolutionTask[];
-  page?: number;
-  page_size?: number;
-};
-
 /** 数据集列表 ← 后端 DatasetListResponse；items 收窄为域类型 */
 export type DatasetListResponse = Omit<S["DatasetListResponse"], "items"> & {
   items: Dataset[];
 };
-
-/**
- * 进化历史响应：service 层视图（非后端契约直译）。
- * 后端真实形状 = EvolutionHistoryResponse { task_id, generations }（见生成源），
- * services/evolution.ts 已适配为 { records, total }；元素为后端契约。
- */
-export interface EvolutionHistoryResponse {
-  records: EvolutionHistoryRecord[];
-  total: number;
-}
 
 /**
  * WS 推送消息已收编实时契约层（src/realtime/schemas.ts，zod 判别联合），
@@ -270,52 +167,30 @@ export type StrategyMetrics = Omit<
   r_squared?: number;
 };
 
-/** 发现策略 ← /api/evolution/strategies 端点（响应未声明 response_model，dict 洞），按实际 JSON 形状 */
-export interface DiscoveredStrategy {
-  strategy_id: string;
-  name: string;
-  dna: DNA;
-  source: "evolution";
-  source_task_id: string;
-  score: number;
-  generation: number;
-  created_at: string;
-  symbol: string;
-  timeframe: string;
-  metrics?: StrategyMetrics | null;
-  fitness?: number;
-  qualified?: boolean;
-}
-
-/** 变异记录 ← WS 推送（非 openapi 契约，G2 收编） */
-export interface MutationRecord {
-  generation: number;
-  operation: string;
-  details: string;
-}
-
-/** 进化产出策略 ← /api/evolution/tasks/{id}/strategies 端点（响应未声明 schema），按实际 JSON 形状 */
-export interface EvolvedStrategy {
-  strategy_id: string;
-  dna: DNA;
-  source: "champion" | "snapshot";
-  generation?: number;
-  score: number;
-  fitness?: number;
-  qualified?: boolean;
-}
-
 // ---------------------------------------------------------------------------
 // Validation types (Strategy Lab v2.3)
 // ---------------------------------------------------------------------------
 
-/** 条件输入 ← 后端 ConditionInput；logic 枚举收窄 */
-export type ConditionInput = Omit<S["ConditionInput"], "logic"> & {
+/**
+ * 条件输入（形状自退役前生成物内联——fix-replay-gap-alignment U10：
+ * 后端 ConditionInput schema 已随 retire-legacy 移出 openapi，本类型为
+ * dna-generator 活消费保留）；0.2.13 混合形制：参数化指标结构化
+ * {indicator, params, field} / 基础列字符串精确名。
+ */
+export interface ConditionInput {
+  /** Subject（混合形制：结构化指标引用或列名字符串） */
+  subject: string | { indicator: string; params: Record<string, unknown>; field?: string | null };
+  /** Action（比较/穿越动作名） */
+  action: string;
+  /** Target（阈值或对端引用，前端形制恒字符串） */
+  target: string;
+  /** Window（时序动作窗口） */
+  window?: number | null;
+  /** Logic（枚举收窄——生成源 string） */
   logic: "AND" | "OR";
-};
-
-/** 验证请求 ← 后端 ValidateRequest */
-export type ValidateRequest = S["ValidateRequest"];
+  /** Timeframe（高周期条件键） */
+  timeframe?: string | null;
+}
 
 /** 图表指标配置（纯前端本地类型：localStorage 持久化形态，作为 query 参数发往后端） */
 export interface ChartIndicatorConfig {
@@ -326,26 +201,9 @@ export interface ChartIndicatorConfig {
   vol: { enabled: boolean; position: "overlay" | "separate" };
 }
 
-/** 触发记录 ← 后端 TriggerRecordResponse */
-export type TriggerRecord = S["TriggerRecordResponse"];
-
-/** 分布桶 ← 后端 ValidateResponse.distribution 元素（dict 洞补形） */
-export interface DistributionBucket {
-  range: [number, number];
-  match_count: number;
-  mismatch_count: number;
-  total_count: number;
-}
-
-/** 验证响应 ← 后端 ValidateResponse；distribution/concentration/extremes 为 dict 洞补形 */
-export type ValidateResponse = Omit<
-  S["ValidateResponse"],
-  "distribution" | "concentration" | "extremes"
-> & {
-  distribution: DistributionBucket[];
-  concentration: Record<string, number[]>;
-  extremes: Array<{ change_pct: number; time: string; is_match: boolean }>;
-};
+// （ValidateRequest/TriggerRecord/ValidateResponse 族随 services/validation
+//  退役零消费删除——fix-replay-gap-alignment U8；ConditionInput 为
+//  dna-generator 活消费保留）
 
 // ---------------------------------------------------------------------------
 // 可用数据源
@@ -361,16 +219,22 @@ export type AvailableSourcesResponse = S["AvailableSourcesResponse"];
 // Rule validation (Strategy Lab v2.4)
 // ---------------------------------------------------------------------------
 
-/** 规则条件 ← 后端 RuleConditionInput；logic 枚举收窄（前端含行首 IF） */
-export type RuleCondition = Omit<S["RuleConditionInput"], "logic"> & {
+/**
+ * 规则条件（形状自退役前生成物内联——fix-replay-gap-alignment U10：
+ * 后端 RuleConditionInput schema 已随 retire-legacy 移出 openapi，本类型
+ * 为 Lab 条件构建器活消费保留）；logic 枚举收窄（前端含行首 IF）。
+ */
+export interface RuleCondition {
   logic: "IF" | "AND" | "OR";
-};
+  timeframe: string;
+  subject: string;
+  action: string;
+  target: string;
+}
 
-/** 规则验证请求 ← 后端 RuleValidateRequest */
-export type RuleValidateRequest = S["RuleValidateRequest"];
-
-/** 规则验证响应 ← 后端 RuleValidateResponse */
-export type RuleValidateResponse = S["RuleValidateResponse"];
+// （RuleValidateRequest/RuleValidateResponse 随 services/validation 退役
+//  零消费删除——fix-replay-gap-alignment U8；RuleCondition 为 Lab 条件
+//  构建器活消费保留）
 
 // ---------------------------------------------------------------------------
 // 图表指标（后端计算）
@@ -397,83 +261,10 @@ export interface ChartIndicatorsResponse {
   } | null;
 }
 
-// ---------------------------------------------------------------------------
-// Strategy Verify (multi-period validation)
-// ---------------------------------------------------------------------------
-
-/** 验证日期区间 ← 后端 VerifyDateRange */
-export type VerifyDateRange = VS["schemas"]["VerifyDateRange"];
-
-/** 验证请求 ← 后端 VerifyRequest */
-export type VerifyRequest = VS["schemas"]["VerifyRequest"];
-
-/** 验证明细 ← 后端 VerifyResultItem */
-export type VerifyResultItem = VS["schemas"]["VerifyResultItem"];
-
-/** 周期汇总 ← 后端 VerifyPeriodSummary */
-export type VerifyPeriodSummary = VS["schemas"]["VerifyPeriodSummary"];
-
-/** 策略汇总 ← 后端 VerifySummaryItem */
-export type VerifySummaryItem = VS["schemas"]["VerifySummaryItem"];
-
-/** 验证响应 ← 后端 VerifyResponse */
-export type VerifyResponse = VS["schemas"]["VerifyResponse"];
-
-/** 验证历史条目 ← 后端 VerifyHistoryItem */
-export type VerifyHistoryItem = VS["schemas"]["VerifyHistoryItem"];
-
-/** 验证历史响应 ← 后端 VerifyHistoryResponse */
-export type VerifyHistoryResponse = VS["schemas"]["VerifyHistoryResponse"];
-
-/** 验证会话 ← 后端 VerifySessionResponse */
-export type VerifySession = VS["schemas"]["VerifySessionResponse"];
-
-/** 验证会话列表 ← 后端 VerifySessionListResponse */
-export type VerifySessionListResponse = VS["schemas"]["VerifySessionListResponse"];
-
-// ---------------------------------------------------------------------------
-// 批量回测（多策略 × 多周期细粒度回测）
-// ---------------------------------------------------------------------------
-
-/** 批量回测请求 ← 后端 BatchBacktestRequest */
-export type BatchBacktestRequest = S["BatchBacktestRequest"];
-
-/** 批量回测结果明细 ← /api/strategies/batch-backtest/{id} 端点（响应未声明 response_model），按实际 JSON 形状 */
-export interface BatchBacktestResultItem {
-  result_id: string;
-  strategy_id: string;
-  strategy_name: string;
-  symbol: string;
-  timeframe: string;
-  data_start: string;
-  data_end: string;
-  total_return: number;
-  sharpe_ratio: number;
-  max_drawdown: number;
-    win_rate: number | null; // 零交易缺失语义
-  total_trades: number;
-  profit_factor: number;
-  fitness: number;
-  qualified: boolean;
-  liquidated: boolean;
-  total_funding_cost: number;
-  error?: string;
-}
-
-/** 批量回测策略汇总 ← 同上端点（响应未声明 schema），按实际 JSON 形状 */
-export interface BatchBacktestSummaryItem {
-  strategy_id: string;
-  strategy_name: string;
-  symbol: string;
-  timeframe: string;
-  avg_total_return: number;
-  avg_sharpe_ratio: number;
-  worst_max_drawdown: number;
-  avg_fitness: number;
-  qualified_count: number;
-  total_periods: number;
-  per_period_results: BatchBacktestResultItem[];
-}
+// （Strategy Verify 域十类型〔DateRange/Request/ResultItem/PeriodSummary/
+//  SummaryItem/Response/HistoryItem/HistoryResponse/Session/SessionList〕
+//  与 VS 冻结 import 随 verify 会话体系退役整段删除——
+//  fix-replay-gap-alignment U8；generated-verify-frozen.ts 同批删）
 
 // ---------------------------------------------------------------------------
 // Trading (模拟交易域——/api/paper-trading 新域，rebuild-paper-trading 切换)

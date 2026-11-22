@@ -1,11 +1,5 @@
 export { SubjectDropdown, getSubjectLabel } from "./SubjectDropdown";
 export { ActionDropdown, getActionLabel } from "./ActionDropdown";
 export { TargetInput, getTargetLabel } from "./TargetInput";
-export { SaveStrategyDialog } from "./SaveStrategyDialog";
-export { BacktestModePanel } from "./BacktestModePanel";
-export { BacktestMetricsPanel } from "./BacktestMetricsPanel";
-export { SceneModePanel } from "./SceneModePanel";
-export { SceneSelector } from "./SceneSelector";
-export { SceneResult } from "./SceneResult";
 export { RuleConditionRow } from "./RuleConditionRow";
 export { RuleConditionGroup } from "./RuleConditionGroup";

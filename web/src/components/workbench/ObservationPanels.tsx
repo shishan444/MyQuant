@@ -6,7 +6,6 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import {
-  getActiveHypotheses,
   getMarketSnapshot,
   getResearchLog,
 } from "@/services/workbenchObservation";
@@ -85,46 +84,6 @@ export function MarketSnapshotCard() {
           as_of {formatTimestamp(tf.as_of, "minute")}
           {tf.window_bars ? ` · 窗 ${tf.window_bars} bar` : ""}
         </p>
-      )}
-    </div>
-  );
-}
-
-/** W-B2b 在途假设卡组（余量列 D9 前底注） */
-export function ActiveHypothesesPanel() {
-  const q = useQuery({
-    queryKey: ["workbench", "active-hypotheses"],
-    queryFn: getActiveHypotheses,
-    refetchInterval: 60_000,
-  });
-  return (
-    <div className="mb-2">
-      <SubTitle>在途假设</SubTitle>
-      {q.isError ? (
-        <ErrLine name="假设列表" />
-      ) : q.isLoading ? (
-        <LoadingLine />
-      ) : (q.data?.items?.length ?? 0) === 0 ? (
-        <p className="text-xs text-text-muted">暂无在途假设</p>
-      ) : (
-        <ul className="divide-y divide-border-faint">
-          {q.data!.items.slice(0, 5).map((h) => (
-            <li key={h.hypothesis_id} className="flex items-center gap-2 py-1 text-xs">
-              <span className="font-mono text-text-secondary">{h.hypothesis_id}</span>
-              <span className="truncate text-text-muted">
-                {h.data_ranges?.[0]
-                  ? `${h.data_ranges[0].symbol} · ${h.data_ranges[0].timeframe}`
-                  : ""}
-                {h.conditions?.when_conditions?.[0]
-                  ? ` ${h.conditions.when_conditions[0].subject?.indicator ?? ""}${
-                      h.conditions.when_conditions[0].action ?? ""
-                    }${h.conditions.when_conditions[0].target ?? ""}`
-                  : h.statement?.slice(0, 16) ?? ""}
-              </span>
-              <span className="ml-auto text-[10px] text-text-muted">余量列待聚合端点</span>
-            </li>
-          ))}
-        </ul>
       )}
     </div>
   );

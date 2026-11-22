@@ -7,15 +7,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import type { ReactNode } from "react";
 
-// mock API 服务层
+// mock API 服务层（runBacktest/compareStrategies 死键随 U4 退役清除）
 vi.mock("@/services/strategies", () => ({
   getStrategies: vi.fn(),
   getStrategy: vi.fn(),
   createStrategy: vi.fn(),
   deleteStrategy: vi.fn(),
   updateStrategy: vi.fn(),
-  runBacktest: vi.fn(),
-  compareStrategies: vi.fn(),
 }));
 
 // mock hooks——useStrategies 保持真实（委托到已 mock 的 API），mock 变更操作
@@ -294,7 +292,8 @@ describe("Strategies page", () => {
     await screen.findByText("策略信息");
     // alignment-batch D4：策略结构区改为 DNA 五段呈现
     expect(screen.getByText("策略结构（DNA 五段）")).toBeInTheDocument();
-    expect(screen.getByText("四段履历")).toBeInTheDocument();
+    // 验证段随 verify 会话体系退役——三段履历（fix-replay-gap-alignment U8）
+    expect(screen.getByText("三段履历")).toBeInTheDocument();
   });
 
   // --- 选中后批量工具栏出现 ---

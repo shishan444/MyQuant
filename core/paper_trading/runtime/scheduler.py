@@ -194,7 +194,10 @@ class PaperScheduler:
 
         origin='paper' 域过滤（fix-replay-task-lifecycle 3.2）：回放
         running 残行（回放执行中崩溃遗留）跳过——不恢复执行、不转
-        error、不改写任何字段（终态清理由回放域异常兜底或人工渠道）。
+        error、不改写任何字段（终态清理由回放域异常兜底、回放域启动
+        期清扫 sweep_orphaned_replay_tasks〔fix-replay-gap-alignment
+        2.3，lifespan 内本扫描旁调用——running/pending 双态置 error〕
+        或人工渠道处理）。
         """
         counts = {"recovered": 0, "untrusted": 0}
         for row in paper_repo.list_tasks(

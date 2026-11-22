@@ -118,6 +118,7 @@ def make_signal_gene(
     condition_type: str = "lt",
     condition_value: float = 30,
     field_name: str | None = None,
+    timeframe: str | None = None,
 ) -> SignalGene:
     """Create a SignalGene with sensible defaults.
 
@@ -128,6 +129,8 @@ def make_signal_gene(
         condition_type: Condition type string (e.g. "lt", "gt", "price_above").
         condition_value: Threshold value for comparison conditions.
         field_name: Optional field name for multi-output indicators.
+        timeframe: 基因级周期标注（None=策略基准周期——fix-replay-
+            gap-alignment T1 夹具透传面）。
 
     Returns:
         SignalGene instance.
@@ -145,6 +148,7 @@ def make_signal_gene(
         role=role,
         field_name=field_name,
         condition=condition,
+        timeframe=timeframe,
     )
 
 

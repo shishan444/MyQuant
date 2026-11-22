@@ -200,6 +200,16 @@ def create_app(
         paper_scheduler = PaperScheduler(
             db_path=db_path, data_dir=data_dir, push=_make_push("/trading"),
             on_concluded=_on_paper_task_concluded)
+        # 回放域残行清扫（fix-replay-gap-alignment 2.3）：先于纸盘启动
+        # 恢复（先收死面再续活面；两扫描域互斥——origin 过滤，先后无
+        # 正确性影响）；返回计数>0 记警告一行（对齐 startup_recover
+        # 计数日志惯例）
+        from core.replay.runner import sweep_orphaned_replay_tasks
+
+        swept = sweep_orphaned_replay_tasks(db_path)
+        if swept:
+            logger.warning(
+                "启动期清扫回放孤儿行 %d 条（orphaned_by_restart）", swept)
         paper_scheduler.startup_recover()
         app.state.paper_scheduler = paper_scheduler
         paper_scheduler.start()

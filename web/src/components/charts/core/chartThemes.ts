@@ -11,7 +11,6 @@ import type { ChartOptions } from "lightweight-charts";
  * 价值：图表衍生色（区域填充/虚线族）以 tokens 单源为基底派生，
  * 不再各自维护 rgba 字面第二实现。
  * 服务对象：chartThemes 衍生色常量（CHART_COLORS.overbought/oversold）
- * 与 ScoreTrendChart 装配（累计最佳线 withAlpha(POLARITY.up, 0.5)）；
  * 与 EquityLineChart 装配（权益面积渐变 topColor/bottomColor，lineColor 三态随迁）；
  * 原消费方 equityOption.ts 已随 echarts 退役删除。
  * 边界：只接受 #RRGGBB 形制（七字符），其他形制输出不可预期。
@@ -95,13 +94,8 @@ export const CHART_INDICATOR_SERIES_COLORS = {
   boll: "#F59E0B",
 };
 
-/** ScoreTrendChart 系列区分色族（fe-chart-single-lib 组 4.1 自 ScoreTrendChart
- *  组件内局部常量迁入——avgLine/targetLine/axisLabel/grid 四字面为图表系列
- *  区分语义色，tokens 无对应族；字面值原样迁不改值，集中白名单单源） */
-export const SCORE_TREND_AVG_LINE_COLOR = "rgba(168,85,247,0.4)";
-export const SCORE_TREND_TARGET_LINE_COLOR = "#94A3B8";
-export const SCORE_TREND_AXIS_LABEL_COLOR = "#64748B";
-export const SCORE_TREND_GRID_LINE_COLOR = "rgba(100,116,139,0.15)";
+// （ScoreTrendChart 四区分色〔avg/target/axis/grid〕随 Evolution 域退役
+//  删除——fix-replay-gap-alignment U1 批次收口）
 
 export const CHART_COLORS = {
   /** 阳线实体/影线颜色 */

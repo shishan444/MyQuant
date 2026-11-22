@@ -43,62 +43,6 @@ def _make_strategy(client) -> str:
     return r.json()["strategy_id"]
 
 
-class TestTransitions:
-    def test_404(self, client):
-        assert client.get("/api/strategies/st_none/transitions").status_code == 404
-
-    def test_empty_200(self, client):
-        sid = _make_strategy(client)
-        r = client.get(f"/api/strategies/{sid}/transitions")
-        assert r.status_code == 200
-        body = r.json()
-        assert body == {"items": [], "total": 0}
-
-    def test_events_asc_with_evidence(self, client):
-        """正向：经 lifecycle transit 产两事件（draft→active→archived）——
-        asc 时序+evidence 解析嵌入。"""
-        from core.strategy.lifecycle.service import transit
-        sid = _make_strategy(client)
-        # save_strategy 缺省 status=active（stock 分类）——事件序列经
-        # mount（active→paper）+task_end（paper→active）+manual_archive
-        transit(client._db, sid, target="paper", trigger="mount",
-               evidence={"task": "pt_1"})
-        transit(client._db, sid, target="active", trigger="task_end",
-               evidence={"task_id": "pt_1", "final_status": "completed"})
-        transit(client._db, sid, target="archived", trigger="manual_archive",
-               evidence=None)
-        r = client.get(f"/api/strategies/{sid}/transitions")
-        body = r.json()
-        assert body["total"] == 3
-        items = body["items"]
-        # asc 时序（created_at 微秒级 ISO——连续 transit 互异保证确定性；极端同值 tie 下 rowid=插入序（t3r9 实测 EXPLAIN 走索引扫描））
-        assert items[0]["from_status"] == "active"
-        assert items[0]["to_status"] == "paper"
-        assert items[0]["evidence"] == {"task": "pt_1"}
-        assert items[1]["to_status"] == "active"
-        assert items[2]["evidence"] is None  # manual 边 NULL→None
-
-    def test_bad_json_degraded_as_is(self, client):
-        """坏 JSON 手改行降级如实（500 非静默）——append-only 通道外
-        手改面不存在于生产，防御位以端点 500 形态锁定（不吞不造）。"""
-        from core.persistence.repository.strategy import list_transition_events
-        sid = _make_strategy(client)
-        from core.strategy.lifecycle.service import transit
-        transit(client._db, sid, target="paper", trigger="mount", evidence={})
-        # 通道外直改（测试专用面）
-        from core.persistence.orm.engine import engine_for
-        eng = engine_for(client._db)
-        with eng.begin() as conn:
-            from sqlalchemy import text as sa_text
-            conn.execute(sa_text(
-                "UPDATE strategy_transition_event SET evidence_json='{broken' "
-                "WHERE strategy_id=:sid").bindparams(sid=sid))
-        r = client.get(f"/api/strategies/{sid}/transitions")
-        # 坏 JSON→None 不炸行（spec Scenario——t3r9 A1 修正后）
-        assert r.status_code == 200
-        assert r.json()["items"][0]["evidence"] is None
-
-
 class TestVerifyStarRider:
     def test_doc_anchor_no_patch_surface(self, client):
         """rider doc 形锚：PATCH 无 verify_star 受控入面（extra=forbid

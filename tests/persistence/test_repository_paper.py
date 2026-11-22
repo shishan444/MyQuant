@@ -576,7 +576,8 @@ class TestResearchStatusThreeOrderGrid:
     死列全 NULL 无生产行为对应，构造性测试输入）；有事件格=序②主路径
     （verified 首次生产通道）；qualified=None 无事件格=序③兜底（新行
     恒 unverified——死列处置与活化同 PR 封闭失真窗口）。冲突格裁决
-    显式：draft×有事件→序①赢（revalidate 回 draft=作废重置）；
+    显式：draft×有事件→序①赢（draft 行恒 draft——历史事件不抬值；
+    原 revalidate 回 draft 例证已随 archived→draft 边退役）；
     archived/paper/candidate/live×有事件→序②赢（验证事实与终局态
     两维正交）；paper/candidate/live×无事件→序③兜底（存量迁移行）。
     """

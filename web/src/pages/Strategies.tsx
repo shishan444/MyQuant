@@ -12,7 +12,7 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   BookOpen, Play, Pencil, Trash2, Search,
   Dna, FlaskConical, Zap, ArrowUpDown, ArrowUp, ArrowDown, ChevronRight,
-  Copy, Check, X, GitBranch, LineChart, AlertCircle,
+  Copy, Check, X, AlertCircle,
 } from "lucide-react";
 import { StarRating } from "@/components/StarRating";
 import { PageTransition } from "@/components/PageTransition";
@@ -20,12 +20,12 @@ import { EmptyState } from "@/components/EmptyState";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button as AntButton, Input, Modal, Form, Select as AntSelect } from "antd";
 import { useStrategies, useDeleteStrategy, useUpdateStrategy } from "@/hooks/useStrategies";
-import { deleteStrategy, getStrategiesByStatus, getVerifyHistory } from "@/services/strategies";
+import { deleteStrategy, getStrategiesByStatus } from "@/services/strategies";
 import { listTradingTasks } from "@/services/trading";
 import { toast } from "sonner";
 import { cn, getFitnessColor } from "@/lib/utils";
 import { INDICATOR_LABELS, CONDITION_TYPE_LABELS, SL_MODE_LABELS } from "@/lib/constants";
-import type { Strategy, DNA, VerifyHistoryResponse } from "@/types/api";
+import type { Strategy, DNA } from "@/types/api";
 import type { TradingTask } from "@/services/trading";
 
 // ---------------------------------------------------------------------------
@@ -268,9 +268,6 @@ const PT_STATUS_LABELS: Record<string, string> = {
   error: "异常",
 };
 
-/** 验证历史行（VerifyHistoryResponse.items 元素——四段履历·验证段数据源） */
-type VerifyHistoryItem = VerifyHistoryResponse["items"][number];
-
 function DnaSegment({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
@@ -351,33 +348,22 @@ function CareerSegment({ label, testid, children }: { label: string; testid: str
 }
 
 /**
- * 四段履历前端聚合（alignment-batch D4，契约登记表三）：
- * 诞生=Strategy 行 / 验证=ValidationRecord / 模拟=PtTask / 审计=TransitionEvent。
+ * 三段履历前端聚合（alignment-batch D4 契约登记表三收敛；验证段随
+ * verify 会话体系退役删除——fix-replay-gap-alignment U8）：
+ * 诞生=Strategy 行 / 模拟=PtTask / 审计=TransitionEvent。
  * 审计段无查询端点（lifecycle 只暴露写迁移），如实披露不造数据。
  */
-function CareerRecord({ strategy, verifyRecords, paperTasks }: {
+function CareerRecord({ strategy, paperTasks }: {
   strategy: Strategy;
-  verifyRecords: VerifyHistoryItem[];
   paperTasks: TradingTask[];
 }) {
-  const lastVerify = verifyRecords[0]; // 调用方保证倒序（verify/history 端点 created_at 倒序）
-  const lastTask = paperTasks[0]; // 同上（paper tasks 列表 created_at 倒序）
+  const lastTask = paperTasks[0]; // 调用方保证倒序（paper tasks 列表 created_at 倒序）
   return (
     <div className="flex flex-col gap-2 text-xs" data-testid="career-record">
       <CareerSegment label="诞生" testid="career-segment-birth">
         {new Date(strategy.created_at).toLocaleDateString()} · <SourceBadge source={strategy.source} />
         {strategy.generation > 0 && ` · Gen ${strategy.generation}`}
         {strategy.parent_ids && ` · 亲代 ${strategy.parent_ids}`}
-      </CareerSegment>
-      <CareerSegment label="验证" testid="career-segment-verify">
-        {verifyRecords.length === 0 ? (
-          <span className="text-text-muted">无验证记录</span>
-        ) : (
-          <>
-            {verifyRecords.length} 条 · 最近 {new Date(lastVerify.created_at).toLocaleDateString()}
-            {lastVerify.star > 0 && ` · ★${lastVerify.star}`}
-          </>
-        )}
       </CareerSegment>
       <CareerSegment label="模拟" testid="career-segment-paper">
         {paperTasks.length === 0 ? (
@@ -396,13 +382,11 @@ function CareerRecord({ strategy, verifyRecords, paperTasks }: {
   );
 }
 
-function ExpandPanel({ strategy, verifyRecords, paperTasks, onRun, onPaperTrade, onSeedEvolve }: {
+function ExpandPanel({ strategy, paperTasks, onRun, onPaperTrade }: {
   strategy: Strategy;
-  verifyRecords: VerifyHistoryItem[];
   paperTasks: TradingTask[];
   onRun: () => void;
   onPaperTrade: () => void;
-  onSeedEvolve: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const m = strategy.metrics;
@@ -475,19 +459,16 @@ function ExpandPanel({ strategy, verifyRecords, paperTasks, onRun, onPaperTrade,
             <DnaFiveSegments dna={dna} />
           </div>
 
-          {/* Col 4: 四段履历 + actions */}
+          {/* Col 4: 三段履历 + actions（验证段随 U8 退役） */}
           <div className="flex flex-col gap-3">
-            <div className="text-[11px] text-text-muted font-medium">四段履历</div>
-            <CareerRecord strategy={strategy} verifyRecords={verifyRecords} paperTasks={paperTasks} />
+            <div className="text-[11px] text-text-muted font-medium">三段履历</div>
+            <CareerRecord strategy={strategy} paperTasks={paperTasks} />
             <div className="flex flex-wrap gap-2 mt-auto pt-3 border-t border-border-default/30">
               <AntButton type="text" size="small" className="!text-xs text-profit" onClick={onRun}>
                 <Play className="h-3 w-3" /> 运行回测
               </AntButton>
               <AntButton type="text" size="small" className="!text-xs text-profit" onClick={onPaperTrade}>
                 <Zap className="h-3 w-3" /> 模拟交易
-              </AntButton>
-              <AntButton type="text" size="small" className="!text-xs text-domain-paper" onClick={onSeedEvolve}>
-                <GitBranch className="h-3 w-3" /> 继续进化
               </AntButton>
               <AntButton type="text" size="small" className="!text-xs !text-text-muted" onClick={handleCopy}>
                 {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
@@ -545,7 +526,6 @@ const rowVariants = {
 interface StrategyRowProps {
   strategy: Strategy;
   index: number;
-  verifyRecords: VerifyHistoryItem[];
   paperTasks: TradingTask[];
   selected: boolean;
   expanded: boolean;
@@ -555,12 +535,11 @@ interface StrategyRowProps {
   onEdit: () => void;
   onRun: () => void;
   onPaperTrade: () => void;
-  onSeedEvolve: () => void;
 }
 
 function StrategyCardRow({
-  strategy, index, verifyRecords, paperTasks, selected, expanded,
-  onToggleSelect, onToggleExpand, onDelete, onEdit, onRun, onPaperTrade, onSeedEvolve,
+  strategy, index, paperTasks, selected, expanded,
+  onToggleSelect, onToggleExpand, onDelete, onEdit, onRun, onPaperTrade,
 }: StrategyRowProps) {
   const m = strategy.metrics;
   const annualReturn = m?.annual_return;
@@ -701,11 +680,9 @@ function StrategyCardRow({
             <td colSpan={10} className="p-0 border-b border-border-default/30">
               <ExpandPanel
                 strategy={strategy}
-                verifyRecords={verifyRecords}
                 paperTasks={paperTasks}
                 onRun={onRun}
                 onPaperTrade={onPaperTrade}
-                onSeedEvolve={onSeedEvolve}
               />
             </td>
           </tr>
@@ -867,11 +844,8 @@ export function Strategies() {
     queryKey: ["strategies", "list", { status: "draft" }],
     queryFn: () => getStrategiesByStatus("draft", { sort_by: "created_at", sort_order: "desc", limit: 200 }),
   });
-  // 四段履历共享查询（页面级一次，展开面板按 strategy_id 过滤——多行展开零重复请求）
-  const { data: verifyHistory } = useQuery({
-    queryKey: ["strategies", "verify-history", "all"],
-    queryFn: () => getVerifyHistory({ limit: 500 }),
-  });
+  // 履历共享查询（页面级一次，展开面板按 strategy_id 过滤——多行展开零重复请求；
+  // verify-history 直连随 verify 会话体系退役删除——fix-replay-gap-alignment U8）
   const { data: paperTasksAll } = useQuery({
     queryKey: ["paper-trading", "tasks", "for-career"],
     queryFn: () => listTradingTasks({ limit: 500 }),
@@ -894,14 +868,6 @@ export function Strategies() {
   }, [allStrategies]);
 
   // 履历数据按 strategy_id 索引（展开面板直取，避免逐行重复过滤）
-  const verifyByStrategy = useMemo(() => {
-    const map = new Map<string, VerifyHistoryItem[]>();
-    for (const r of verifyHistory?.items ?? []) {
-      const list = map.get(r.strategy_id);
-      if (list) list.push(r); else map.set(r.strategy_id, [r]);
-    }
-    return map;
-  }, [verifyHistory]);
   const paperByStrategy = useMemo(() => {
     const map = new Map<string, TradingTask[]>();
     for (const t of paperTasksAll?.tasks ?? []) {
@@ -1016,13 +982,6 @@ export function Strategies() {
     navigate("/trading", { state: { strategyId: strategy.strategy_id } });
   };
 
-  const handleSeedEvolve = (strategy: Strategy) => {
-    if (!strategy.dna) return;
-    navigate("/evolution", {
-      state: { seedDna: strategy.dna, symbol: strategy.symbol, timeframe: strategy.timeframe },
-    });
-  };
-
   // --- 加载中 ---
   if (isLoading) return <LoadingSkeleton />;
 
@@ -1080,16 +1039,6 @@ export function Strategies() {
               className="flex items-center gap-2 bg-white/[0.03] rounded-lg px-3 py-1"
             >
               <span className="text-sm text-text-secondary">已选 {selectedIds.size} 项</span>
-              <AntButton
-                size="small"
-                className="!text-xs"
-                icon={<LineChart className="h-3 w-3" />}
-                onClick={() => {
-                  navigate("/batch-backtest", { state: { strategy_ids: Array.from(selectedIds) } });
-                }}
-              >
-                批量回测
-              </AntButton>
               <AntButton
                 size="small"
                 danger
@@ -1256,7 +1205,6 @@ export function Strategies() {
                       key={strategy.strategy_id}
                       strategy={strategy}
                       index={i}
-                      verifyRecords={verifyByStrategy.get(strategy.strategy_id) ?? []}
                       paperTasks={paperByStrategy.get(strategy.strategy_id) ?? []}
                       selected={selectedIds.has(strategy.strategy_id)}
                       expanded={expandedId === strategy.strategy_id}
@@ -1266,7 +1214,6 @@ export function Strategies() {
                       onEdit={() => setEditTarget(strategy)}
                       onRun={() => handleRun(strategy)}
                       onPaperTrade={() => handlePaperTrade(strategy)}
-                      onSeedEvolve={() => handleSeedEvolve(strategy)}
                     />
                   ))
                 )}

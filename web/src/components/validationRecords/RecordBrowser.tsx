@@ -10,7 +10,7 @@
  * limit（B2 终态；旧「行级过滤不进 total」口径句已退役）。
  */
 import { useEffect, useRef, useState } from "react";
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Button as AntButton, Input, Select, Switch } from "antd";
 import { RotateCcw, Search } from "lucide-react";
 import {
@@ -391,11 +391,5 @@ export function RecordsBrowser() {
   );
 }
 
-/** 详情查询失效工具（发起器闭环用——发起成功失效记录表） */
-export function useInvalidateRecords() {
-  const qc = useQueryClient();
-  return () => {
-    qc.invalidateQueries({ queryKey: ["validation-records-page"] });
-    qc.invalidateQueries({ queryKey: ["workbench", "validation-records"] });
-  };
-}
+// （useInvalidateRecords 发起器失效工具随 verify 发起器退役零消费删除——
+//  fix-replay-gap-alignment U8 批次收口）

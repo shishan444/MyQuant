@@ -1,7 +1,9 @@
 """v0.11 Strategy Lab 页（策略实验室）Playwright e2e 冒烟验收网。
 
 服务对象：前端 Lab 页验收（v010-v016 冒烟网一员，自管 fixture 零前置、
-零外网）——页面可达+信号编辑面与回测入口存在性，冒烟级不构造业务数据。
+零外网）——页面可达+信号编辑面存在性，冒烟级不构造业务数据。
+回测入口用例已随 fix-replay-gap-alignment U5 Lab 回测模式退役删除
+（FT-01：适配停留工作区被 checkout 吞掉，本次补落地）。
 """
 
 import pytest
@@ -40,14 +42,6 @@ class TestV011Lab:
         content = page.content().lower()
         assert "信号" in content or "入场" in content or "出场" in content or "entry" in content or "signal" in content or "rsi" in content, \
             "No signal editor content found"
-
-    def test_lab_has_backtest_button(self, page: Page):
-        page.goto(BASE + "/lab", timeout=10000)
-        page.wait_for_load_state("domcontentloaded", timeout=10000)
-        _wait_react(page)
-        content = page.content().lower()
-        assert "backtest" in content or "回测" in content, \
-            "No backtest button found"
 
     def test_lab_screenshot(self, page: Page):
         page.goto(BASE + "/lab", timeout=10000)

@@ -1,7 +1,8 @@
 /**
  * 侧栏平铺形制锚（fe-shell-theme-cutover M1/M2/M3/M6 改写版）：
- * 平铺十项原序+三名回正（验证记录/模拟交易/插件与组件）+零分组标题负断言+
- * /lab 不入菜单负断言+实盘禁用维持+getPageTitle 三新名。
+ * 平铺七项原序+三名回正（验证记录/模拟交易/插件与组件）+零分组标题负断言+
+ * /lab 不入菜单负断言+死域名零残留负断言（进化中心/批量回测/实盘交易——
+ * fix-replay-gap-alignment U1/U4/U6 退役）+getPageTitle 三新名。
  * 折叠态 describe 随 M3 整体退役（useAppStore 侧栏字段已删）。
  * 宽度锚（upgrade-vr-responsive-layout P-3）：w-48 收窄特征网。
  */
@@ -13,11 +14,8 @@ import { Sidebar, getPageTitle } from "@/components/layout/Sidebar";
 const EXPECTED_ITEMS = [
   "观察工作台",
   "验证记录",
-  "批量回测",
-  "进化中心",
   "策略库",
   "模拟交易",
-  "实盘交易",
   "数据管理",
   "设置",
   "插件与组件",
@@ -47,13 +45,13 @@ function renderSidebar() {
 }
 
 describe("Sidebar 平铺形制（M1）", () => {
-  it("nav 内恰 10 项（9 链接+1 禁用 span——实盘 M5），顺序逐项对照原型", () => {
+  it("nav 内恰 7 项全链接（进化中心/批量回测/实盘交易随死域退役），顺序逐项对照原型", () => {
     renderSidebar();
     const nav = screen.getByRole("navigation", { name: "主导航" });
     const items = Array.from(
       nav.querySelectorAll("a, [aria-disabled='true']"),
     );
-    expect(items).toHaveLength(10);
+    expect(items).toHaveLength(7);
     expect(items.map((l) => l.textContent)).toEqual([...EXPECTED_ITEMS]);
   });
 
@@ -77,12 +75,10 @@ describe("Sidebar 平铺形制（M1）", () => {
     expect(labLink).toBeNull();
   });
 
-  it("实盘交易维持禁用（M5——aria-disabled 不可点）", () => {
+  it("实盘交易零残留（U6 退役——LiveTrading 页随死端点删除）", () => {
     renderSidebar();
-    const disabled = screen
-      .getByText("实盘交易")
-      .closest('[aria-disabled="true"]');
-    expect(disabled).not.toBeNull();
+    expect(screen.queryByText("实盘交易")).toBeNull();
+    expect(screen.queryByLabelText("实盘交易")).toBeNull();
   });
 });
 

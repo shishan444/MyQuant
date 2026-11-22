@@ -206,7 +206,8 @@ def compute_waterline(db_path: Path, strategy_id: str) -> int:
     waterline = max(事件表全部 to∈序集 的最大序, 当前 status∈序集
     的序)；任一侧空取另一侧，双侧空=0（存量 archived 行=0=「历史
     不可溯」诚实表达）。全史 max 非末条：往返（active→paper→active）
-    后水位=2 不随回落降；revalidate 不归零（事件 append-only）。
+    后水位=2 不随回落降；无归零路径（事件 append-only；原归零场景
+    revalidate 重启已随 archived→draft 边退役）。
 
     Args:
         db_path: 数据库路径。

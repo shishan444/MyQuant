@@ -261,8 +261,10 @@ class StrategyResponse(BaseModel):
     notes: Optional[str] = None
     # 【冻结快照·retire-verify-sessions B5（design Q1 选项 A）】verify
     # 组五列：统计累计写入者已随五端点删除（请求 404），历史值只读留档；
-    # 唯一写点=revalidate 归档重启的作废重置（置 0/NULL，重置前快照进
-    # 迁移事件 evidence）。读出反映旧验证会话体系时代的存量数据。
+    # 作废重置写点（revalidate 归档重启，置 0/NULL，重置前快照进迁移
+    # 事件 evidence）亦已随 archived→draft 边退役（fix-replay-gap-
+    # alignment 2.5）——五列零写入纯只读。读出反映旧验证会话体系时代
+    # 的存量数据。
     verify_count: int = 0
     verify_avg_score: Optional[float] = None
     verify_best_score: Optional[float] = None

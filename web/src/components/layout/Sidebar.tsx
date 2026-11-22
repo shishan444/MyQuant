@@ -1,32 +1,27 @@
-import { Tooltip } from "antd";
 import { NavLink, useLocation } from "react-router";
 import {
-  Dna,
   ShieldCheck,
-  Layers,
   Brain,
   TrendingUp,
   Database,
   Settings,
   LayoutDashboard,
   Puzzle,
-  Radio,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
- * 全局导航壳层（global-nav-shell）——职能=平铺十项全局导航，
+ * 全局导航壳层（global-nav-shell）——职能=平铺全局导航，
  * 导出 Sidebar（左侧导航）/Header（页头）/getPageTitle（路由→页题，供 Header 消费）。
  * 服务对象=AppLayout（AppLayout.tsx:2-3 引入 Sidebar 与 Header），由其组合 Sidebar 导航与 Header 页头。
  * 边界=不承担页面内容渲染（页面内容由 AppLayout 的 Outlet 挂载）；
  * /lab（策略实验室）保留路由不入菜单（fe-shell-theme-cutover M6 定位）。
+ * （实盘交易项随 LiveTrading 页退役删除——fix-replay-gap-alignment U6）
  */
 interface NavItem {
   to: string;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
-  /** 禁用态：无链接语义、不可聚焦（08 实盘交易建成前禁用——原型决策记录 1） */
-  disabled?: boolean;
 }
 
 /**
@@ -35,11 +30,8 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { to: "/workbench", icon: LayoutDashboard, label: "观察工作台" },
   { to: "/verify", icon: ShieldCheck, label: "验证记录" },
-  { to: "/batch-backtest", icon: Layers, label: "批量回测" },
-  { to: "/evolution", icon: Dna, label: "进化中心" },
   { to: "/strategies", icon: Brain, label: "策略库" },
   { to: "/trading", icon: TrendingUp, label: "模拟交易" },
-  { to: "/live", icon: Radio, label: "实盘交易", disabled: true },
   { to: "/data", icon: Database, label: "数据管理" },
   { to: "/settings", icon: Settings, label: "设置" },
   { to: "/plugins", icon: Puzzle, label: "插件与组件" },
@@ -48,14 +40,11 @@ const NAV_ITEMS: NavItem[] = [
 const PAGE_TITLES: Record<string, string> = {
   "/workbench": "观察工作台",
   "/lab": "策略实验室",
-  "/evolution": "进化中心",
   "/strategies": "策略库",
   "/verify": "验证记录",
-  "/batch-backtest": "批量回测",
   "/trading": "模拟交易",
   "/data": "数据管理",
   "/settings": "设置",
-  "/live": "实盘交易",
   "/plugins": "插件与组件",
 };
 
@@ -64,27 +53,7 @@ export function getPageTitle(pathname: string): string {
 }
 
 function NavItemLink({ item }: { item: NavItem }) {
-  const { to, icon: Icon, label, disabled } = item;
-
-  const content = (
-    <>
-      <Icon className="h-5 w-5 shrink-0" />
-      <span className="text-sm font-medium truncate">{label}</span>
-    </>
-  );
-
-  if (disabled) {
-    return (
-      <Tooltip placement="right" mouseEnterDelay={0} title={`${label}（建设中）`}>
-        <span
-          aria-disabled="true"
-          className="flex h-12 items-center gap-3 px-4 transition-colors cursor-not-allowed text-text-muted border-l-2 border-transparent"
-        >
-          {content}
-        </span>
-      </Tooltip>
-    );
-  }
+  const { to, icon: Icon, label } = item;
 
   return (
     <NavLink
@@ -98,7 +67,8 @@ function NavItemLink({ item }: { item: NavItem }) {
         )
       }
     >
-      {content}
+      <Icon className="h-5 w-5 shrink-0" />
+      <span className="text-sm font-medium truncate">{label}</span>
     </NavLink>
   );
 }

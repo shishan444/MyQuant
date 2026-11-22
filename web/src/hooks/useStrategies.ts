@@ -1,6 +1,5 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/services/strategies";
-import { createStreamHook } from "./createStreamHook";
 import { toast } from "sonner";
 
 export const strategiesKeys = {
@@ -32,25 +31,9 @@ export function useStrategy(id: string) {
   });
 }
 
-export function useRunBacktest() {
-  return useMutation({
-    mutationFn: api.runBacktest,
-    onSuccess: () => toast.success("回测完成"),
-    onError: (err) => toast.error(`回测失败: ${err.message}`, { duration: Infinity }),
-  });
-}
-
-export function useCreateStrategy() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: api.createStrategy,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: strategiesKeys.all });
-      toast.success("策略已保存");
-    },
-    onError: (err) => toast.error(`保存失败: ${err.message}`),
-  });
-}
+// （useCreateStrategy 保存 mutation 随 Lab 验证保存动作链退役零消费删除——
+//  fix-replay-gap-alignment U5 批次收口；api.createStrategy service 层保留
+//  〔活端点 POST /api/strategies，services 直测覆盖〕）
 
 export function useDeleteStrategy() {
   const qc = useQueryClient();
@@ -77,68 +60,5 @@ export function useUpdateStrategy() {
   });
 }
 
-export function useVerifyStrategies() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: api.verifyStrategies,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [...strategiesKeys.all, "verify-sessions"] });
-      toast.success("验证完成");
-    },
-    onError: (err) => toast.error(`验证失败: ${err.message}`, { duration: Infinity }),
-  });
-}
-
-// ── 流式 hooks 共用一个工厂；真实差异全部参数化 ──
-
-type VerifyStreamPayload = Parameters<typeof api.verifyStrategiesStream>[0];
-type VerifyStreamComplete = {
-  session_id: string;
-  summary: unknown[];
-  results: unknown[];
-};
-
-/** 渐进式验证 SSE 流——存 session_id 并 invalidate verify-sessions。 */
-export const useVerifyStream = createStreamHook<VerifyStreamPayload, VerifyStreamComplete>({
-  streamFn: (payload, callbacks, signal) =>
-    api.verifyStrategiesStream(payload, callbacks, signal),
-  errorLabel: "验证失败",
-  sessionIdKey: "session_id",
-  onCompleteExtra: (qc) =>
-    qc.invalidateQueries({ queryKey: [...strategiesKeys.all, "verify-sessions"] }),
-});
-
-type BatchBacktestStreamPayload = Parameters<typeof api.batchBacktestStream>[0];
-type BatchBacktestStreamComplete = { summary: unknown[]; results: unknown[] };
-
-/** Progressive batch backtest SSE stream. */
-export const useBatchBacktestStream = createStreamHook<
-  BatchBacktestStreamPayload,
-  BatchBacktestStreamComplete
->({
-  streamFn: (payload, callbacks, signal) =>
-    api.batchBacktestStream(payload, callbacks, signal),
-  errorLabel: "批量回测失败",
-});
-
-export function useVerifyHistory(strategyId?: string) {
-  return queryOptions({
-    queryKey: [...strategiesKeys.all, "verify-history", strategyId],
-    queryFn: () => api.getVerifyHistory({ strategy_id: strategyId, limit: 500 }),
-  });
-}
-
-export function useVerifySessions(limit?: number) {
-  return queryOptions({
-    queryKey: [...strategiesKeys.all, "verify-sessions", limit],
-    queryFn: () => api.getVerifySessions(limit),
-  });
-}
-
-export function useSessionResults(sessionId?: string | null) {
-  return queryOptions({
-    queryKey: [...strategiesKeys.all, "session-results", sessionId],
-    queryFn: () => api.getSessionResults(sessionId as string),
-    enabled: !!sessionId,
-  });
-}
+// useVerifyStream/useVerifySessions/useSessionResults 随 verify 会话体系
+// 退役删除——fix-replay-gap-alignment U8（批 2 曾保活至消费方收口）。

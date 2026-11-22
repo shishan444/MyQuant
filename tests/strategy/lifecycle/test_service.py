@@ -3,7 +3,7 @@
 三族返回全路径+CAS 并发两分支（同连接注入器模拟载入与 CAS 之间的
 变更窗口）+conn 透传同事务+evidence 按 trigger 分派+not_migrated
 六+二场景+错误三码 detail 面；credential 三态与守卫两分支；水位
-五类（含往返不回落与 revalidate 不归零）+纯查询断言。
+五类（含往返不回落与 revalidate 存量事件不归零）+纯查询断言。
 
 前置态构造用直 SQL 合法值直改（UPDATE 触发器只拦六值外——诚实
 边界，被测对象是 transit 自身，构造不依赖被测对象）。
@@ -548,8 +548,11 @@ class TestComputeWaterline:
         assert compute_waterline(db, "st_w4") == 2
 
     def test_revalidate_does_not_reset(self, db):
-        """revalidate 后不归零：live→archived→draft 全程后水位仍 4
-        （→archived 事件的 to 不入序集但 candidate→live 的峰值保留）。"""
+        """revalidate 存量事件不归零：live→archived→draft 全程后
+        水位仍 4（→archived 事件的 to 不入序集但 candidate→live 的
+        峰值保留；archived→draft 边与 revalidate trigger 已随
+        fix-replay-gap-alignment 2.5 退役，构造行系退役前存量
+        历史事件）。"""
         _add(db, "st_w5", status="draft")
         _add_event(db, "st_w5", "paper", "candidate", "qualify")
         _add_event(db, "st_w5", "candidate", "live", "manual_promote")

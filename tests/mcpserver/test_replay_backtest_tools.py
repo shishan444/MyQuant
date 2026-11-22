@@ -21,7 +21,8 @@ class TestReplayBacktestBodyAssembly:
         可选四件（window/stop_loss_pct/halt/task_id）零键。"""
         mcp, api = _register("research")
         mcp.registered["run_replay_backtest"](
-            "st-1", "2026-01-01T00:00:00+00:00", "2026-02-01T00:00:00+00:00")
+            start="2026-01-01T00:00:00+00:00",
+            end="2026-02-01T00:00:00+00:00", strategy_id="st-1")
         method, url, body = api.calls[-1]
         assert (method, url) == ("POST", "/api/research/backtest-replay")
         assert body == {
@@ -36,7 +37,8 @@ class TestReplayBacktestBodyAssembly:
         形制一致）。"""
         mcp, api = _register("research")
         mcp.registered["run_replay_backtest"](
-            "st-1", "s", "e", window_bars=180, stop_loss_pct=0.2,
+            start="s", end="e", strategy_id="st-1",
+            window_bars=180, stop_loss_pct=0.2,
             halt_drawdown_pct=0.1, task_id="fixed-01")
         _, _, body = api.calls[-1]
         assert body["window_bars"] == 180
@@ -50,7 +52,7 @@ class TestReplayBacktestBodyAssembly:
         才落键——缺省面七键锚不受扰（上方 defaults 用例锁定）。"""
         mcp, api = _register("research")
         mcp.registered["run_replay_backtest"](
-            "st-1", "s", "e",
+            start="s", end="e", strategy_id="st-1",
             strategy_ids=["st-1", "st-2", "st-3"], max_workers=3)
         _, _, body = api.calls[-1]
         assert body["strategy_ids"] == ["st-1", "st-2", "st-3"]
@@ -61,7 +63,7 @@ class TestReplayBacktestBodyAssembly:
         strategy_id 键（可选化后给了才落——AI 纯批量发起无冗余参）。"""
         mcp, api = _register("research")
         mcp.registered["run_replay_backtest"](
-            None, "s", "e", strategy_ids=["st-1", "st-2"])
+            start="s", end="e", strategy_ids=["st-1", "st-2"])
         _, _, body = api.calls[-1]
         assert "strategy_id" not in body
         assert body["strategy_ids"] == ["st-1", "st-2"]
@@ -77,7 +79,7 @@ class TestReplayBacktestPayloadChannels:
         api.samples["/api/research/backtest-replay"] = {
             "task_id": "t-1", "record_id": "rec_x", "status": "completed",
             "total_pnl": 1.5, "final_balance": 100001.5}
-        out = mcp.registered["run_replay_backtest"]("st-1", "s", "e")
+        out = mcp.registered["run_replay_backtest"](start="s", end="e", strategy_id="st-1")
         assert out["record_id"] == "rec_x"
         assert out["status"] == "completed"
         assert out["total_pnl"] == 1.5
@@ -89,7 +91,7 @@ class TestReplayBacktestPayloadChannels:
         api.samples["/api/research/backtest-replay"] = {
             "error": {"code": "STRATEGY_NOT_FOUND",
                       "message": "策略不存在"}}
-        out = mcp.registered["run_replay_backtest"]("st-missing", "s", "e")
+        out = mcp.registered["run_replay_backtest"](start="s", end="e", strategy_id="st-missing")
         assert "error" in out
         assert out["error"]["code"] == "STRATEGY_NOT_FOUND"
 

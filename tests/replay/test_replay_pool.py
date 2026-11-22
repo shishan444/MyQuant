@@ -1,4 +1,5 @@
-"""并发回放池测试（add-replay-backtest-mcp 任务 4.1——验收锚③）。"""
+"""并发回放池测试（add-replay-backtest-mcp 任务 4.1——验收锚③；
+fix-replay-gap-alignment 2.2 混合失败组语义 T2 组扩展）。"""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -8,9 +9,11 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
+from core.analysis.errors import ResearchError
 from core.persistence.repository import paper
 from core.replay import run_replay_batch
-from tests.replay._env import ReplayEnv
+from core.replay.runner import ReplayError, ReplayRunner
+from tests.replay._env import ReplayEnv, make_gene_tf_dna
 
 
 def _make_envs_with_strategies(tmp_path: Path, n: int) -> ReplayEnv:
@@ -106,3 +109,134 @@ class TestReplayBatch:
         assert t_batch < 3.0 * max(t_single, 0.05), (
             f"并发总时长 {t_batch:.2f}s 应≈最慢单任务 {t_single:.2f}s "
             f"（宽上限 3×——串行退化≈5×必红）")
+
+
+def _mixed_env(tmp_path: Path, fail_index: int, n: int = 5,
+               *, fail_kind: str = "load"):
+    """混合组装配：1 路失败+其余 n-1 路正常；失败位可控（T2-d 位置
+    无关性参数化）。失败形制两档：
+
+    - fail_kind="load"：gene-tf 1d 轴 parquet 缺席——装载必败（数据
+      驱动真实失败路径，无 mock；真池 ReplayError 路）；
+    - fail_kind="exec"：正常 DNA 装载通过，执行段经 process_frames
+      bomb 炸（ResearchError 路注入形制——T2-e）。
+
+    返回 (env, strategy_ids, fail_sid)。"""
+    from core.persistence.repository.strategy import save_strategy
+    from tests.helpers.data_factory import make_dna
+
+    env = ReplayEnv(tmp_path, n_bars=600)
+    fail_sid = "st_mix_fail"
+    sids: list[str] = []
+    for i in range(n):
+        if i == fail_index:
+            sid = fail_sid
+            dna = (make_gene_tf_dna(exec_tf="4h", gene_tf="1d")
+                   if fail_kind == "load"
+                   else make_dna(symbol="BTCUSDT", leverage=9))
+        else:
+            sid = f"st_mix_ok_{i}"
+            dna = make_dna(symbol="BTCUSDT", leverage=(1 + i))
+        save_strategy(env.db, strategy_id=sid, dna_json=dna.to_json(),
+                      symbol="BTCUSDT", timeframe="4h", status="draft")
+        sids.append(sid)
+    return env, sids, fail_sid
+
+
+class TestT2MixedFailureRealPool:
+    """T2-a/b/c/d（真进程池 ReplayError 路）：失败路结构化错误完整
+    可读回传（四属性与进程内等价、str 零漂移）、非 BrokenProcessPool
+    连坐、正常路不连坐（零 running/pending 残留）、整批原子失败、
+    失败位置无关性。
+
+    红基线：E3 探针代证（修复前真池混合组=父进程 BrokenProcessPool
+    +3 running+1 pending 连坐、pool.map 永不返回）。"""
+
+    @pytest.mark.parametrize("fail_index", [0, 2, 4],
+                             ids=["首位", "中位", "末位"])
+    def test_mixed_failure_replay_error_route(self, tmp_path, fail_index):
+        env, sids, fail_sid = _mixed_env(tmp_path, fail_index)
+        start, end = env.range(head_bars=200)
+
+        # 进程内基准：同失败策略单路直调（无池）——四属性对照原点
+        with pytest.raises(ReplayError) as direct:
+            ReplayRunner(env.data_dir).run(
+                env.db, fail_sid, start, end, task_id="direct_fail")
+        assert direct.value.code == "RESEARCH_DATA_INSUFFICIENT"
+
+        # 真进程池混合组（不注入 executor——spawn 全链）
+        with pytest.raises(ReplayError) as pooled:
+            run_replay_batch(env.db, sids, start, end,
+                             data_dir=env.data_dir, max_workers=5)
+
+        exc = pooled.value
+        assert type(exc) is ReplayError, (
+            f"回传类型保真（非 {type(exc).__name__}/BrokenProcessPool）")
+        assert exc.code == direct.value.code
+        assert str(exc) == str(direct.value), "str(exc) 跨进程零漂移"
+        assert exc.detail == direct.value.detail
+        assert exc.message == direct.value.message
+
+        # T2-b 正常路不连坐：全部任务行显式终态、零 running/pending
+        # 残留；失败路装载即拒行不建（失败定位面=失败 sid 无行者）
+        rows = paper.list_tasks(env.db, limit=100)
+        statuses = {r["status"] for r in rows}
+        assert not (statuses & {"running", "pending"}), (
+            f"连坐残留（E3 现状 3 running+1 pending）——实测 {statuses}")
+        ok_sids = {r["strategy_id"] for r in rows}
+        assert fail_sid not in ok_sids, "失败路=装载即拒行不建"
+        assert ok_sids == {s for s in sids if s != fail_sid}, (
+            "正常路全部建行完成（不连坐）")
+        # T2-c 整批原子失败：调用面抛错无部分结果（上 pytest.raises
+        # 已证；行状态真实与响应原子语义分立——行 completed 是落库
+        # 事实，响应不返回部分结果）
+
+
+class TestT2InjectedResearchErrorRoute:
+    """T2-e（注入 executor 同语义——ResearchError 路）：执行段异常经
+    归档兜底转 ResearchError(REPLAY_EXECUTION_FAILED) 上抛（真实转换
+    链——bomb 落在生产驱动面 process_frames，与 test_replay_error_
+    terminal 既有形制同款）；ThreadPoolExecutor 注入（spawn worker
+    不继承父进程 monkeypatch——跨进程序列化面由 T2-g pickle 往返
+    单元独立承载，此处证转换与终态语义）。"""
+
+    def test_threadpool_research_error_semantics(self, tmp_path,
+                                                 monkeypatch):
+        env, sids, fail_sid = _mixed_env(tmp_path, fail_index=2,
+                                         fail_kind="exec")
+        start, end = env.range(head_bars=200)
+        from core.paper_trading.runtime.executor import PaperTaskExecutor
+
+        bombed_rows: list[str] = []
+        original = PaperTaskExecutor.process_frames
+
+        def bomb(self, df, from_idx, *args, **kwargs):
+            if self.task_row["strategy_id"] == fail_sid:
+                bombed_rows.append(self.task_id)
+                raise RuntimeError("injected segment failure")
+            return original(self, df, from_idx, *args, **kwargs)
+
+        monkeypatch.setattr(PaperTaskExecutor, "process_frames", bomb)
+
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            with pytest.raises(ResearchError) as pooled:
+                run_replay_batch(env.db, sids, start, end,
+                                 data_dir=env.data_dir, executor=ex)
+
+        exc = pooled.value
+        assert exc.code == "REPLAY_EXECUTION_FAILED"
+        assert exc.status == 500
+        assert bombed_rows, "失败路真实执行到驱动段（构造前提）"
+        assert exc.detail.get("task_id") == bombed_rows[0], (
+            "失败路 strategy_id/task_id 定位（detail 携带）")
+        # 终态面：失败路 error+error_detail 可读；正常路 completed；
+        # 零 running/pending 残留（不连坐）
+        rows = paper.list_tasks(env.db, limit=100)
+        statuses = {r["status"] for r in rows}
+        assert not (statuses & {"running", "pending"})
+        by_sid = {r["strategy_id"]: r for r in rows}
+        assert by_sid[fail_sid]["status"] == "error"
+        assert "injected segment failure" in (
+            by_sid[fail_sid]["error_detail"] or "")
+        assert all(r["status"] == "completed"
+                   for s, r in by_sid.items() if s != fail_sid)
