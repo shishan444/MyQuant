@@ -61,7 +61,7 @@ STAR_COLUMNS = (
     "verify_star", "verify_avg_score", "verify_best_score",
     "last_verified_at", "verify_count",
 )
-# 种子非空星级值（与 lifecycle revalidate 测试的种子形制同源）
+# 种子非空星级值（形制沿袭已退役的 lifecycle revalidate 测试——该域随 verify 五端点删除）
 _SEED_STAR_ROW = (4, 71.5, 88.25, "2026-10-01T00:00:00", 3)
 
 # ── C1-4 存活路由（retire-legacy 后 backtest/compare/batch 三核算
