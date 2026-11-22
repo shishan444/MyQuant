@@ -7,17 +7,13 @@ list/count 过滤形制（tags LIKE、qualified 布尔）；list 排序列白名
 """
 from __future__ import annotations
 
-import statistics
-
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import Connection, and_, delete, func, insert, or_, select, update
+from sqlalchemy import Connection, delete, func, insert, or_, select, update
 
-from core.persistence.orm.models import PtTask, Strategy
+from core.persistence.orm.models import Strategy
 from core.persistence.orm.engine import engine_for as _engine_for
-from core.persistence.repository.paper import PT_STATUS_ACTIVE
 from core.persistence.timestamps import utc_now_iso as _now
 from core.strategy.lifecycle.machine import INITIAL_STATUSES, LifecycleError
 
@@ -315,135 +311,3 @@ def delete_strategy(db_path: Path, strategy_id: str) -> None:
     engine = _engine_for(db_path)
     with engine.begin() as conn:
         conn.execute(delete(Strategy).where(Strategy.strategy_id == strategy_id))
-
-
-# ── 批量删除（research-tooling-data-quality CARD-05 下沉）──
-
-# 保护集（Team Lead 批准扩展至流通/在役三态）：paper=纸盘在验、
-# candidate=达标候选、live=实盘在役——删除域命中即整批拒绝
-# （本集合是 batch 删除域的设计决策子集，非生命周期派生——保留字面）
-_BATCH_DELETE_PROTECTED_STATUSES = ("paper", "candidate", "live")
-# 并集防御第二判据：非终态纸盘任务引用（状态迁移与任务状态可能不同步
-# 的数据一致性兜底——任务终态回流迁移依赖 strategy 行在场）。
-# 活跃集引用 paper repo 的 PT_STATUS_ACTIVE 派生视图（单一书写点，
-# PT 状态机扩态自动跟随）
-
-
-@dataclass
-class BatchDeleteResult:
-    """批量删除预检/执行结果（路由转 HTTP 的内部载体）。
-
-    deleted_count=None 表示预览（confirm=false 只查未删）。
-    """
-
-    matched_count: int
-    score_summary: Dict[str, Any]
-    deleted_count: Optional[int]
-
-
-def _score_summary(scores: List[Optional[float]]) -> Dict[str, Any]:
-    """best_score 列的五数概括+计数+NULL 披露。
-
-    count=非 NULL 参与分布数（null_count 单独披露，两值之和=总行数）；
-    1 行退化五数全同值；≥2 行用 statistics.quantiles inclusive 插值
-    （四分位主流定义）；空集五数全 None。
-    """
-    values = [s for s in scores if s is not None]
-    null_count = len(scores) - len(values)
-    n = len(values)
-    if n == 0:
-        return {"count": 0, "min": None, "p25": None, "median": None,
-                "p75": None, "max": None, "null_count": null_count}
-    if n == 1:
-        v = values[0]
-        return {"count": 1, "min": v, "p25": v, "median": v,
-                "p75": v, "max": v, "null_count": null_count}
-    p25, median, p75 = statistics.quantiles(values, n=4, method="inclusive")
-    return {"count": n, "min": min(values), "p25": p25, "median": median,
-            "p75": p75, "max": max(values), "null_count": null_count}
-
-
-def batch_delete_by_source_task(
-    db_path: Path,
-    *,
-    source_task_id: str,
-    generation_gt: Optional[int] = None,
-    best_score_lt: Optional[float] = None,
-    confirm: bool = False,
-) -> BatchDeleteResult:
-    """按进化任务圈定批量物理删除产物策略（预览/执行同判据同事务）。
-
-    单事务先查后删（TOCTOU 收窄：预览计数、取列与删除执行收进同一
-    engine.begin，窗口=事务持锁期间）。挂盘预检（预览与执行共用，
-    先于删除）：删除域命中保护集（paper/candidate/live）或被非终态
-    纸盘任务（pending/running）引用 → LifecycleError 422 整批拒绝
-    （fail-closed——在用资产显式对待，先撤盘/归档后再清理）。
-    """
-    conds = [Strategy.source_task_id == source_task_id]
-    if generation_gt is not None:
-        conds.append(Strategy.generation > generation_gt)
-    if best_score_lt is not None:
-        conds.append(Strategy.best_score < best_score_lt)
-    where = and_(*conds)
-
-    engine = _engine_for(db_path)
-    with engine.begin() as conn:
-        protected_count = conn.execute(
-            select(func.count()).select_from(Strategy)
-            .where(where, Strategy.status.in_(_BATCH_DELETE_PROTECTED_STATUSES))
-        ).scalar_one()
-        pt_active_count = conn.execute(
-            select(func.count()).select_from(PtTask)
-            .where(
-                PtTask.strategy_id.in_(
-                    select(Strategy.strategy_id).where(where)),
-                PtTask.status.in_(PT_STATUS_ACTIVE),
-            )
-        ).scalar_one()
-        if protected_count or pt_active_count:
-            raise LifecycleError(
-                code="BATCH_DELETE_PAPER_REFERENCED",
-                message="删除域含受保护策略（在验/在役或被挂盘任务引用）",
-                status=422,
-                detail={
-                    "protected_count": protected_count,
-                    "pt_active_count": pt_active_count,
-                    "protected_statuses": list(_BATCH_DELETE_PROTECTED_STATUSES),
-                    "hint": "先撤盘/归档（paper/candidate/live 经生命周期"
-                            "迁移退出）或结束挂盘任务后再清理",
-                },
-            )
-        matched_count = conn.execute(
-            select(func.count()).select_from(Strategy).where(where)
-        ).scalar_one()
-        scores = [row[0] for row in conn.execute(
-            select(Strategy.best_score).where(where)).all()]
-        if not confirm:
-            return BatchDeleteResult(
-                matched_count=matched_count,
-                score_summary=_score_summary(scores),
-                deleted_count=None,
-            )
-        deleted_count = conn.execute(
-            delete(Strategy).where(where)).rowcount
-        return BatchDeleteResult(
-            matched_count=matched_count,
-            score_summary=_score_summary(scores),
-            deleted_count=deleted_count,
-        )
-
-
-def list_transition_events(
-    db_path: Path, strategy_id: str,
-) -> List[Dict[str, Any]]:
-    """策略状态迁移事件史（be-strategy-transitions D7——审计段数据源：
-    created_at 升序时序回放；append-only 只增不删同 lifecycle 语义）。"""
-    from core.persistence.orm.models import StrategyTransitionEvent
-    engine = _engine_for(db_path)
-    with engine.connect() as conn:
-        rows = conn.execute(
-            select(StrategyTransitionEvent)
-            .where(StrategyTransitionEvent.strategy_id == strategy_id)
-            .order_by(StrategyTransitionEvent.created_at.asc())
-        ).mappings().all()
-    return [dict(r) for r in rows]
